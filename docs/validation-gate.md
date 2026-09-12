@@ -2,6 +2,60 @@
 
 Result: BLOCKED
 
+## Full open-position discovery diagnostic
+
+Two mainnet samples passed exact per-market, per-side OI reconciliation:
+
+| Block | Accounts | Discovered markets | Open positions | RPC calls | Duration |
+| --- | --- | --- | --- | --- | --- |
+| 104240009 | 5270 | 11 | 670 | 143 | 46.363 s |
+| 104240260 | 5270 | 11 | 673 | 143 | 45.545 s |
+
+Block hashes:
+
+- 104240009: 0xec49a0a57df5afede0ca4493c49cdae26e8c14e5dcadbadd02adf81353bb8ada
+- 104240260: 0xd928ded885e374a0ba8a8833d724f29d22abb46acd6c1a6ae2ec1e190011449c
+
+Both hashes matched final rechecks. Discovered market IDs were
+1, 10, 20, 30, 31, 40, 50, 60, 70, 80 and 90. Zero-position markets were included.
+All account IDs were scanned, using the SDK account bitmap layout, then marked
+open positions were read. Each side's integer sum exactly equalled the market
+getter, including zeros. Sampled process RSS peaks were 107905024 and 108466176
+bytes. These measurements cover this diagnostic process, not a Rust L3 snapshot.
+
+An earlier all-account/all-market getter scan failed at market 30 after 330
+requests. Adaptive splitting was attempted and stopped when that route remained
+expensive. The bitmap route completed without omitting that market.
+
+The result proves the recorded position/OI scope. Full exchange snapshot,
+independent UI reference, financial replay and persistent collector restart
+remain outside this result. Overall gate is still BLOCKED.
+
+## WSS and isolated reconnect
+
+The supplied endpoint supports mainnet JSON-RPC WSS. A 20-second subscription
+received 61 newHeads notifications. An isolated three-second client disconnect
+was followed by 14 blocks of backfill containing 847 logs; HTTP and WSS returned
+identical log identities and payloads. This is transport validation only.
+See gateway-integration.md for the custom gateway assessment and stage-filter
+limitations. No production service or node configuration was changed.
+
+## Position size/side replay
+
+Result: PASS within the explicitly limited size/side scope.
+From block 104240009 exclusive through 104240260 inclusive, 15337 exchange
+logs were read in ten-block ranges. The replay applied 243 increases, 182 opens,
+179 closes, 130 decreases and 6 inversions, for 740 size/side mutations.
+All resulting account/market quantities and directions matched the second
+snapshot exactly. The comparison was corrected to ignore JSON property order;
+a regression test covers that bug. Thirteen local tests passed.
+
+Partial liquidation, deleveraging and unwind quantity rules follow the SDK,
+but no such events were observed in this live interval. Their full financial
+effects are outside this diagnostic. Deposits, prices, funding and margin have
+not passed replay validation. Live reconnect tests and replay tests are separate;
+no continuously running collector or atomic persistent cursor is implemented.
+
 ## Real mainnet position sample
 
 On 2026-09-12 the direct ABI reader completed at block 104237339, hash

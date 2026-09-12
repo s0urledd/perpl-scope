@@ -8,7 +8,8 @@
   },
   "scripts": {
     "test": "node --test",
-    "validate": "node --env-file-if-exists=.env src/cli.js"
+    "validate": "node --env-file-if-exists=.env src/cli.js",
+    "snapshot": "node --env-file=.env src/snapshot.js"
   },
   "dependencies": {
     "viem": "2.56.3"

@@ -1,7 +1,8 @@
 # Perpl Scope
 
 Read-only Perpl risk analytics project, currently at the initial validation stage.
-The repository contains a bounded RPC preflight and offline tests. Dashboard,
+The repository contains a bounded RPC preflight, open-position snapshot,
+size/side replay diagnostics, WebSocket probes and offline tests. Dashboard,
 analytics API and Rust ingestion are pending the live data validation gate.
 
 ## Quick start
@@ -17,6 +18,10 @@ Copy-Item .env.example .env
 npm.cmd run validate
 # Mainnet only: bounded direct position sample using the official ABI subset.
 node --env-file=.env src/read-sample.js
+# Full open-position diagnostic (bounded; overall validation remains pending).
+npm.cmd run snapshot
+# Optional 20-second WebSocket connectivity probe.
+node --env-file=.env src/probe-wss.js
 ```
 
 Validation emits JSON. Exit 1 means FAIL; exit 2 means BLOCKED. This initial
