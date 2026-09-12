@@ -6,13 +6,17 @@ analytics API and Rust ingestion are pending the live data validation gate.
 
 ## Quick start
 
-Requires Node.js 24 or later. No external dependencies are required.
+Requires Node.js 24 or later. The RPC preflight has no external dependencies;
+the position reader uses the pinned viem dependency for ABI encoding/decoding.
 
 ```powershell
+npm.cmd ci
 npm.cmd test
 Copy-Item .env.example .env
 # Set MONAD_RPC_URL in .env to your authorized node endpoint.
 npm.cmd run validate
+# Mainnet only: bounded direct position sample using the official ABI subset.
+node --env-file=.env src/read-sample.js
 ```
 
 Validation emits JSON. Exit 1 means FAIL; exit 2 means BLOCKED. This initial
