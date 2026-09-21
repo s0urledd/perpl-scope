@@ -17,6 +17,7 @@ import { topicsFor } from './abi.js';
 import { accountMarkets } from './snapshot-core.js';
 import * as s from './state.js';
 import { saveCheckpoint, loadCheckpoint } from './checkpoint.js';
+import { bookOptions, readDepth } from './book.js';
 
 const integer = (value, fallback) => { const n = Number(value ?? fallback); if (!Number.isFinite(n) || n < 0) throw new Error('INVALID_COLLECTOR_OPTION'); return n; };
 
@@ -33,13 +34,16 @@ export function collectorOptions(env = {}) {
     staleAfterMs: integer(env.STALE_AFTER_MS, 45000),
     finalizedEveryPolls: integer(env.FINALIZED_EVERY_POLLS, 10),
     accountScanBatch: integer(env.ACCOUNT_SCAN_BATCH, 50),
-    maxAccounts: BigInt(integer(env.MAX_ACCOUNTS, 200000))
+    maxAccounts: BigInt(integer(env.MAX_ACCOUNTS, 200000)),
+    seriesEveryBlocks: BigInt(integer(env.SERIES_EVERY_BLOCKS, 200)),
+    book: bookOptions(env)
   };
 }
 
 export function createCollector({ config, options = collectorOptions(), rpc, reader = createReader({ rpc, exchange: config.exchange }), log = () => {} }) {
   const state = s.createState({ chain: config.chain, exchange: config.exchange });
-  let running = false, lastCheckpointAt = 0, lastVerifyBlock = null, polls = 0, consecutiveErrors = 0, verifying = false;
+  let running = false, lastCheckpointAt = 0, lastVerifyBlock = null, polls = 0, consecutiveErrors = 0, verifying = false, lastBookAt = 0;
+  state.series.everyBlocks = options.seriesEveryBlocks ?? state.series.everyBlocks;
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
   async function fetchLogs(from, to, topics = watchedTopics) {
@@ -200,6 +204,20 @@ export function createCollector({ config, options = collectorOptions(), rpc, rea
     return state.verification;
   }
 
+  // Bounded walk of resting depth at the current state block.
+  async function refreshBook(force = false) {
+    if (!options.book?.enabled || !state.block) return null;
+    if (!force && Date.now() - lastBookAt < options.book.refreshMs) return null;
+    const block = state.block.number;
+    const inputs = [...state.markets.values()].filter(x => x.markPNS > 0n && x.status === 4).map(x => ({ id: x.id, markPNS: x.markPNS, basePricePNS: x.basePricePNS, maxBidPriceONS: x.maxBidPriceONS ?? 0n, minAskPriceONS: x.minAskPriceONS ?? 0n }));
+    const depth = await readDepth(reader, inputs, block, { levels: options.book.levels, rangeBps: options.book.rangeBps });
+    if (state.block.number === block) s.applyBook(state, depth, block);
+    lastBookAt = Date.now();
+    return depth;
+  }
+
+  function sample() { try { return s.sampleSeries(state, s.metrics(state)); } catch (error) { log('warn', `series sample failed: ${error.message}`); return false; } }
+
   function freshness(now = Date.now()) {
     const age = state.stats.lastSuccessAt ? now - state.stats.lastSuccessAt : null;
     const status = !state.block ? 'syncing' : state.status === 'fresh' && age !== null && age > options.staleAfterMs ? 'stale' : state.status;
@@ -225,6 +243,8 @@ export function createCollector({ config, options = collectorOptions(), rpc, rea
         if (!state.block) { await bootstrap('start'); await backfillHistory(); }
         else await poll();
         consecutiveErrors = 0;
+        try { await refreshBook(); } catch (error) { log('warn', `book refresh failed: ${error.message}`); }
+        sample();
         if (state.block && (lastVerifyBlock === null || state.block.number - lastVerifyBlock >= options.verifyEveryBlocks)) verify().catch(() => {});
       } catch (error) {
         consecutiveErrors++; state.stats.errors++; state.stats.lastError = { message: error.message, at: Date.now() };
@@ -239,5 +259,5 @@ export function createCollector({ config, options = collectorOptions(), rpc, rea
 
   function stop() { running = false; }
 
-  return { state, options, reader, start, stop, bootstrap, poll, verify, backfillHistory, freshness, checkpoint: () => checkpoint(true) };
+  return { state, options, reader, start, stop, bootstrap, poll, verify, backfillHistory, refreshBook, sample, freshness, checkpoint: () => checkpoint(true) };
 }

@@ -18,7 +18,10 @@ No contract bytecode is included. Functions retained: account and position
 getters, `getPerpetualInfoV2`, paged `getPositionsV2`, `getPositionIds`,
 `getMarginFractions`, `getLiquidationInfo`, `getInsuranceProtocolSplit`,
 `getFundingSumAtBlock`, `getFundingInterval`, `getContractVersion`,
-`getUnwindInfo`, `isHalted` and `perpetualExists`.
+`getUnwindInfo`, `isHalted`, `perpetualExists` and the order-book getters
+`getVolumeAtBookPrice`, `getNextPriceBelowWithOrders`,
+`getNextPriceAboveWithOrders`, `getOrdersAtPriceLevel`, `getPriceLevelOrderIds`
+and `getOrderV2` (added 2026-09-21 for resting-depth measurement).
 
 `exchange-events.json` contains every event ABI entry from the same artifact.
 The collector decodes those events to learn which positions changed and to

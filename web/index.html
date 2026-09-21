@@ -1,11 +1,16 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PerplScope</title>
-<meta name="description" content="Independent risk analytics for Perpl on Monad: liquidation exposure, open interest and funding computed from chain state.">
+<meta name="description" content="Independent risk analytics for Perpl on Monad: liquidation exposure, on-chain liquidity, open interest and funding computed from chain state.">
+<meta name="theme-color" content="#161418" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f1f1f1" media="(prefers-color-scheme: light)">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -14,6 +19,10 @@
     <a href="#/" class="brand-name"><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 14l4-5 3 3 5-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>PerplScope</a>
     <span class="brand-sub">Independent risk analytics for Perpl on Monad</span>
   </div>
+  <form id="search" class="search" role="search">
+    <input id="search-input" type="text" inputmode="text" autocomplete="off" spellcheck="false" placeholder="Account ID or 0x address" aria-label="Look up an account by ID or address">
+    <button type="submit" class="ghost">Look up</button>
+  </form>
   <div class="topbar-right">
     <div id="snapshot" class="snapshot" aria-live="polite"><span class="dot dot-syncing"></span><span class="snapshot-text">Connecting…</span></div>
     <button id="theme" class="ghost" type="button" aria-label="Toggle colour theme">Theme</button>

@@ -21,6 +21,15 @@ venue: Perpl's public API appears only in a cross-check panel.
 - **Liquidation ladder**: cumulative notional liquidated per side at adverse
   moves from 0.5 % to 50 %, with the shortfall beyond bankruptcy at each step
   and the insurance fund's coverage of it.
+- **On-chain liquidity versus liquidation demand**: the resting order book is
+  walked from the contract at the same block, so each move shows whether the
+  bids or asks in range could absorb the forced flow (cover ratio).
+- **Stress test**: drag a slider from −30 % to +30 % and see the positions
+  hit, bad debt, insurance cover and depth available.
+- **Auto-deleveraging queue**: the opposing positions Perpl's ADL would close
+  first, ranked as the venue documents.
+- **Account lookup**: any account ID or address, all positions with
+  liquidation prices, distance and health, without connecting a wallet.
 - **Liquidation map**: liquidation prices of every open position binned every
   0.5 % around the mark, longs below and shorts above.
 - **Open interest** per side, reconciled to the contract's counters at every
@@ -33,6 +42,7 @@ venue: Perpl's public API appears only in a cross-check panel.
   maintenance margin, top-1/5/10 shares and HHI per side.
 - **Liquidation feed** and parameter-change log from exchange events.
 - A **validation page** showing the live checks and the Perpl API cross-check.
+- **24 h series** with sparklines and CSV export of positions and liquidations.
 
 Everything is served as a JSON API (`/api/v1/...`) and a dependency-free
 dashboard.
@@ -101,6 +111,8 @@ docker run -p 8787:8787 -v perpl-data:/data -e MONAD_RPC_URL=https://rpc.monad.x
 | `BACKFILL_BLOCKS` | `3000` | History backfill at start |
 | `FUNDING_HISTORY_EVENTS` | `48` | Funding events fetched per market at start |
 | `VERIFY_BLOCKS` | `12000` | Blocks between independent rescans (about one hour) |
+| `BOOK_LEVELS`, `BOOK_RANGE_BPS`, `BOOK_REFRESH_MS` | `40`, `1500`, `30000` | Order-book walk limits and cadence; `BOOK_DISABLED=1` turns it off |
+| `SERIES_EVERY_BLOCKS` | `200` | Sampling interval of the 24 h series (about one minute) |
 | `CHECKPOINT_PATH` | `data/checkpoint.json` | Atomic state checkpoint |
 | `MAX_RESUME_GAP` | `20000` | Oldest checkpoint resumed without a fresh bootstrap |
 | `STALE_AFTER_MS` | `45000` | Freshness threshold |
@@ -119,6 +131,7 @@ side replay between two snapshots), the WebSocket probes, and
 ## Documentation
 
 [Architecture](docs/architecture.md) · [Methodology](docs/methodology.md) ·
+[Landscape](docs/landscape.md) ·
 [Validation evidence](docs/validation-gate.md) · [API](docs/api.md) ·
 [Runbook](docs/runbook.md) · [Data sources](docs/data-sources.md) ·
 [Demo](docs/demo.md) · [Submission](docs/submission.md)

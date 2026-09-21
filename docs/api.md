@@ -36,8 +36,12 @@ percentages and ratios are numbers.
 | `GET /markets/{id}?limit=25` | Summary plus liquidation ladder, liquidation map, health distribution, per-side concentration, top positions, funding history (last 48 events) and recent liquidations. |
 | `GET /markets/{id}/positions?sort=notional|risk|pnl|size&side=long|short&limit=50` | Enriched open positions. `risk` sorts by distance to liquidation. |
 | `GET /markets/{id}/ladder` | Ladder and map only. |
-| `GET /markets/{id}/funding?limit=48` | Current funding view and event history. |
-| `GET /liquidations?limit=100&market={id}` | `PositionLiquidated` events, newest first, plus deleveraging events. |
+| `GET /markets/{id}/funding?limit=48` | Current funding view (including the next announced rate when already set on-chain) and event history. |
+| `GET /markets/{id}/stress?move_pct=-12.5` | Stress at one signed move: positions hit, notional, share of OI, shortfall, insurance cover, resting depth in range and its cover. Negative moves liquidate longs, positive moves shorts. |
+| `GET /markets/{id}/book` | Walked order-book levels per side, depth bands and cover per ladder row. 404 until the first walk. |
+| `GET /accounts/{id-or-address}` | All open positions of an account with liquidation prices, distance, health and PnL, plus free and locked balance. Resolved on-chain at the snapshot block; cached 15 s. |
+| `GET /series?hours=24&market={id}` | Sampled time series of exchange totals or one market. |
+| `GET /liquidations?limit=100&market={id}` | `PositionLiquidated` events, newest first, plus deleveraging events. `format=csv` downloads the list. |
 | `GET /validation` | Bootstrap, reconciliation, independent discovery result, PnL agreement per market, metric status table, RPC and collector counters. |
 | `GET /reference` | Perpl public-API cross-check per market (reference only). |
 | `GET /events` | Parameter changes, unwind events and liquidation diagnostics seen by the collector. |
@@ -51,7 +55,8 @@ percentages and ratios are numbers.
 - `insurance`: balance, coverage of notional and of total maintenance margin, liquidation proceeds split.
 - `risk`: notional within 5 % and 10 % of liquidation, shortfall at 10 %, insurance coverage of that shortfall.
 - `concentration`: top-1/5/10 shares, HHI (0–10000), largest position.
-- `funding`: rate per interval, 8 h and annualised equivalents, direction, clamp, next funding block and countdown, latest event.
+- `funding`: rate per interval, 8 h and annualised equivalents, direction, clamp, next funding block and countdown, latest event, `next_announced` when the next rate is already set on-chain.
+- `liquidity`: book block and age, levels walked, truncation flags, best bid and ask, spread, depth within 1 / 2 / 5 / 10 % per side, cover at 2 / 5 / 10 % per side (`null` before the first walk). Market detail adds the full `absorption` rows and `adl_queue`.
 - `validation`: `oi_reconciled`, `pnl_checked`, `pnl_agree`.
 - `reference`: deltas against the Perpl context endpoint, or `null` when disabled.
 
@@ -64,6 +69,8 @@ price (price rising). `shortfall` is the negative equity of positions whose
 bankruptcy price is crossed at that shocked price, and
 `insurance_coverage_pct` divides the market's insurance balance by the total
 shortfall (`null` when there is none).
+
+`GET /markets/{id}/positions?format=csv` downloads the same rows as CSV.
 
 ## Position fields
 

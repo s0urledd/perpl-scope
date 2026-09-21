@@ -94,3 +94,45 @@ test('static dashboard is served and traversal is rejected', async t => {
   assert.equal((await get('/nope.js')).status, 404);
   assert.equal((await get('/api/v1/nothing')).status, 404);
 });
+
+test('stress, book, account lookup, series and CSV endpoints', async t => {
+  const { fake, collector, get, base } = await setup(t);
+  fake.setBook(1, [[990000n, 100000n], [960000n, 300000n]], [[1010000n, 100000n], [1040000n, 300000n]]);
+  await collector.bootstrap('test');
+  await collector.refreshBook(true);
+  collector.sample();
+  const stress = await get('/api/v1/markets/1/stress?move_pct=-10');
+  assert.equal(stress.status, 200);
+  assert.equal(stress.body.side, 'long');
+  assert.equal(stress.body.liquidated.count, 1); // account 5: 10x long liquidates at 6 %
+  assert.equal(stress.body.liquidity.levels, 2);
+  assert.equal((await get('/api/v1/markets/1/stress?move_pct=0')).status, 400);
+  assert.equal((await get('/api/v1/markets/1/stress?move_pct=abc')).status, 400);
+  const book = await get('/api/v1/markets/1/book');
+  assert.equal(book.status, 200);
+  assert.equal(book.body.bids.length, 2);
+  assert.equal(book.body.liquidity.depth.bids['5'].levels, 2);
+  const summary = (await get('/api/v1/markets/1')).body.market;
+  assert.equal(summary.liquidity.cover_at_10pct.long_pct > 0, true);
+  assert.equal(summary.adl_queue.short.length, 0); // account 6 short sits at its entry price: zero PnL, excluded
+  const account = await get('/api/v1/accounts/5');
+  assert.equal(account.status, 200);
+  assert.equal(account.body.positions.length, 1);
+  assert.equal(account.body.closest_liquidation.symbol, 'BTC');
+  const byAddress = await get('/api/v1/accounts/0x0000000000000000000000000000000000000005');
+  assert.equal(byAddress.body.account.id, '5');
+  assert.equal((await get('/api/v1/accounts/999999')).status, 404);
+  assert.equal((await get('/api/v1/accounts/zz')).status, 400);
+  const series = await get('/api/v1/series?hours=24');
+  assert.equal(series.body.points.length, 1);
+  assert.equal(series.body.points[0].positions, 4);
+  const marketSeries = await get('/api/v1/series?market=1');
+  assert.equal(marketSeries.body.points[0].bid_depth_2pct, '99000.000000');
+  const csv = await fetch(base + '/api/v1/markets/1/positions?format=csv');
+  assert.equal(csv.headers.get('content-type'), 'text/csv; charset=utf-8');
+  const text = await csv.text();
+  assert.match(text.split('\r\n')[0], /^account_id,side,size/);
+  assert.equal(text.trim().split('\r\n').length, 3);
+  const liqCsv = await fetch(base + '/api/v1/liquidations?format=csv');
+  assert.equal(liqCsv.headers.get('content-disposition')?.startsWith('attachment'), true);
+});

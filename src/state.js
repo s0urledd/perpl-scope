@@ -4,7 +4,8 @@
 import * as m from './math.js';
 import { marketMetrics, exchangeTotals } from './metrics.js';
 
-export const STATE_VERSION = 2;
+export const STATE_VERSION = 3;
+export const SERIES_LIMIT = 1500;
 export const HISTORY_LIMITS = { funding: 3000, liquidations: 2000, deleverages: 500, buyToLiquidate: 500, unwinds: 200, params: 300, validation: 1000 };
 const POSITION_FIELDS = ['accountId', 'positionType', 'depositCNS', 'pricePNS', 'lotLNS', 'entryBlock', 'pnlCNS', 'deltaPnlCNS', 'premiumPnlCNS', 'priceResiduePNSQ16'];
 
@@ -14,6 +15,7 @@ export function createState({ chain, exchange }) {
     block: null, finalized: null, exchangeInfo: null, markets: new Map(),
     history: Object.fromEntries(Object.keys(HISTORY_LIMITS).map(k => [k, []])),
     reconciliation: null, verification: null, bootstrap: null,
+    series: { everyBlocks: 200n, lastBlock: null, points: [] },
     stats: { polls: 0, logs: 0, dirtyReads: 0, errors: 0, lastError: null, lastPollMs: null, startedAt: Date.now() },
     metricsCache: null
   };
@@ -42,7 +44,7 @@ export function normalizeMarket(read) {
     longOpenInterestLNS: big(info.longOpenInterestLNS), shortOpenInterestLNS: big(info.shortOpenInterestLNS),
     positionBalanceCNS: big(info.positionBalanceCNS), insuranceBalanceCNS: big(info.insuranceBalanceCNS),
     fundingStartBlock: big(info.fundingStartBlock), fundingRatePct100k: big(info.fundingRatePct100k), absFundingClampPctPer100K: big(info.absFundingClampPctPer100K), fundingSumScalingExp: Number(info.fundingSumScalingExp),
-    numOrders: big(info.numOrders), basePricePNS: big(info.basePricePNS),
+    numOrders: big(info.numOrders), basePricePNS: big(info.basePricePNS), maxBidPriceONS: big(info.maxBidPriceONS ?? 0n), minAskPriceONS: big(info.minAskPriceONS ?? 0n),
     maintHdths: big(margins.maintHdths), initHdths: big(margins.initHdths), dynamicInitHdths: big(margins.dynamicInitHdths), oiMaxLNS: big(margins.oiMaxLNS),
     liquidation: { insurancePer100K: big(liquidation.liqInsAmtPer100K), userPer100K: big(liquidation.liqUserAmtPer100K), protocolPer100K: big(liquidation.liqProtocolAmtPer100K), buyToLiquidateThresholdPer100K: big(liquidation.btlPriceThreshPer100K), buyToLiquidateRestricted: Boolean(liquidation.btlRestrictBuyers) },
     unwind: { status: Number(unwind.status), sumPositiveFmvCNS: big(unwind.sumPositiveFmvCNS), initPositionBalanceCNS: big(unwind.initPositionBalanceCNS) }
@@ -69,12 +71,39 @@ export function applyMarkets(state, reads) {
   for (const read of reads) {
     const market = normalizeMarket(read);
     const existing = state.markets.get(market.id);
-    state.markets.set(market.id, { ...market, positions: existing?.positions ?? new Map() });
+    state.markets.set(market.id, { ...market, positions: existing?.positions ?? new Map(), book: existing?.book ?? null });
   }
   state.metricsCache = null;
 }
 
 export function removeMarkets(state, ids) { for (const id of ids) state.markets.delete(Number(id)); state.metricsCache = null; }
+
+// Resting order-book depth read at `block` for the given markets.
+export function applyBook(state, depthMap, block) {
+  for (const [id, record] of depthMap) {
+    const market = state.markets.get(Number(id));
+    if (!market) continue;
+    market.book = { block: BigInt(block), at: Date.now(), bids: record.bids.map(l => ({ pricePNS: BigInt(l.pricePNS), lotLNS: BigInt(l.lotLNS), expiringLNS: BigInt(l.expiringLNS ?? 0n) })), asks: record.asks.map(l => ({ pricePNS: BigInt(l.pricePNS), lotLNS: BigInt(l.lotLNS), expiringLNS: BigInt(l.expiringLNS ?? 0n) })), truncated: { bids: Boolean(record.truncated?.bids), asks: Boolean(record.truncated?.asks) }, requests: record.requests ?? null };
+  }
+  state.metricsCache = null;
+}
+
+// Appends one sampled point of the current metrics to the bounded series.
+export function sampleSeries(state, computed) {
+  if (!computed || !state.block) return false;
+  const last = state.series.lastBlock;
+  if (last !== null && state.block.number - last < state.series.everyBlocks) return false;
+  const t = computed.totals;
+  const point = { block: state.block.number, ts: state.block.timestamp, totals: { notionalCNS: t.notionalCNS, at500: t.notionalAt500Bps, at1000: t.notionalAt1000Bps, shortfall1000: t.shortfallAt1000Bps, insuranceCNS: t.insuranceCNS, positions: t.positions, liquidatable: t.liquidatable }, markets: {} };
+  for (const { market, metrics } of computed.markets) {
+    const at10 = metrics.ladder.find(r => r.bps === 1000n);
+    point.markets[market.id] = { markPNS: market.markPNS, notionalCNS: metrics.oi.totalNotionalCNS, at1000: at10?.totalNotionalCNS ?? 0n, shortfall1000: at10?.totalShortfallCNS ?? 0n, insuranceCNS: market.insuranceBalanceCNS, fundingRatePct100k: market.fundingRatePct100k, positions: metrics.positions.length, bidDepth200: metrics.liquidity?.depth?.bids?.[200]?.notionalCNS ?? null, askDepth200: metrics.liquidity?.depth?.asks?.[200]?.notionalCNS ?? null };
+  }
+  state.series.points.push(point);
+  if (state.series.points.length > SERIES_LIMIT) state.series.points.splice(0, state.series.points.length - SERIES_LIMIT);
+  state.series.lastBlock = state.block.number;
+  return true;
+}
 
 export function replaceMarketPositions(state, id, positions, markPNS = null) {
   const market = state.markets.get(Number(id));
@@ -145,5 +174,6 @@ export function deserialize(text, { chain, exchange }) {
   Object.assign(state, { ...data, markets: new Map(), metricsCache: null, stats: { ...state.stats, ...data.stats, startedAt: Date.now() } });
   for (const market of data.markets) state.markets.set(market.id, { ...market, positions: new Map(market.positions.map(p => [p.accountId.toString(), clonePosition(p)])) });
   for (const key of Object.keys(HISTORY_LIMITS)) if (!Array.isArray(state.history[key])) state.history[key] = [];
+  if (!state.series || !Array.isArray(state.series.points)) state.series = { everyBlocks: 200n, lastBlock: null, points: [] };
   return state;
 }

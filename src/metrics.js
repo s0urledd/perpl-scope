@@ -3,6 +3,9 @@
 // All sums are exact BigInt in contract units. Ratios are basis points
 // (BigInt) unless documented otherwise. Nothing here talks to the network.
 import * as m from './math.js';
+import { depthWithin, absorption } from './book.js';
+
+export const DEPTH_BPS = [100n, 200n, 500n, 1000n];
 
 export const SHOCKS_BPS = [50n, 100n, 200n, 300n, 500n, 750n, 1000n, 1500n, 2000n, 3000n, 5000n];
 export const MAP_BIN_BPS = 50n;
@@ -109,6 +112,36 @@ export function healthDistribution(positions, buckets = HEALTH_BUCKETS) {
   return rows;
 }
 
+// Positions most likely to be auto-deleveraged when the opposite side goes
+// bankrupt: Perpl selects opposing positions most profitable first.
+export function adlQueue(positions, limit = 10) {
+  const roe = p => p.depositCNS > 0n ? m.floorDiv(p.pnlCNS * 10000n, p.depositCNS) : (p.pnlCNS > 0n ? 1n << 62n : -(1n << 62n));
+  const rank = list => [...list].filter(p => p.pnlCNS > 0n).sort((a, b) => { const d = roe(b) - roe(a); return d > 0n ? 1 : d < 0n ? -1 : (b.pnlCNS > a.pnlCNS ? 1 : b.pnlCNS < a.pnlCNS ? -1 : 0); }).slice(0, limit).map((p, i) => ({ rank: i + 1, accountId: p.accountId, side: p.side, roeBps: roe(p), pnlCNS: p.pnlCNS, markNotionalCNS: p.markNotionalCNS, leverageBps: p.leverageBps }));
+  return { long: rank(positions.filter(p => p.side === 'long')), short: rank(positions.filter(p => p.side === 'short')) };
+}
+
+// Liquidity summary: firm resting depth within fixed bands and the absorption of
+// the ladder's liquidation demand by that depth.
+export function liquiditySummary(market, ladder, u) {
+  const book = market.book;
+  if (!book) return null;
+  const depth = { bids: {}, asks: {} };
+  for (const bps of DEPTH_BPS) { depth.bids[bps] = depthWithin(book.bids, 'bids', market.markPNS, bps, u); depth.asks[bps] = depthWithin(book.asks, 'asks', market.markPNS, bps, u); }
+  return { block: book.block, at: book.at, truncated: book.truncated, levels: { bids: book.bids.length, asks: book.asks.length }, bestBidPNS: book.bids[0]?.pricePNS ?? null, bestAskPNS: book.asks[0]?.pricePNS ?? null, depth, absorption: absorption(ladder, book, market.markPNS, u) };
+}
+
+// One-off stress at a signed move: negative moves liquidate longs, positive shorts.
+export function stressAt(positions, market, u, signedBps) {
+  const bps = m.absBig(BigInt(signedBps));
+  const [row] = liquidationLadder(positions, market, u, [bps]);
+  const side = BigInt(signedBps) < 0n ? 'long' : 'short';
+  const bucket = row[side];
+  const hit = positions.filter(p => p.side === side && p.liquidationDistanceBps !== null && p.liquidationDistanceBps <= bps).sort((a, b) => (b.markNotionalCNS > a.markNotionalCNS ? 1 : b.markNotionalCNS < a.markNotionalCNS ? -1 : 0));
+  const depth = market.book ? depthWithin(side === 'long' ? market.book.bids : market.book.asks, side === 'long' ? 'bids' : 'asks', market.markPNS, bps, u) : null;
+  const totalNotional = sum(positions, p => p.markNotionalCNS);
+  return { bps: BigInt(signedBps), side, pricePNS: bucket.pricePNS, count: bucket.count, notionalCNS: bucket.notionalCNS, shortfallCNS: bucket.shortfallCNS, insuranceCoverageBps: bucket.shortfallCNS > 0n ? m.floorDiv(BigInt(market.insuranceBalanceCNS) * 10000n, bucket.shortfallCNS) : null, remainingNotionalCNS: totalNotional - bucket.notionalCNS, shareBps: shareBps(bucket.notionalCNS, totalNotional), depthCNS: depth?.notionalCNS ?? null, depthLevels: depth?.levels ?? null, absorptionBps: depth && bucket.notionalCNS > 0n ? m.floorDiv(depth.notionalCNS * 10000n, bucket.notionalCNS) : null, hit };
+}
+
 export function sideSummary(positions) {
   const lot = sum(positions, p => p.lotLNS), deposit = sum(positions, p => p.depositCNS);
   const entryNotional = sum(positions, p => p.entryNotionalCNS);
@@ -138,10 +171,13 @@ export function marketMetrics(market, rawPositions, u) {
   const pnlChecked = positions.filter(p => p.contractAgrees !== null);
   const pnlAgreement = { checked: pnlChecked.length, agree: pnlChecked.filter(p => p.contractAgrees).length };
   const totalMmr = long.mmrCNS + short.mmrCNS;
+  const ladder = liquidationLadder(positions, market, u);
   return {
     id: market.id, symbol: market.symbol,
     positions, long, short, oi,
-    ladder: liquidationLadder(positions, market, u),
+    ladder,
+    liquidity: liquiditySummary(market, ladder, u),
+    adl: adlQueue(positions),
     map: liquidationMap(positions, market),
     concentration: { all: concentration(positions), long: concentration(longs), short: concentration(shorts) },
     health: healthDistribution(positions),

@@ -1137,5 +1137,308 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getVolumeAtBookPrice",
+    "inputs": [
+      {
+        "name": "perpId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "priceONS",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "bids",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expBids",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "asks",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expAsks",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getNextPriceBelowWithOrders",
+    "inputs": [
+      {
+        "name": "perpId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "priceONS",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "priceBelowONS",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getNextPriceAboveWithOrders",
+    "inputs": [
+      {
+        "name": "perpId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "priceONS",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "priceAboveONS",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getOrdersAtPriceLevel",
+    "inputs": [
+      {
+        "name": "perpId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "priceONS",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "pageStartOrderId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "ordersPerPage",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ordersAtPriceLevel",
+        "type": "tuple[]",
+        "internalType": "struct Order[]",
+        "components": [
+          {
+            "name": "accountId",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "orderType",
+            "type": "uint8",
+            "internalType": "enum OrderEnum"
+          },
+          {
+            "name": "priceONS",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "lotLNS",
+            "type": "uint40",
+            "internalType": "uint40"
+          },
+          {
+            "name": "recycleFeeRaw",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "expiryBlock",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "leverageHdths",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "orderId",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "prevOrderId",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "nextOrderId",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxNegPnlCollatBPS",
+            "type": "uint16",
+            "internalType": "uint16"
+          }
+        ]
+      },
+      {
+        "name": "numOrders",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getPriceLevelOrderIds",
+    "inputs": [
+      {
+        "name": "perpId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "priceONS",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "startOrderId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "endOrderId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getOrderV2",
+    "inputs": [
+      {
+        "name": "perpId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "orderId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "order",
+        "type": "tuple",
+        "internalType": "struct OrderV2",
+        "components": [
+          {
+            "name": "accountId",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "orderType",
+            "type": "uint8",
+            "internalType": "enum OrderEnum"
+          },
+          {
+            "name": "priceONS",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "lotLNS",
+            "type": "uint40",
+            "internalType": "uint40"
+          },
+          {
+            "name": "recycleFeeRaw",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "expiryBlock",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "leverageHdths",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "orderId",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "prevOrderId",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "nextOrderId",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxNegPnlCollatBPS",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "builderId",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "builderFeePer100K",
+            "type": "uint16",
+            "internalType": "uint16"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
   }
 ]

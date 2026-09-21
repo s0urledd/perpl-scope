@@ -13,9 +13,10 @@ export function createFakeExchange({ markets = [1, 20], fundingInterval = 8571n 
   const chain = { head: 1000n, logs: [], forkFrom: null };
   const state = {
     markets: new Map(markets.map(id => [id, { id, symbol: id === 1 ? 'BTC' : 'ETH', priceDecimals: 1n, lotDecimals: 5n, markPNS: 1000000n, oraclePNS: 1000100n, maintHdths: 2500n, initHdths: 1500n, insurance: 5000000000n, positions: new Map(), longOI: 0n, shortOI: 0n }])),
-    accounts: 0n, halted: false, fundingInterval
+    accounts: 0n, halted: false, fundingInterval, books: new Map()
   };
-  const info = market => ({ name: market.symbol + ' Perp', symbol: market.symbol, priceDecimals: market.priceDecimals, lotDecimals: market.lotDecimals, linkFeedId: '0x' + '00'.repeat(32), priceTolPer100K: 5000n, marginTol: 100n, marginTolDecimals: 9n, refPriceMaxAgeSec: 60n, positionBalanceCNS: 0n, insuranceBalanceCNS: market.insurance, markPNS: market.markPNS, markTimestamp: 1790000000n, lastPNS: market.markPNS, lastTimestamp: 1790000000n, oraclePNS: market.oraclePNS, oracleTimestampSec: 1790000000n, longOpenInterestLNS: market.longOI, shortOpenInterestLNS: market.shortOI, fundingStartBlock: 0n, fundingRatePct100k: -4, absFundingClampPctPer100K: 10n, status: 4, basePricePNS: 0n, maxBidPriceONS: 0n, minBidPriceONS: 0n, maxAskPriceONS: 0n, minAskPriceONS: 0n, numOrders: 0n, ignOracle: false, fundingSumScalingExp: 0n });
+  const bookOf = market => state.books.get(market.id) ?? { bids: [], asks: [] };
+  const info = market => ({ name: market.symbol + ' Perp', symbol: market.symbol, priceDecimals: market.priceDecimals, lotDecimals: market.lotDecimals, linkFeedId: '0x' + '00'.repeat(32), priceTolPer100K: 5000n, marginTol: 100n, marginTolDecimals: 9n, refPriceMaxAgeSec: 60n, positionBalanceCNS: 0n, insuranceBalanceCNS: market.insurance, markPNS: market.markPNS, markTimestamp: 1790000000n, lastPNS: market.markPNS, lastTimestamp: 1790000000n, oraclePNS: market.oraclePNS, oracleTimestampSec: 1790000000n, longOpenInterestLNS: market.longOI, shortOpenInterestLNS: market.shortOI, fundingStartBlock: 0n, fundingRatePct100k: -4, absFundingClampPctPer100K: 10n, status: 4, basePricePNS: 0n, maxBidPriceONS: bookOf(market).bids[0]?.[0] ?? 0n, minBidPriceONS: 0n, maxAskPriceONS: 0n, minAskPriceONS: bookOf(market).asks[0]?.[0] ?? 0n, numOrders: BigInt(bookOf(market).bids.length + bookOf(market).asks.length), ignOracle: false, fundingSumScalingExp: 0n });
   const positionOf = (market, accountId) => {
     const p = market.positions.get(accountId.toString());
     return p ? { accountId, nextNodeId: 0n, prevNodeId: 0n, positionType: p.positionType, depositCNS: p.depositCNS, pricePNS: p.pricePNS, lotLNS: p.lotLNS, entryBlock: p.entryBlock, pnlCNS: 0n, deltaPnlCNS: 0n, premiumPnlCNS: p.premiumPnlCNS, priceResiduePNSQ16: 0n }
@@ -51,7 +52,11 @@ export function createFakeExchange({ markets = [1, 20], fundingInterval = 8571n 
         return [padded, BigInt(page.length), m.markPNS, true];
       }
       case 'getPositionV2': return [positionOf(market(args[0]), args[1]), market(args[0]).markPNS, true];
-      case 'getAccountById': return { accountId: args[0], balanceCNS: 0n, lockedBalanceCNS: 0n, frozen: 0, accountAddr: '0x' + args[0].toString(16).padStart(40, '0'), positions: bitmapFor(args[0]) };
+      case 'getAccountById': { const id = args[0]; const known = id >= 1n && id <= state.accounts; return { accountId: known ? id : 0n, balanceCNS: known ? 5000000n : 0n, lockedBalanceCNS: 0n, frozen: 0, accountAddr: known ? '0x' + id.toString(16).padStart(40, '0') : '0x' + '00'.repeat(20), positions: known ? bitmapFor(id) : { bank1: 0n, bank2: 0n, bank3: 0n, bank4: 0n } }; }
+      case 'getAccountByAddr': { const id = BigInt(args[0]); const known = id >= 1n && id <= state.accounts; return { accountId: known ? id : 0n, balanceCNS: known ? 5000000n : 0n, lockedBalanceCNS: 0n, frozen: 0, accountAddr: known ? args[0] : '0x' + '00'.repeat(20), positions: known ? bitmapFor(id) : { bank1: 0n, bank2: 0n, bank3: 0n, bank4: 0n } }; }
+      case 'getVolumeAtBookPrice': { const b = bookOf(market(args[0])); const bid = b.bids.find(l => l[0] === args[1]), ask = b.asks.find(l => l[0] === args[1]); return [bid?.[1] ?? 0n, 0n, ask?.[1] ?? 0n, 0n]; }
+      case 'getNextPriceBelowWithOrders': { const b = bookOf(market(args[0])); return b.bids.filter(l => l[0] < args[1]).map(l => l[0]).sort((x, y) => (x < y ? 1 : -1))[0] ?? 0n; }
+      case 'getNextPriceAboveWithOrders': { const b = bookOf(market(args[0])); return b.asks.filter(l => l[0] > args[1]).map(l => l[0]).sort((x, y) => (x < y ? -1 : 1))[0] ?? 0n; }
       default: throw new Error('UNSUPPORTED:' + name);
     }
   }
@@ -106,5 +111,6 @@ export function createFakeExchange({ markets = [1, 20], fundingInterval = 8571n 
     const m = state.markets.get(perpId);
     for (const p of m.positions.values()) p.premiumPnlCNS += (p.positionType === 0 ? -1n : 1n) * paymentPNS * p.lotLNS * 1000000n / (10n ** m.priceDecimals * 10n ** m.lotDecimals);
   }
-  return { rpc, chain, state, stats, emit, open, close, silentDrift, funding, advance: (n = 1n) => { chain.head += n; return chain.head; }, fork: from => { chain.forkFrom = from; } };
+  function setBook(perpId, bids, asks) { state.books.set(perpId, { bids: bids.map(([p, l]) => [BigInt(p), BigInt(l)]).sort((a, b) => (a[0] < b[0] ? 1 : -1)), asks: asks.map(([p, l]) => [BigInt(p), BigInt(l)]).sort((a, b) => (a[0] < b[0] ? -1 : 1)) }); }
+  return { rpc, chain, state, stats, emit, open, close, silentDrift, funding, setBook, advance: (n = 1n) => { chain.head += n; return chain.head; }, fork: from => { chain.forkFrom = from; } };
 }

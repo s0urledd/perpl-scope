@@ -79,6 +79,10 @@ on-chain are checked against this classification on every validation run.
   blocks). Next funding block: `block − block mod interval + interval`.
   History from `FundingEventCompleted` (rate, funding price, payment per unit,
   cumulative sum).
+- **On-chain liquidity**: the resting book is walked from the best bid and best ask through `getNextPriceBelowWithOrders` / `getNextPriceAboveWithOrders`, reading `getVolumeAtBookPrice` at each level, at the same pinned block as the positions, up to `BOOK_LEVELS` levels per side within `BOOK_RANGE_BPS` of the mark (defaults 40 and 15 %). Only the firm `bids` / `asks` counters count as depth; the `expBids` / `expAsks` counters were observed to hold expired orders awaiting clearing and are reported separately. **Depth within k %** is the notional of levels within k % of the mark on one side. **Cover** at move k is `depth within k % ÷ liquidation notional within k %` on the side the liquidations would trade into (long liquidations sell into bids, short liquidations buy from asks). A cover below 100 % means resting orders cannot absorb the forced flow without moving through the whole measured book.
+- **Stress test**: for any signed move the same ladder arithmetic is evaluated at that single shock, returning the positions hit, shortfall, insurance cover and depth in range.
+- **Auto-deleveraging queue**: per side, profitable positions ranked by unrealised return on deposit (`pnl ÷ deposit`), most profitable first, as Perpl documents for ADL counterparty selection. The venue's exact ordering is off-chain, so the queue is an approximation of it.
+- **Series**: every `SERIES_EVERY_BLOCKS` blocks the collector samples exchange totals and per-market notional, exposure at 10 %, shortfall, insurance, funding rate and 2 % depth into a bounded ring buffer persisted with the checkpoint.
 - **Basis**: `(mark − oracle) / oracle`.
 - **Exchange totals** sum the per-market values; `liquidations_24h` counts
   `PositionLiquidated` events within the last 24 h of blocks.
@@ -96,6 +100,9 @@ on-chain are checked against this classification on every validation run.
 | Ladder, map, shortfall, coverage | derived | Deterministic functions of the validated inputs above |
 | Concentration, health | derived | Deterministic |
 | Insurance balances | on-chain | `getPerpetualInfoV2` |
+| Resting depth | on-chain | Walked level by level; walk cost 40 requests for 11 markets in 2.4 s on the public RPC |
+| Liquidity cover, stress test | derived | Deterministic functions of validated inputs |
+| ADL queue | approximation | Ranking rule from the Perpl documentation; venue ordering is off-chain |
 
 Not modelled: order books and resting orders, cross-margin (the venue is
 isolated-margin), funding accrued between funding events, dynamic initial

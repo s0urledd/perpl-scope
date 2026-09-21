@@ -10,7 +10,11 @@
   `getMarginFractions`, `getLiquidationInfo`, `getUnwindInfo`,
   `getPositionsV2` (paged), `getPositionV2`, `getAccountById`,
   `numberOfAccounts`, `getFundingInterval`, `getFundingSumAtBlock`,
-  `getContractVersion`, `isHalted`, `getExchangeInfo`.
+  `getContractVersion`, `isHalted`, `getExchangeInfo`; order book:
+  `getVolumeAtBookPrice`, `getNextPriceBelowWithOrders`,
+  `getNextPriceAboveWithOrders` (levels are offsets from `basePricePNS`, which
+  is zero on every listed market; `getOrdersAtPriceLevel` was used only to
+  confirm that the `exp` volume counters hold expired orders).
 - Events used: position lifecycle, collateral changes, `FundingEventCompleted`,
   `PositionLiquidated`, deleveraging, unwind, parameter updates, liquidation
   diagnostics (`src/events.js`).
