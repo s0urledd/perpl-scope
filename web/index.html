@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PerplScope</title>
-<meta name="description" content="Independent risk analytics for Perpl on Monad: liquidation exposure, on-chain liquidity, open interest and funding computed from chain state.">
+<meta name="description" content="Independent analytics and risk monitor for Perpl on Monad: volume, open interest, TVL, fees, flows, liquidations, funding and full wallet profiles computed from chain state and events.">
 <meta name="theme-color" content="#161418" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#f1f1f1" media="(prefers-color-scheme: light)">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
@@ -17,10 +17,10 @@
 <header class="topbar">
   <div class="brand">
     <a href="#/" class="brand-name"><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 14l4-5 3 3 5-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>PerplScope</a>
-    <span class="brand-sub">Independent risk analytics for Perpl on Monad</span>
+    <span class="brand-sub">Independent analytics and risk monitor for Perpl on Monad</span>
   </div>
   <form id="search" class="search" role="search">
-    <input id="search-input" type="text" inputmode="text" autocomplete="off" spellcheck="false" placeholder="Account ID or 0x address" aria-label="Look up an account by ID or address">
+    <input id="search-input" type="text" inputmode="text" autocomplete="off" spellcheck="false" placeholder="Search wallet: 0x address or account ID" aria-label="Look up a wallet by address or account ID">
     <button type="submit" class="ghost">Look up</button>
   </form>
   <div class="topbar-right">
@@ -31,13 +31,15 @@
 <nav class="tabs" aria-label="Sections">
   <a href="#/" data-route="overview">Overview</a>
   <a href="#/market/1" data-route="market">Markets</a>
+  <a href="#/traders" data-route="traders">Traders</a>
   <a href="#/liquidations" data-route="liquidations">Liquidations</a>
+  <a href="#/compare" data-route="compare">Watchlist <span id="watch-count" class="count"></span></a>
   <a href="#/validation" data-route="validation">Validation</a>
   <a href="#/about" data-route="about">About</a>
 </nav>
 <main id="main" class="main"></main>
 <footer class="footer">
-  <p>Every figure is computed from Monad chain state at the block shown in the header. Perpl's public API is used only in the cross-check panel and never to compute a metric.</p>
+  <p>Every figure is computed from Monad chain state and exchange events at the block shown in the header. Perpl's public API is used only as a cross-check and never to compute a metric. Watchlists stay in your browser.</p>
   <p><a href="https://github.com/s0urledd/perpl-scope">Source</a> · <a href="api/v1/overview">JSON API</a> · <a href="#/about">Methodology</a></p>
 </footer>
 <div id="tooltip" class="tooltip" role="status" hidden></div>

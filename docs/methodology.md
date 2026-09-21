@@ -107,3 +107,44 @@ on-chain are checked against this classification on every validation run.
 Not modelled: order books and resting orders, cross-margin (the venue is
 isolated-margin), funding accrued between funding events, dynamic initial
 margin for large sizes (reported as `dynamic_max_leverage` only).
+
+## Activity metrics from exchange events
+
+Position state is never derived from events, but volume, fees, flows and
+wallet history can only come from them. The index decodes the following and
+keeps every amount in contract units:
+
+| Metric | Definition |
+| --- | --- |
+| Volume | Sum of `MakerOrderFilled(V2).pricePNS × lotLNS`, so every match is counted once. Equal to the taker side (`TakerOrderFilledV2.entryPricePNS × lotLNS`) to the unit over a 3,000-block sample. |
+| Fees | Sum of maker and taker `feeCNS` on fills. Perpl charges fees on fills that build a position (open, increase, invert); reducing fills carry zero fee. The insurance / protocol split is the sum of `insFeeCNS` and `protFeeCNS` on the position events, which equalled the fill fees to the unit over the same sample. Builder fees are reported separately. |
+| Trade price and size | Every user position event is immediately followed in its transaction by the fill that settled it (a maker fill for the same account or the taker fill). That fill supplies the trade price, the traded size and the fee: `PositionIncreased.pricePNS` is the blended entry price, not the trade price, and `PositionClosed` carries no size. Checked on 3,720 of 3,720 position events. |
+| Active traders | Distinct accounts with a fill or position change in the window. New accounts from `AccountCreated`. |
+| Flows | `CollateralDeposit` and `CollateralWithdrawal` amounts; net flow is deposits minus withdrawals. |
+| Liquidations | `PositionLiquidated` count and exit-price notional; deleverages from `PositionDeleveraged(V2)`. |
+| Realized PnL | `deltaPnlCNS + fundingCNS` on decreasing, closing, inverting, liquidated and deleveraged events (before fees). |
+| Taker flow | Notional of taker-settled position changes split into buys (opening or increasing a long, reducing or closing a short) and sells. Long and short open interest on Perpl are equal by construction, so skew is read from taker flow and from the count, deposit and leverage of positions per side. |
+| Open interest and TVL over time | `getPerpetualInfoV2` counters at the mark and `getExchangeInfo.balanceCNS`, sampled at hour boundaries (historically through archive reads where the provider keeps state). |
+| Withdrawal rate limit | `getWithdrawAllowanceData(block)`: remaining allowance, expiry block and refill per block, reported with the refill per hour and the share of TVL withdrawable now. |
+
+Windows are block ranges on the snapshot block converted with the measured
+block time. A window inside the raw record window is summed exactly; longer
+windows sum hourly buckets and are flagged `partial` when a bucket is missing
+or incomplete.
+
+### Wallet analytics
+
+Records of one account are grouped into round trips per market and side: an
+open starts one, increases add to it, decreases realize part of it, and a
+close, inversion, full liquidation or full deleveraging ends it. A trip whose
+open lies before the indexed window is marked incomplete and excluded from
+hold-time statistics. Over closed trips: win rate = winning trips / closed
+trips; profit factor = gross profit / gross loss; max drawdown = largest
+peak-to-trough fall of cumulative realized PnL in trip order; streaks count
+consecutive winning or losing trips; hold time = blocks between open and
+close times the measured block time. Observations are rule-based sentences
+over these numbers; no model is involved.
+
+Validation: on 2026-09-21 the 24 h maker-fill volume ($41,345,871) agreed
+with Perpl's venue-reported 24 h volume ($41,346,189) to within 0.001 %, and
+every market agreed within 1 % (window alignment).

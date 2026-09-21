@@ -80,3 +80,20 @@ restricted to safe characters, and every response carries `nosniff`,
 `no-referrer` and `DENY` framing headers with a same-origin script policy on
 the page. The independent review of 2026-09-21 found no high or medium
 severity issue; its hardening notes are implemented.
+
+## Event index and backfill
+
+`src/index.js` turns exchange logs into compact records (numbers, not
+BigInts, converted at the math boundary) and folds each into an hourly bucket
+keyed by block; `src/backfill.js` walks the chain newest to oldest with a
+bounded worker pool and reports the lowest block covered contiguously from
+the head, which is what makes a window sum trustworthy. `src/analytics.js`
+groups an account's records into round trips per market and side and derives
+the performance statistics; `src/stats.js` turns index queries into the
+`/stats`, `/stats/series`, `/leaderboard` and wallet-analytics responses.
+The collector owns the index: live polls ingest the union of the risk and
+index topics, hour boundaries record open-interest snapshots, and the
+aggregates are persisted next to the checkpoint. A reorganisation triggers a
+fresh bootstrap and a gap backfill; records from orphaned blocks are not
+rolled back (Monad finalises within seconds, and the affected hour would be
+rebuilt on the next start).

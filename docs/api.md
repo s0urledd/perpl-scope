@@ -39,9 +39,14 @@ percentages and ratios are numbers.
 | `GET /markets/{id}/funding?limit=48` | Current funding view (including the next announced rate when already set on-chain) and event history. |
 | `GET /markets/{id}/stress?move_pct=-12.5` | Stress at one signed move: positions hit, notional, share of OI, shortfall, insurance cover, resting depth in range and its cover. Negative moves liquidate longs, positive moves shorts. |
 | `GET /markets/{id}/book` | Walked order-book levels per side, depth bands and cover per ladder row. 404 until the first walk. |
-| `GET /accounts/{id-or-address}` | All open positions of an account with liquidation prices, distance, health and PnL, plus free and locked balance. The account record is resolved on-chain (`account_read_block`, cached 15 s, misses included); positions always come from the current snapshot. At most four lookups resolve concurrently; more return `503 BUSY`. |
+| `GET /accounts/{id-or-address}?limit=200` | Full wallet profile: account record and balances, open positions with liquidation prices, distance, health and PnL, `totals` (account value, margin usage, effective leverage), `summary` (trades, volume, realized and net PnL, fees, funding, flows), `performance` (win rate, profit factor, drawdown, streaks, hold times, best / worst markets, per-market table, equity curve), `observations`, `trips`, `open_trips`, `history` (newest first) and `flows`, with `coverage` of the indexed window. The account record is resolved on-chain (cached 15 s, misses included); positions always come from the current snapshot. At most four lookups resolve concurrently; more return `503 BUSY`. |
+| `GET /accounts/{id-or-address}/trades` | Position changes of the account, newest first; `format=csv` downloads them. |
+| `GET /stats?window=24h` | Protocol statistics for `1h`, `24h`, `7d`, `30d` or `all`: `activity` (volume, trades, taker buy / sell, active traders, new accounts, realized PnL), `fees` (total, maker, taker, builder, insurance, protocol, take rate), `flows`, `liquidations`, `current` (open interest, TVL, insurance, accounts, positions, withdrawal limit), `change` since the window start, `venue` (Perpl's reported 24 h volume against the chain), per-market rows with skew, and `coverage`. |
+| `GET /stats/series?window=7d&market={id}` | Hourly buckets over the window: volume, cumulative volume, trades, fees, taker flow, active traders, new accounts, flows, liquidations, realized PnL, and the open-interest / TVL / insurance snapshot where sampled. |
+| `GET /leaderboard?window=24h&by=pnl&limit=25` | Accounts ranked by `pnl`, `loss`, `volume`, `trades`, `fees`, `liquidated`, `deposits` or `withdrawals`, with open positions from the snapshot. |
+| `GET /index` | Event-index status: records, coverage, buckets, snapshots, backfill progress and options. |
 | `GET /series?hours=24&market={id}` | Sampled time series of exchange totals or one market. |
-| `GET /liquidations?limit=100&market={id}` | `PositionLiquidated` events, newest first, plus deleveraging events. `format=csv` downloads the list. |
+| `GET /liquidations?limit=100&market={id}` | `PositionLiquidated` events, newest first (from the event index once it has records, otherwise from the in-memory history), plus deleveraging events. `format=csv` downloads the list. |
 | `GET /validation` | Bootstrap, reconciliation, independent discovery result, PnL agreement per market, metric status table, RPC and collector counters. |
 | `GET /reference` | Perpl public-API cross-check per market (reference only). |
 | `GET /events` | Parameter changes, unwind events and liquidation diagnostics seen by the collector. |
@@ -83,3 +88,12 @@ over maintenance margin; `status` is `healthy`, `liquidatable`
 (0 < equity ≤ maintenance) or `bankrupt` (equity ≤ 0).
 `pnl_matches_contract` reports whether the recomputed delta PnL equals the
 contract's value at the mark the position was read at.
+
+## Windows and coverage
+
+Windowed endpoints take `window` (`1h`, `24h`, `7d`, `30d`, `all`) and
+convert it to a block range ending at the snapshot block. `coverage` reports
+`exact` (summed from raw records), `partial` (the index does not reach the
+start of the window, or an hourly bucket is incomplete), the block and time
+the index covers from, and the backfill state. Amounts are decimal strings in
+AUSD; percentages are numbers.

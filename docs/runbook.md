@@ -66,3 +66,37 @@ The Dockerfile builds a production image (`node:22-alpine`, non-root). Mount
 container with one persistent volume works (Fly.io, Railway, Render, a VPS).
 Expose port 8787 behind TLS; the API is read-only and sends
 `access-control-allow-origin: *`.
+
+## Event index
+
+The activity metrics (volume, fees, flows, active traders, liquidations,
+wallet history, leaderboards) come from exchange events kept in memory over a
+rolling window and rolled into hourly aggregates that outlive it.
+
+- **Backfill.** After bootstrap the collector walks `eth_getLogs` newest to
+  oldest over `INDEX_BLOCKS` with `INDEX_CONCURRENCY` requests of
+  `INDEX_LOG_RANGE` blocks each, halving a range the provider rejects and
+  stopping where its history ends. Progress is visible at `GET /api/v1/index`
+  and on the validation page. Live polls ingest new blocks meanwhile.
+- **Snapshots.** At every hour boundary the collector samples open interest,
+  TVL, insurance and funding per market; during backfill the same sample is
+  read at historical blocks (skipped where the provider has pruned state).
+- **Persistence.** `INDEX_PATH` holds the hourly aggregates and snapshots,
+  written with each checkpoint. Raw records are rebuilt from the chain at
+  start; aggregates older than the provider's history survive restarts, so
+  7 d and 30 d windows fill in as the service runs.
+- **Coverage.** Every window reports `exact` (summed from raw records),
+  `partial` (the index does not reach the start of the window) and the block
+  and time it covers from. Aggregates use hourly buckets, so a partial window
+  is never silently short.
+- **Memory.** About 250 bytes per record. Perpl mainnet produced about 1.5
+  records per block in September 2026, so four days (1.2 M blocks) hold about
+  1.7 M records and 450 MB of heap. Size `INDEX_BLOCKS` to the provider's
+  history and run Node with `--max-old-space-size` above that.
+
+Measured on a self-hosted Monad node (`monad-rpc.huginn.tech`, 2026-09-21):
+1000-block log ranges, roughly 98 hours of logs and state, eight parallel
+requests answered in under a second; the full four-day backfill with
+`INDEX_LOG_RANGE=1000 INDEX_CONCURRENCY=6` took about two minutes and 2,100
+requests. Public `rpc.monad.xyz` needs `INDEX_LOG_RANGE=100` and is about
+ten times slower per block.

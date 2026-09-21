@@ -50,3 +50,10 @@
 Measured block time on 2026-09-21: about 0.30 s (1000-block window), so one
 funding interval (8571 blocks) is about 43 minutes, matching the public
 context's `funding_interval_sec`.
+
+Self-hosted node `https://monad-rpc.huginn.tech` (2026-09-21): `eth_getLogs`
+accepts 1000-block ranges (1500 rejected as too large, 1000 unfiltered blocks
+exceed the response size limit, so the index always filters by topic), keeps
+about 98 hours of logs and state, and answers eight parallel log requests in
+under a second. Used for the index backfill; the public endpoints remain
+sufficient for the live snapshot.
