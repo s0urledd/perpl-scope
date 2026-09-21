@@ -1,0 +1,174 @@
+// Market risk metrics derived from a pinned-block set of positions.
+//
+// All sums are exact BigInt in contract units. Ratios are basis points
+// (BigInt) unless documented otherwise. Nothing here talks to the network.
+import * as m from './math.js';
+
+export const SHOCKS_BPS = [50n, 100n, 200n, 300n, 500n, 750n, 1000n, 1500n, 2000n, 3000n, 5000n];
+export const MAP_BIN_BPS = 50n;
+export const MAP_RANGE_BPS = 3000n;
+export const HEALTH_BUCKETS = [10000n, 12500n, 15000n, 20000n, 30000n, 50000n];
+
+const sum = (items, pick) => items.reduce((total, item) => total + pick(item), 0n);
+const shareBps = (part, total) => total > 0n ? m.floorDiv(part * 10000n, total) : null;
+
+export function enrichPosition(position, market, u) {
+  const type = Number(position.positionType), lot = BigInt(position.lotLNS);
+  const entryQ16 = m.entryPriceQ16(type, position.pricePNS, position.priceResiduePNSQ16 ?? 0n);
+  const entryNotionalCNS = m.entryNotionalCNS(entryQ16, lot, u);
+  const markNotionalCNS = m.notionalCNS(market.markPNS, lot, u);
+  const deltaPnlCNS = m.deltaPnlCNS(type, entryQ16, market.markPNS, lot, u);
+  const premiumPnlCNS = BigInt(position.premiumPnlCNS);
+  const depositCNS = BigInt(position.depositCNS);
+  const mmrCNS = m.maintenanceMarginCNS(entryQ16, lot, market.maintHdths, u);
+  const fmvCNS = m.fmvCNS(depositCNS, deltaPnlCNS, premiumPnlCNS);
+  const liquidationMicroPNS = m.liquidationPriceMicroPNS(type, entryQ16, lot, depositCNS, premiumPnlCNS, mmrCNS, u);
+  const bankruptcyMicroPNS = m.bankruptcyPriceMicroPNS(type, entryQ16, lot, depositCNS, premiumPnlCNS, u);
+  return {
+    accountId: BigInt(position.accountId), positionType: type, side: type === m.LONG ? 'long' : 'short', lotLNS: lot,
+    entryQ16, entryNotionalCNS, markNotionalCNS, depositCNS, deltaPnlCNS, premiumPnlCNS, pnlCNS: deltaPnlCNS + premiumPnlCNS,
+    contractDeltaPnlCNS: position.deltaPnlCNS === undefined ? null : BigInt(position.deltaPnlCNS),
+    contractPnlCNS: position.pnlCNS === undefined ? null : BigInt(position.pnlCNS),
+    // The contract computed its deltaPnlCNS at the mark current when the position was read.
+    contractAgrees: position.deltaPnlCNS === undefined || position.readMarkPNS === undefined ? null : m.deltaPnlCNS(type, entryQ16, position.readMarkPNS, lot, u) === BigInt(position.deltaPnlCNS),
+    mmrCNS, fmvCNS, healthBps: m.healthBps(fmvCNS, mmrCNS), status: m.classify(fmvCNS, mmrCNS),
+    liquidationMicroPNS, bankruptcyMicroPNS,
+    liquidationDistanceBps: m.distanceBps(type, market.markPNS, liquidationMicroPNS),
+    bankruptcyDistanceBps: m.distanceBps(type, market.markPNS, bankruptcyMicroPNS),
+    leverageBps: depositCNS > 0n ? m.floorDiv(entryNotionalCNS * 10000n, depositCNS) : null,
+    effectiveLeverageBps: fmvCNS > 0n ? m.floorDiv(markNotionalCNS * 10000n, fmvCNS) : null,
+    entryBlock: BigInt(position.entryBlock ?? 0n)
+  };
+}
+
+// Equity of a position at a shocked price.
+function fmvAt(p, pricePNS, u) {
+  return p.depositCNS + p.premiumPnlCNS + m.deltaPnlCNS(p.positionType, p.entryQ16, pricePNS, p.lotLNS, u);
+}
+
+export function liquidationLadder(positions, market, u, shocks = SHOCKS_BPS) {
+  return shocks.map(bps => {
+    const row = { bps, long: { count: 0, notionalCNS: 0n, shortfallCNS: 0n, pricePNS: m.shockedPricePNS(m.LONG, market.markPNS, bps) }, short: { count: 0, notionalCNS: 0n, shortfallCNS: 0n, pricePNS: m.shockedPricePNS(m.SHORT, market.markPNS, bps) } };
+    for (const p of positions) {
+      const bucket = row[p.side];
+      if (p.liquidationDistanceBps !== null && p.liquidationDistanceBps <= bps) { bucket.count++; bucket.notionalCNS += p.markNotionalCNS; }
+      if (p.bankruptcyDistanceBps !== null && p.bankruptcyDistanceBps <= bps) {
+        const fmv = fmvAt(p, bucket.pricePNS, u);
+        if (fmv < 0n) bucket.shortfallCNS += -fmv;
+      }
+    }
+    row.totalNotionalCNS = row.long.notionalCNS + row.short.notionalCNS;
+    row.totalShortfallCNS = row.long.shortfallCNS + row.short.shortfallCNS;
+    row.insuranceCoverageBps = row.totalShortfallCNS > 0n ? m.floorDiv(BigInt(market.insuranceBalanceCNS) * 10000n, row.totalShortfallCNS) : null;
+    return row;
+  });
+}
+
+// Notional of liquidation prices binned by signed distance from the mark.
+export function liquidationMap(positions, market, { binBps = MAP_BIN_BPS, rangeBps = MAP_RANGE_BPS } = {}) {
+  const bins = new Map();
+  const tails = { below: { count: 0, notionalCNS: 0n }, above: { count: 0, notionalCNS: 0n } };
+  const mark = BigInt(market.markPNS) * m.MICRO;
+  if (mark <= 0n) return { binBps, rangeBps, bins: [], tails };
+  for (const p of positions) {
+    if (p.liquidationMicroPNS === 0n && p.side === 'long') { tails.below.count++; tails.below.notionalCNS += p.markNotionalCNS; continue; }
+    const signed = m.floorDiv((p.liquidationMicroPNS - mark) * 10000n, mark);
+    if (signed < -rangeBps) { tails.below.count++; tails.below.notionalCNS += p.markNotionalCNS; continue; }
+    if (signed >= rangeBps) { tails.above.count++; tails.above.notionalCNS += p.markNotionalCNS; continue; }
+    const index = m.floorDiv(signed, binBps);
+    const bin = bins.get(index) ?? { fromBps: index * binBps, toBps: (index + 1n) * binBps, count: 0, longNotionalCNS: 0n, shortNotionalCNS: 0n };
+    bin.count++;
+    if (p.side === 'long') bin.longNotionalCNS += p.markNotionalCNS; else bin.shortNotionalCNS += p.markNotionalCNS;
+    bins.set(index, bin);
+  }
+  return { binBps, rangeBps, bins: [...bins.values()].sort((a, b) => Number(a.fromBps - b.fromBps)), tails };
+}
+
+export function concentration(positions) {
+  const total = sum(positions, p => p.markNotionalCNS);
+  const sorted = [...positions].sort((a, b) => (b.markNotionalCNS > a.markNotionalCNS ? 1 : b.markNotionalCNS < a.markNotionalCNS ? -1 : 0));
+  const top = n => sum(sorted.slice(0, n), p => p.markNotionalCNS);
+  let hhi = 0n;
+  if (total > 0n) for (const p of sorted) { const share = m.floorDiv(p.markNotionalCNS * 10000n, total); hhi += share * share; }
+  return {
+    totalNotionalCNS: total, positions: positions.length,
+    top1Bps: shareBps(top(1), total), top5Bps: shareBps(top(5), total), top10Bps: shareBps(top(10), total),
+    hhi: total > 0n ? m.floorDiv(hhi, 10000n) : null,
+    largest: sorted[0] ? { accountId: sorted[0].accountId, side: sorted[0].side, notionalCNS: sorted[0].markNotionalCNS, liquidationDistanceBps: sorted[0].liquidationDistanceBps } : null
+  };
+}
+
+export function healthDistribution(positions, buckets = HEALTH_BUCKETS) {
+  const edges = [0n, ...buckets, null];
+  const rows = [];
+  for (let i = 0; i + 1 < edges.length; i++) {
+    const from = edges[i], to = edges[i + 1];
+    const inRange = positions.filter(p => p.healthBps !== null && (p.healthBps >= from || (i === 0 && p.healthBps < 0n)) && (to === null || p.healthBps < to));
+    rows.push({ fromBps: from, toBps: to, count: inRange.length, notionalCNS: sum(inRange, p => p.markNotionalCNS) });
+  }
+  return rows;
+}
+
+export function sideSummary(positions) {
+  const lot = sum(positions, p => p.lotLNS), deposit = sum(positions, p => p.depositCNS);
+  const entryNotional = sum(positions, p => p.entryNotionalCNS);
+  return {
+    count: positions.length, lotLNS: lot, notionalCNS: sum(positions, p => p.markNotionalCNS), entryNotionalCNS: entryNotional,
+    depositCNS: deposit, deltaPnlCNS: sum(positions, p => p.deltaPnlCNS), premiumPnlCNS: sum(positions, p => p.premiumPnlCNS),
+    fmvCNS: sum(positions, p => p.fmvCNS), mmrCNS: sum(positions, p => p.mmrCNS),
+    averageLeverageBps: deposit > 0n ? m.floorDiv(entryNotional * 10000n, deposit) : null,
+    liquidatable: positions.filter(p => p.status === 'liquidatable').length,
+    bankrupt: positions.filter(p => p.status === 'bankrupt').length,
+    averageEntryPNS: lot > 0n ? m.floorDiv(sum(positions, p => p.entryQ16 * p.lotLNS), lot * m.Q16) : null
+  };
+}
+
+// market: { id, symbol, markPNS, oraclePNS, lastPNS, maintHdths, initHdths, insuranceBalanceCNS, longOpenInterestLNS, shortOpenInterestLNS, ... }
+export function marketMetrics(market, rawPositions, u) {
+  const positions = rawPositions.map(p => enrichPosition(p, market, u));
+  const longs = positions.filter(p => p.side === 'long'), shorts = positions.filter(p => p.side === 'short');
+  const long = sideSummary(longs), short = sideSummary(shorts);
+  const oi = {
+    longLNS: long.lotLNS, shortLNS: short.lotLNS, contractLongLNS: BigInt(market.longOpenInterestLNS), contractShortLNS: BigInt(market.shortOpenInterestLNS),
+    longNotionalCNS: long.notionalCNS, shortNotionalCNS: short.notionalCNS, totalNotionalCNS: long.notionalCNS + short.notionalCNS,
+    maxLNS: market.oiMaxLNS === undefined ? null : BigInt(market.oiMaxLNS)
+  };
+  oi.reconciled = oi.longLNS === oi.contractLongLNS && oi.shortLNS === oi.contractShortLNS;
+  oi.utilisationBps = oi.maxLNS && oi.maxLNS > 0n ? m.floorDiv(oi.longLNS * 10000n, oi.maxLNS) : null;
+  const pnlChecked = positions.filter(p => p.contractAgrees !== null);
+  const pnlAgreement = { checked: pnlChecked.length, agree: pnlChecked.filter(p => p.contractAgrees).length };
+  const totalMmr = long.mmrCNS + short.mmrCNS;
+  return {
+    id: market.id, symbol: market.symbol,
+    positions, long, short, oi,
+    ladder: liquidationLadder(positions, market, u),
+    map: liquidationMap(positions, market),
+    concentration: { all: concentration(positions), long: concentration(longs), short: concentration(shorts) },
+    health: healthDistribution(positions),
+    insurance: {
+      balanceCNS: BigInt(market.insuranceBalanceCNS), positionBalanceCNS: BigInt(market.positionBalanceCNS ?? 0n),
+      coverageOfNotionalBps: shareBps(BigInt(market.insuranceBalanceCNS), oi.totalNotionalCNS),
+      coverageOfMmrBps: totalMmr > 0n ? m.floorDiv(BigInt(market.insuranceBalanceCNS) * 10000n, totalMmr) : null
+    },
+    basisBps: BigInt(market.oraclePNS ?? 0n) > 0n ? m.floorDiv((BigInt(market.markPNS) - BigInt(market.oraclePNS)) * 10000n, BigInt(market.oraclePNS)) : null,
+    validation: { oiReconciled: oi.reconciled, pnlAgreement }
+  };
+}
+
+export function exchangeTotals(marketsMetrics) {
+  const totals = { markets: marketsMetrics.length, positions: 0, liquidatable: 0, bankrupt: 0, notionalCNS: 0n, depositCNS: 0n, fmvCNS: 0n, insuranceCNS: 0n, shortfallAt1000Bps: 0n, notionalAt1000Bps: 0n, notionalAt500Bps: 0n, allReconciled: true };
+  for (const x of marketsMetrics) {
+    totals.positions += x.positions.length;
+    totals.liquidatable += x.long.liquidatable + x.short.liquidatable;
+    totals.bankrupt += x.long.bankrupt + x.short.bankrupt;
+    totals.notionalCNS += x.oi.totalNotionalCNS;
+    totals.depositCNS += x.long.depositCNS + x.short.depositCNS;
+    totals.fmvCNS += x.long.fmvCNS + x.short.fmvCNS;
+    totals.insuranceCNS += x.insurance.balanceCNS;
+    const at10 = x.ladder.find(r => r.bps === 1000n), at5 = x.ladder.find(r => r.bps === 500n);
+    if (at10) { totals.shortfallAt1000Bps += at10.totalShortfallCNS; totals.notionalAt1000Bps += at10.totalNotionalCNS; }
+    if (at5) totals.notionalAt500Bps += at5.totalNotionalCNS;
+    if (!x.oi.reconciled) totals.allReconciled = false;
+  }
+  return totals;
+}
