@@ -1,26 +1,48 @@
 # Data sources
 
-Reviewed on 2026-09-12:
+## On-chain (authoritative)
 
-- https://github.com/PerplFoundation/api-docs documents mainnet chain 143,
-  the configured exchange address, collateral address and public context endpoint
-  https://app.perpl.xyz/api/v1/pub/context.
-- https://crates.io/crates/perpl-sdk was reachable but its rendered response did
-  not provide sufficient version evidence. No SDK dependency has been selected.
+- Monad mainnet, chain 143. Exchange `0x34B6552d57a35a1D042CcAe1951BD1C370112a6F`
+  (contract version 1.7.4 via `getContractVersion()`), collateral AUSD
+  `0x00000000eFE302BEAA2b3e6e1b18d08D69a9012a`, 6 decimals (via
+  `getExchangeInfo()`).
+- Getters used: `getPerpetualExistsBitmap`, `getPerpetualInfoV2`,
+  `getMarginFractions`, `getLiquidationInfo`, `getUnwindInfo`,
+  `getPositionsV2` (paged), `getPositionV2`, `getAccountById`,
+  `numberOfAccounts`, `getFundingInterval`, `getFundingSumAtBlock`,
+  `getContractVersion`, `isHalted`, `getExchangeInfo`.
+- Events used: position lifecycle, collateral changes, `FundingEventCompleted`,
+  `PositionLiquidated`, deleveraging, unwind, parameter updates, liquidation
+  diagnostics (`src/events.js`).
+- Multicall3 `0xca11bde05977b3631167028862be2a173976ca11`.
 
-Documentation values require runtime verification. Market IDs are not embedded
-in analytics code. Token decimals, risk parameters, SDK snapshot semantics,
-WebSocket limits, funding scales and event coverage remain unverified.
-Hackathon dates and eligibility have not been verified at this setup stage.
+## ABI and formulas
 
-## Direct reader source
+- `perpl-sdk` crate 0.2.8 (crates.io, MIT), `abi/dex/Exchange.json`
+  (`REVISION rc_v1.1.7-203-g0e5902dd`), `src/state/position.rs`,
+  `src/state/perpetual.rs`, `src/state/exchange.rs`. See `abi/README.md`.
+- Perpl documentation: `exchange/margin`, `exchange/liquidation`,
+  `exchange/liquidation/insurance-and-adl`, `exchange/funding`
+  (docs.perpl.xyz, Markdown versions).
 
-The official perpl-sdk 0.2.5 archive was downloaded from
-https://crates.io/api/v1/crates/perpl-sdk/0.2.5/download.
-Its manifest declares MIT licensing, Rust edition 2024 and repository
-https://github.com/PerplFoundation/dex-sdk. A read-only ABI subset from
-`abi/dex/Exchange.json` is retained in `abi/exchange-read.json`.
-No Rust SDK has been built or executed. Runtime getter decoding succeeded
-on the selected mainnet deployment. This does not validate every SDK feature.
-Source `src/state/position.rs` maps long to 0 and short to 1.
-The SDK documentation lists funding event processing as pending.
+## Reference only
+
+- Perpl public context `https://app.perpl.xyz/api/v1/pub/context`: market
+  list, `state.mrk`, `state.oi`, `funding.rate` (×10⁻⁶), `funding.sum`,
+  margin fractions. Compared with the contract on the validation page; never
+  used to compute a metric. The API omits markets 30, 70 and 80, which the
+  contract lists with zero positions.
+
+## RPC endpoints tested (2026-09-21)
+
+| Endpoint | Chain | `eth_getLogs` range | Notes |
+| --- | --- | --- | --- |
+| https://rpc.monad.xyz | 143 | 100 blocks | Perpl's documented default; used for the live collector |
+| https://rpc1.monad.xyz | 143 | ≥ 2000 blocks | Used for long log scans; prunes older state |
+| https://rpc-mainnet.monadinfra.com | 143 | 100 blocks | |
+| https://monad-mainnet.drpc.org | 143 | 100 blocks (free plan) | |
+| https://testnet-rpc.monad.xyz | 10143 | — | Testnet exchange `0x1964c32f0be608e7d29302aff5e61268e72080cc` |
+
+Measured block time on 2026-09-21: about 0.30 s (1000-block window), so one
+funding interval (8571 blocks) is about 43 minutes, matching the public
+context's `funding_interval_sec`.
