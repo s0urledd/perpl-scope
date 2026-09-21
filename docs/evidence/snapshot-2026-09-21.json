@@ -1,0 +1,133 @@
+{
+  "status": "BLOCKED",
+  "coverage": "complete",
+  "position_snapshot_result": "PASS",
+  "block_number": "106773861",
+  "block_hash": "0x8cf9c7dceba89543efb2c3fdbb0270c414264273ff90e9d629ead31ce07511a0",
+  "account_count": "5311",
+  "discovered_markets": [
+    1,
+    10,
+    20,
+    30,
+    31,
+    40,
+    50,
+    60,
+    70,
+    80,
+    90
+  ],
+  "discovery_method": "All account position bitmaps, then open-position getters; SDK 0.2.5 bitmap layout.",
+  "measurements": {
+    "requests": 141,
+    "elapsed_ms": 12597,
+    "sampled_peak_rss_bytes": 135024640,
+    "cpu_microseconds": {
+      "user": 2046275,
+      "system": 124553
+    }
+  },
+  "markets": [
+    {
+      "id": 1,
+      "symbol": "BTC",
+      "lot_decimals": "5",
+      "positions": 187,
+      "long": "449356",
+      "short": "449356",
+      "matches": true
+    },
+    {
+      "id": 10,
+      "symbol": "MON",
+      "lot_decimals": "0",
+      "positions": 85,
+      "long": "5164363",
+      "short": "5164363",
+      "matches": true
+    },
+    {
+      "id": 20,
+      "symbol": "ETH",
+      "lot_decimals": "3",
+      "positions": 89,
+      "long": "63533",
+      "short": "63533",
+      "matches": true
+    },
+    {
+      "id": 30,
+      "symbol": "SOL",
+      "lot_decimals": "3",
+      "positions": 0,
+      "long": "0",
+      "short": "0",
+      "matches": true
+    },
+    {
+      "id": 31,
+      "symbol": "SOL_v2",
+      "lot_decimals": "3",
+      "positions": 53,
+      "long": "2864140",
+      "short": "2864140",
+      "matches": true
+    },
+    {
+      "id": 40,
+      "symbol": "HYPE",
+      "lot_decimals": "2",
+      "positions": 55,
+      "long": "35757",
+      "short": "35757",
+      "matches": true
+    },
+    {
+      "id": 50,
+      "symbol": "ZEC",
+      "lot_decimals": "4",
+      "positions": 41,
+      "long": "276978",
+      "short": "276978",
+      "matches": true
+    },
+    {
+      "id": 60,
+      "symbol": "LIT",
+      "lot_decimals": "1",
+      "positions": 32,
+      "long": "69498",
+      "short": "69498",
+      "matches": true
+    },
+    {
+      "id": 70,
+      "symbol": "VVV",
+      "lot_decimals": "2",
+      "positions": 0,
+      "long": "0",
+      "short": "0",
+      "matches": true
+    },
+    {
+      "id": 80,
+      "symbol": "TAO",
+      "lot_decimals": "3",
+      "positions": 0,
+      "long": "0",
+      "short": "0",
+      "matches": true
+    },
+    {
+      "id": 90,
+      "symbol": "PUMP",
+      "lot_decimals": "0",
+      "positions": 19,
+      "long": "4534205",
+      "short": "4534205",
+      "matches": true
+    }
+  ],
+  "rpc": "https://rpc.monad.xyz (public)"
+}
