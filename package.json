@@ -1,17 +1,22 @@
 {
   "name": "perpl-scope",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=24"
+    "node": ">=22.9"
   },
   "scripts": {
+    "start": "node --env-file-if-exists=.env src/server.js",
     "test": "node --test",
+    "check": "node --check src/*.js scripts/*.js web/app.js",
     "validate": "node --env-file-if-exists=.env src/cli.js",
+    "validate:math": "node --env-file-if-exists=.env scripts/validate-math.js",
     "snapshot": "node --env-file=.env src/snapshot.js"
   },
   "dependencies": {
     "viem": "2.56.3"
-  }
+  },
+  "description": "Independent risk analytics for Perpl on Monad: liquidation exposure, open interest and funding computed from chain state.",
+  "license": "MIT"
 }
