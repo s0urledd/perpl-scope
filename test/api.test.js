@@ -136,3 +136,45 @@ test('stress, book, account lookup, series and CSV endpoints', async t => {
   const liqCsv = await fetch(base + '/api/v1/liquidations?format=csv');
   assert.equal(liqCsv.headers.get('content-disposition')?.startsWith('attachment'), true);
 });
+
+test('audit fixes: address case, cached account record, csv headers, sort validation, headers', async t => {
+  const { fake, collector, get, base } = await setup(t);
+  fake.setBook(1, [[990000n, 100000n]], [[1010000n, 100000n]]);
+  await collector.bootstrap('test');
+  await collector.refreshBook(true);
+  // Mixed-case (non-checksummed) addresses are accepted by lowercasing before ABI encoding.
+  fake.state.accounts = 200n; // account 0xab = 171 exists in the fake
+  const upper = await get('/api/v1/accounts/' + '0x00000000000000000000000000000000000000ab'.toUpperCase().replace('0X', '0x'));
+  assert.equal(upper.status, 200);
+  // Unknown accounts are cached as misses: a second lookup makes no further RPC call.
+  await get('/api/v1/accounts/777777');
+  const before = fake.stats.requests;
+  assert.equal((await get('/api/v1/accounts/777777')).status, 404);
+  assert.equal(fake.stats.requests, before);
+  // Positions are rebuilt from the current snapshot even when the account record is cached.
+  const first = await get('/api/v1/accounts/5');
+  assert.equal(first.body.positions.length, 1);
+  fake.advance(); fake.close(1, 5n);
+  await collector.poll();
+  const second = await get('/api/v1/accounts/5');
+  assert.equal(second.body.positions.length, 0);
+  assert.equal(second.body.account_read_block, first.body.account_read_block);
+  // CSV keeps its header when there are no rows and escapes formula-leading cells.
+  const empty = await fetch(base + '/api/v1/markets/20/positions?format=csv');
+  assert.match((await empty.text()).split('\r\n')[0], /^account_id,side/);
+  assert.equal((await fetch(base + '/api/v1/liquidations?format=csv')).headers.get('x-content-type-options'), 'nosniff');
+  const { toCsv } = await import('../src/api.js');
+  assert.equal(toCsv([{ a: '=SUM(1)', b: '-5.25', c: 'x,y' }]), "a,b,c\r\n'=SUM(1),-5.25,\"x,y\"\r\n");
+  // Sort and side are validated against an allowlist.
+  assert.equal((await get('/api/v1/markets/1/positions?sort=__proto__')).status, 400);
+  assert.equal((await get('/api/v1/markets/1/positions?side=up')).status, 400);
+  // Stress responses carry the block and decimals the dashboard needs; moves beyond the walked range have no depth.
+  const stress = await get('/api/v1/markets/1/stress?move_pct=-30');
+  assert.equal(stress.body.price_decimals, 1);
+  assert.equal(stress.body.liquidity, null);
+  const book = await get('/api/v1/markets/1/book');
+  assert.equal(book.body.liquidity.absorption.find(r => r.shock_pct === 30).beyond_range, true);
+  assert.equal(book.body.liquidity.absorption.find(r => r.shock_pct === 10).beyond_range, false);
+  const page = await fetch(base + '/');
+  assert.match(page.headers.get('content-security-policy'), /script-src 'self'/);
+});

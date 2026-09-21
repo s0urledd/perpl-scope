@@ -42,7 +42,7 @@ export function collectorOptions(env = {}) {
 
 export function createCollector({ config, options = collectorOptions(), rpc, reader = createReader({ rpc, exchange: config.exchange }), log = () => {} }) {
   const state = s.createState({ chain: config.chain, exchange: config.exchange });
-  let running = false, lastCheckpointAt = 0, lastVerifyBlock = null, polls = 0, consecutiveErrors = 0, verifying = false, lastBookAt = 0;
+  let running = false, lastCheckpointAt = 0, lastVerifyBlock = null, polls = 0, consecutiveErrors = 0, verifying = false, lastBookAt = 0, booking = false;
   state.series.everyBlocks = options.seriesEveryBlocks ?? state.series.everyBlocks;
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -78,10 +78,13 @@ export function createCollector({ config, options = collectorOptions(), rpc, rea
       if (recheck.hash !== head.hash) { if (attempt >= 3) throw new Error('BOOTSTRAP_HASH_UNSTABLE'); continue; }
       // Apply atomically from the API's point of view (no awaits below).
       if (earlier && head.timestamp > earlier.timestamp) state.stats.blockTimeMs = Math.round((head.timestamp - earlier.timestamp) * 1000 / Number(block - earlier.number));
+      const books = new Map([...state.markets].map(([id, market]) => [id, market.book ?? null]));
       state.markets.clear();
       s.setBlock(state, head);
       s.applyExchange(state, exchangeInfo);
       s.applyMarkets(state, markets);
+      for (const [id, book] of books) if (book && state.markets.has(id)) state.markets.get(id).book = book;
+      lastBookAt = 0; // walk the book again at the new block as soon as the loop allows
       for (const [id, read] of positions) s.replaceMarketPositions(state, id, read.positions, read.markPNS);
       const reconciliation = s.reconcile(state);
       if (!reconciliation.ok) { if (attempt >= 3) throw new Error('BOOTSTRAP_RECONCILE_FAILED'); continue; }
@@ -206,8 +209,12 @@ export function createCollector({ config, options = collectorOptions(), rpc, rea
 
   // Bounded walk of resting depth at the current state block.
   async function refreshBook(force = false) {
-    if (!options.book?.enabled || !state.block) return null;
+    if (!options.book?.enabled || !state.block || booking) return null;
     if (!force && Date.now() - lastBookAt < options.book.refreshMs) return null;
+    booking = true;
+    try { return await walkBook(); } finally { booking = false; }
+  }
+  async function walkBook() {
     const block = state.block.number;
     const inputs = [...state.markets.values()].filter(x => x.markPNS > 0n && x.status === 4).map(x => ({ id: x.id, markPNS: x.markPNS, basePricePNS: x.basePricePNS, maxBidPriceONS: x.maxBidPriceONS ?? 0n, minAskPriceONS: x.minAskPriceONS ?? 0n }));
     const depth = await readDepth(reader, inputs, block, { levels: options.book.levels, rangeBps: options.book.rangeBps });
@@ -216,7 +223,12 @@ export function createCollector({ config, options = collectorOptions(), rpc, rea
     return depth;
   }
 
-  function sample() { try { return s.sampleSeries(state, s.metrics(state)); } catch (error) { log('warn', `series sample failed: ${error.message}`); return false; } }
+  function sample() {
+    if (!state.block) return false;
+    const last = state.series.lastBlock;
+    if (last !== null && state.block.number - last < state.series.everyBlocks) return false; // avoid computing metrics for nothing
+    try { return s.sampleSeries(state, s.metrics(state)); } catch (error) { log('warn', `series sample failed: ${error.message}`); return false; }
+  }
 
   function freshness(now = Date.now()) {
     const age = state.stats.lastSuccessAt ? now - state.stats.lastSuccessAt : null;
@@ -233,6 +245,7 @@ export function createCollector({ config, options = collectorOptions(), rpc, rea
         const canonical = await reader.getBlock(saved.block.number);
         if (canonical.hash === saved.block.hash && head.number - saved.block.number <= options.maxResumeGap) {
           Object.assign(state, saved, { status: 'syncing', statusReason: 'resume' });
+          state.series.everyBlocks = options.seriesEveryBlocks; // configuration, not state
           log('info', `resumed checkpoint at block ${saved.block.number}, head ${head.number}`);
         } else log('info', 'checkpoint rejected (non-canonical or too old); bootstrapping');
       }
@@ -243,7 +256,7 @@ export function createCollector({ config, options = collectorOptions(), rpc, rea
         if (!state.block) { await bootstrap('start'); await backfillHistory(); }
         else await poll();
         consecutiveErrors = 0;
-        try { await refreshBook(); } catch (error) { log('warn', `book refresh failed: ${error.message}`); }
+        refreshBook().catch(error => log('warn', `book refresh failed: ${error.message}`)); // concurrent, like verify()
         sample();
         if (state.block && (lastVerifyBlock === null || state.block.number - lastVerifyBlock >= options.verifyEveryBlocks)) verify().catch(() => {});
       } catch (error) {

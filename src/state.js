@@ -83,7 +83,7 @@ export function applyBook(state, depthMap, block) {
   for (const [id, record] of depthMap) {
     const market = state.markets.get(Number(id));
     if (!market) continue;
-    market.book = { block: BigInt(block), at: Date.now(), bids: record.bids.map(l => ({ pricePNS: BigInt(l.pricePNS), lotLNS: BigInt(l.lotLNS), expiringLNS: BigInt(l.expiringLNS ?? 0n) })), asks: record.asks.map(l => ({ pricePNS: BigInt(l.pricePNS), lotLNS: BigInt(l.lotLNS), expiringLNS: BigInt(l.expiringLNS ?? 0n) })), truncated: { bids: Boolean(record.truncated?.bids), asks: Boolean(record.truncated?.asks) }, requests: record.requests ?? null };
+    market.book = { block: BigInt(block), at: Date.now(), bids: record.bids.map(l => ({ pricePNS: BigInt(l.pricePNS), lotLNS: BigInt(l.lotLNS), expiringLNS: BigInt(l.expiringLNS ?? 0n) })), asks: record.asks.map(l => ({ pricePNS: BigInt(l.pricePNS), lotLNS: BigInt(l.lotLNS), expiringLNS: BigInt(l.expiringLNS ?? 0n) })), truncated: { bids: Boolean(record.truncated?.bids), asks: Boolean(record.truncated?.asks) }, rangeBps: record.rangeBps === undefined ? null : BigInt(record.rangeBps), requests: record.requests ?? null };
   }
   state.metricsCache = null;
 }

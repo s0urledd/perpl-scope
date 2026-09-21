@@ -21,6 +21,9 @@ export function createReference({ url = DEFAULT_CONTEXT_URL, fetcher = fetch, in
   function stop() { if (timer) clearInterval(timer); }
   // Compares the reference with the on-chain market record at the state block.
   function compare(market, latestFundingSum = null) {
+    try { return compareUnsafe(market, latestFundingSum); } catch { return { found: true, error: 'REFERENCE_SHAPE' }; }
+  }
+  function compareUnsafe(market, latestFundingSum) {
     if (!last) return null;
     const ref = last.markets.find(x => x.id === market.id);
     if (!ref) return { found: false };

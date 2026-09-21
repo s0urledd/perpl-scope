@@ -67,3 +67,16 @@ Monad JSON-RPC ──► src/exchange.js (pinned-block reader, Multicall3, pagin
 
 Freshness is exposed on every response: `syncing`, `fresh` or `stale` with a
 reason and the age of the last successful poll.
+
+## Security posture
+
+The service is read-only and unauthenticated by design. Provider errors are
+collapsed to constants so the RPC URL or an embedded key never reaches logs or
+responses; the health endpoint reports error codes only. User input reaches
+the contract only through regex-gated account ids and addresses encoded by
+viem's typed ABI encoder. Static files are served from `web/` only, CSV cells
+that start with a formula character are quoted, download filenames are
+restricted to safe characters, and every response carries `nosniff`,
+`no-referrer` and `DENY` framing headers with a same-origin script policy on
+the page. The independent review of 2026-09-21 found no high or medium
+severity issue; its hardening notes are implemented.

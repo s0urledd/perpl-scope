@@ -127,7 +127,7 @@ export function liquiditySummary(market, ladder, u) {
   if (!book) return null;
   const depth = { bids: {}, asks: {} };
   for (const bps of DEPTH_BPS) { depth.bids[bps] = depthWithin(book.bids, 'bids', market.markPNS, bps, u); depth.asks[bps] = depthWithin(book.asks, 'asks', market.markPNS, bps, u); }
-  return { block: book.block, at: book.at, truncated: book.truncated, levels: { bids: book.bids.length, asks: book.asks.length }, bestBidPNS: book.bids[0]?.pricePNS ?? null, bestAskPNS: book.asks[0]?.pricePNS ?? null, depth, absorption: absorption(ladder, book, market.markPNS, u) };
+  return { block: book.block, at: book.at, truncated: book.truncated, rangeBps: book.rangeBps ?? null, levels: { bids: book.bids.length, asks: book.asks.length }, bestBidPNS: book.bids[0]?.pricePNS ?? null, bestAskPNS: book.asks[0]?.pricePNS ?? null, depth, absorption: absorption(ladder, book, market.markPNS, u) };
 }
 
 // One-off stress at a signed move: negative moves liquidate longs, positive shorts.
@@ -137,7 +137,8 @@ export function stressAt(positions, market, u, signedBps) {
   const side = BigInt(signedBps) < 0n ? 'long' : 'short';
   const bucket = row[side];
   const hit = positions.filter(p => p.side === side && p.liquidationDistanceBps !== null && p.liquidationDistanceBps <= bps).sort((a, b) => (b.markNotionalCNS > a.markNotionalCNS ? 1 : b.markNotionalCNS < a.markNotionalCNS ? -1 : 0));
-  const depth = market.book ? depthWithin(side === 'long' ? market.book.bids : market.book.asks, side === 'long' ? 'bids' : 'asks', market.markPNS, bps, u) : null;
+  const inRange = market.book && (market.book.rangeBps === undefined || market.book.rangeBps === null || bps <= BigInt(market.book.rangeBps));
+  const depth = inRange ? depthWithin(side === 'long' ? market.book.bids : market.book.asks, side === 'long' ? 'bids' : 'asks', market.markPNS, bps, u) : null;
   const totalNotional = sum(positions, p => p.markNotionalCNS);
   return { bps: BigInt(signedBps), side, pricePNS: bucket.pricePNS, count: bucket.count, notionalCNS: bucket.notionalCNS, shortfallCNS: bucket.shortfallCNS, insuranceCoverageBps: bucket.shortfallCNS > 0n ? m.floorDiv(BigInt(market.insuranceBalanceCNS) * 10000n, bucket.shortfallCNS) : null, remainingNotionalCNS: totalNotional - bucket.notionalCNS, shareBps: shareBps(bucket.notionalCNS, totalNotional), depthCNS: depth?.notionalCNS ?? null, depthLevels: depth?.levels ?? null, absorptionBps: depth && bucket.notionalCNS > 0n ? m.floorDiv(depth.notionalCNS * 10000n, bucket.notionalCNS) : null, hit };
 }

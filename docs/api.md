@@ -39,7 +39,7 @@ percentages and ratios are numbers.
 | `GET /markets/{id}/funding?limit=48` | Current funding view (including the next announced rate when already set on-chain) and event history. |
 | `GET /markets/{id}/stress?move_pct=-12.5` | Stress at one signed move: positions hit, notional, share of OI, shortfall, insurance cover, resting depth in range and its cover. Negative moves liquidate longs, positive moves shorts. |
 | `GET /markets/{id}/book` | Walked order-book levels per side, depth bands and cover per ladder row. 404 until the first walk. |
-| `GET /accounts/{id-or-address}` | All open positions of an account with liquidation prices, distance, health and PnL, plus free and locked balance. Resolved on-chain at the snapshot block; cached 15 s. |
+| `GET /accounts/{id-or-address}` | All open positions of an account with liquidation prices, distance, health and PnL, plus free and locked balance. The account record is resolved on-chain (`account_read_block`, cached 15 s, misses included); positions always come from the current snapshot. At most four lookups resolve concurrently; more return `503 BUSY`. |
 | `GET /series?hours=24&market={id}` | Sampled time series of exchange totals or one market. |
 | `GET /liquidations?limit=100&market={id}` | `PositionLiquidated` events, newest first, plus deleveraging events. `format=csv` downloads the list. |
 | `GET /validation` | Bootstrap, reconciliation, independent discovery result, PnL agreement per market, metric status table, RPC and collector counters. |
@@ -56,7 +56,9 @@ percentages and ratios are numbers.
 - `risk`: notional within 5 % and 10 % of liquidation, shortfall at 10 %, insurance coverage of that shortfall.
 - `concentration`: top-1/5/10 shares, HHI (0–10000), largest position.
 - `funding`: rate per interval, 8 h and annualised equivalents, direction, clamp, next funding block and countdown, latest event, `next_announced` when the next rate is already set on-chain.
-- `liquidity`: book block and age, levels walked, truncation flags, best bid and ask, spread, depth within 1 / 2 / 5 / 10 % per side, cover at 2 / 5 / 10 % per side (`null` before the first walk). Market detail adds the full `absorption` rows and `adl_queue`.
+- `liquidity`: book block and age, levels walked, truncation flags, walked `range_pct`, best bid and ask, spread, depth within 1 / 2 / 5 / 10 % per side, cover at 2 / 5 / 10 % per side (`null` before the first walk). Market detail adds the full `absorption` rows (rows beyond the walked range carry `beyond_range: true` and `null` depth) and `adl_queue`.
+
+All responses carry `x-content-type-options: nosniff`, `referrer-policy: no-referrer` and `x-frame-options: DENY`; the dashboard page carries a content-security policy that allows scripts only from the same origin. Error bodies expose codes (`RPC_UNAVAILABLE`, `INTERNAL_ERROR`, `BUSY`, `INVALID_MOVE`, `MARKET_NOT_FOUND`, …), never provider messages.
 - `validation`: `oi_reconciled`, `pnl_checked`, `pnl_agree`.
 - `reference`: deltas against the Perpl context endpoint, or `null` when disabled.
 
