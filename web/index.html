@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PerplScope</title>
+<meta name="description" content="Independent risk analytics for Perpl on Monad: liquidation exposure, open interest and funding computed from chain state.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <a href="#/" class="brand-name"><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 14l4-5 3 3 5-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>PerplScope</a>
+    <span class="brand-sub">Independent risk analytics for Perpl on Monad</span>
+  </div>
+  <div class="topbar-right">
+    <div id="snapshot" class="snapshot" aria-live="polite"><span class="dot dot-syncing"></span><span class="snapshot-text">Connecting…</span></div>
+    <button id="theme" class="ghost" type="button" aria-label="Toggle colour theme">Theme</button>
+  </div>
+</header>
+<nav class="tabs" aria-label="Sections">
+  <a href="#/" data-route="overview">Overview</a>
+  <a href="#/market/1" data-route="market">Markets</a>
+  <a href="#/liquidations" data-route="liquidations">Liquidations</a>
+  <a href="#/validation" data-route="validation">Validation</a>
+  <a href="#/about" data-route="about">About</a>
+</nav>
+<main id="main" class="main"></main>
+<footer class="footer">
+  <p>Every figure is computed from Monad chain state at the block shown in the header. Perpl's public API is used only in the cross-check panel and never to compute a metric.</p>
+  <p><a href="https://github.com/s0urledd/perpl-scope">Source</a> · <a href="api/v1/overview">JSON API</a> · <a href="#/about">Methodology</a></p>
+</footer>
+<div id="tooltip" class="tooltip" role="status" hidden></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
