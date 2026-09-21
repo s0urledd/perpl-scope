@@ -1,6 +1,6 @@
 {
   "name": "perpl-scope",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env src/server.js",
     "test": "node --test",
-    "check": "node --check src/*.js scripts/*.js web/app.js",
+    "check": "node --check src/*.js scripts/*.js web/*.js web/views/*.js",
     "validate": "node --env-file-if-exists=.env src/cli.js",
     "validate:math": "node --env-file-if-exists=.env scripts/validate-math.js",
     "snapshot": "node --env-file=.env src/snapshot.js"

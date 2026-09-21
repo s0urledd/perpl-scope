@@ -21,7 +21,8 @@ getters, `getPerpetualInfoV2`, paged `getPositionsV2`, `getPositionIds`,
 `getUnwindInfo`, `isHalted`, `perpetualExists` and the order-book getters
 `getVolumeAtBookPrice`, `getNextPriceBelowWithOrders`,
 `getNextPriceAboveWithOrders`, `getOrdersAtPriceLevel`, `getPriceLevelOrderIds`
-and `getOrderV2` (added 2026-09-21 for resting-depth measurement).
+and `getOrderV2` (added 2026-09-21 for resting-depth measurement), plus
+`getWithdrawAllowanceData` for the exchange-wide withdrawal rate limit.
 
 `exchange-events.json` contains every event ABI entry from the same artifact.
 The collector decodes those events to learn which positions changed and to

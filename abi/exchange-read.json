@@ -1440,5 +1440,39 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getWithdrawAllowanceData",
+    "inputs": [
+      {
+        "name": "blockNumber",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "allowanceCNS",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expiryBlock",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lastAllowanceBlock",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cnsPerBlock",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   }
 ]

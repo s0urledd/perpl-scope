@@ -63,7 +63,7 @@ export function setStatus(state, status, reason = null) {
 }
 
 export function applyExchange(state, info) {
-  state.exchangeInfo = { balanceCNS: BigInt(info.balanceCNS), protocolBalanceCNS: BigInt(info.protocolBalanceCNS), recycleBalanceCNS: BigInt(info.recycleBalanceCNS), collateralDecimals: Number(info.collateralDecimals), collateralToken: String(info.collateralToken), numberOfAccounts: BigInt(info.numberOfAccounts), fundingInterval: BigInt(info.fundingInterval), version: String(info.version), halted: Boolean(info.halted) };
+  state.exchangeInfo = { balanceCNS: BigInt(info.balanceCNS), protocolBalanceCNS: BigInt(info.protocolBalanceCNS), recycleBalanceCNS: BigInt(info.recycleBalanceCNS), collateralDecimals: Number(info.collateralDecimals), collateralToken: String(info.collateralToken), numberOfAccounts: BigInt(info.numberOfAccounts), fundingInterval: BigInt(info.fundingInterval), version: String(info.version), halted: Boolean(info.halted), withdrawAllowance: info.withdrawAllowance ? { allowanceCNS: BigInt(info.withdrawAllowance.allowanceCNS), expiryBlock: BigInt(info.withdrawAllowance.expiryBlock), lastAllowanceBlock: BigInt(info.withdrawAllowance.lastAllowanceBlock), cnsPerBlock: BigInt(info.withdrawAllowance.cnsPerBlock) } : null };
   state.metricsCache = null;
 }
 

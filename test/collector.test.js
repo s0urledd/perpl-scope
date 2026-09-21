@@ -6,9 +6,10 @@ import { join } from 'node:path';
 import { createCollector, collectorOptions } from '../src/collector.js';
 import { createFakeExchange, EXCHANGE } from './helpers/fake-exchange.js';
 import { loadCheckpoint } from '../src/checkpoint.js';
+import { readFile } from 'node:fs/promises';
 
 const config = { url: 'https://example.invalid', chain: '143', exchange: EXCHANGE };
-const options = dir => ({ ...collectorOptions({ POLL_MS: 1, LOG_RANGE: 100, BACKFILL_BLOCKS: 50, FUNDING_HISTORY_EVENTS: 2, VERIFY_BLOCKS: 5, CHECKPOINT_MS: 0 }), checkpointPath: join(dir, 'checkpoint.json') });
+const options = dir => ({ ...collectorOptions({ POLL_MS: 1, LOG_RANGE: 100, BACKFILL_BLOCKS: 50, FUNDING_HISTORY_EVENTS: 2, VERIFY_BLOCKS: 5, CHECKPOINT_MS: 0 }), checkpointPath: join(dir, 'checkpoint.json'), indexPath: join(dir, 'index.json'), indexBlocks: 500n, indexBucketBlocks: 100n, indexLogRange: 100n });
 
 async function withDir(fn) { const dir = await mkdtemp(join(tmpdir(), 'perpl-collector-')); try { await fn(dir); } finally { await rm(dir, { recursive: true, force: true }); } }
 
@@ -112,5 +113,39 @@ test('checkpoints resume when canonical and are rejected when stale', async () =
     assert.equal(second.state.markets.get(1).positions.size, 3);
     assert.equal(second.state.bootstrap.at, first.state.bootstrap.at, 'resumed without a new bootstrap');
     assert.equal(logs.length, 0);
+  });
+});
+
+test('the event index follows polls and backfills the window in the background', async () => {
+  await withDir(async dir => {
+    const fake = createFakeExchange();
+    fake.chain.head = 900n; fake.open(1, 5n, 0, 100000n); fake.chain.head = 1000n;
+    const collector = createCollector({ config, options: options(dir), rpc: fake.rpc });
+    await collector.bootstrap('test');
+    assert.deepEqual(collector.index.covered, { from: 1000n, to: 1000n });
+    assert.equal(collector.index.snapshots.size, 1, 'snapshot at bootstrap');
+    fake.advance(2n); fake.open(1, 6n, 1, 50000n); fake.close(1, 5n);
+    await collector.poll();
+    assert.deepEqual(collector.index.covered, { from: 1000n, to: 1002n });
+    assert.equal(collector.index.size, 2);
+    assert.equal(collector.index.accountRecords(5).map(r => r.type).join(','), 'close');
+    const result = await collector.backfillIndex();
+    assert.equal(result.complete, true);
+    assert.deepEqual(collector.index.covered, { from: 502n, to: 1002n });
+    assert.equal(collector.index.size, 3, 'the open at block 900 was backfilled');
+    assert.equal(collector.index.backfill.done, true);
+    assert.ok(collector.index.snapshots.size >= 5, 'bucket boundaries sampled through archive reads');
+    const agg = collector.index.aggregate(502n, 1002n, new Map());
+    assert.equal(agg.opens, 2); assert.equal(agg.closes, 1); assert.equal(agg.activeAccounts, 2);
+    await collector.checkpoint();
+    const text = await readFile(join(dir, 'index.json'), 'utf8');
+    assert.ok(text.includes('"version":2'));
+    // A fresh collector reloads the aggregates and rebuilds the raw window.
+    const again = createCollector({ config, options: options(dir), rpc: fake.rpc });
+    const run = again.start();
+    await new Promise(resolve => setTimeout(resolve, 150));
+    again.stop(); await run;
+    assert.equal(again.index.backfill.done, true);
+    assert.equal(again.index.aggregate(502n, 1002n, new Map()).opens, 2);
   });
 });

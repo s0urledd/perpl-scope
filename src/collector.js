@@ -12,11 +12,14 @@
 //      position bitmaps (an enumeration path independent of the paged getter)
 //      and compared with the stored positions.
 import { createReader } from './exchange.js';
-import { processLogs, watchedTopics } from './events.js';
+import { processLogs, WATCHED_EVENTS } from './events.js';
 import { topicsFor } from './abi.js';
+import { createIndex, INDEX_EVENTS } from './index.js';
+import { backfill as runBackfill } from './backfill.js';
+import * as m from './math.js';
 import { accountMarkets } from './snapshot-core.js';
 import * as s from './state.js';
-import { saveCheckpoint, loadCheckpoint } from './checkpoint.js';
+import { saveCheckpoint, loadCheckpoint, saveText, loadText } from './checkpoint.js';
 import { bookOptions, readDepth } from './book.js';
 
 const integer = (value, fallback) => { const n = Number(value ?? fallback); if (!Number.isFinite(n) || n < 0) throw new Error('INVALID_COLLECTOR_OPTION'); return n; };
@@ -36,17 +39,30 @@ export function collectorOptions(env = {}) {
     accountScanBatch: integer(env.ACCOUNT_SCAN_BATCH, 50),
     maxAccounts: BigInt(integer(env.MAX_ACCOUNTS, 200000)),
     seriesEveryBlocks: BigInt(integer(env.SERIES_EVERY_BLOCKS, 200)),
+    // Event index: raw window, backfill depth, provider limits and persistence.
+    indexBlocks: BigInt(integer(env.INDEX_BLOCKS, 2100000)),
+    indexHistoryBlocks: BigInt(integer(env.INDEX_HISTORY_BLOCKS, 12000000)),
+    indexBucketBlocks: BigInt(integer(env.INDEX_BUCKET_BLOCKS, 12000)),
+    indexLogRange: BigInt(integer(env.INDEX_LOG_RANGE, env.LOG_RANGE ?? 100)),
+    indexConcurrency: Math.max(1, integer(env.INDEX_CONCURRENCY, 4)),
+    indexPath: env.INDEX_PATH || 'data/index.json',
+    indexSnapshots: env.INDEX_SNAPSHOTS !== '0',
     book: bookOptions(env)
   };
 }
 
 export function createCollector({ config, options = collectorOptions(), rpc, reader = createReader({ rpc, exchange: config.exchange }), log = () => {} }) {
   const state = s.createState({ chain: config.chain, exchange: config.exchange });
+  const index = createIndex({ windowBlocks: options.indexBlocks, bucketBlocks: options.indexBucketBlocks, historyBlocks: options.indexHistoryBlocks });
+  const pollTopics = topicsFor([...new Set([...WATCHED_EVENTS, ...INDEX_EVENTS])]);
+  const indexTopics = topicsFor(INDEX_EVENTS);
+  let backfilling = false, lastSnapshotBucket = null, lastPrunePoll = 0, indexStarted = false, sampling = Promise.resolve(), sampledTo = null;
+  let pendingGap = null, live = null, stopRequested = false; // live = contiguous range ingested by polls since the last bootstrap
   let running = false, lastCheckpointAt = 0, lastVerifyBlock = null, polls = 0, consecutiveErrors = 0, verifying = false, lastBookAt = 0, booking = false;
   state.series.everyBlocks = options.seriesEveryBlocks ?? state.series.everyBlocks;
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-  async function fetchLogs(from, to, topics = watchedTopics) {
+  async function fetchLogs(from, to, topics = pollTopics) {
     const logs = [];
     for (let first = from; first <= to; first += options.logRange) {
       const last = first + options.logRange - 1n > to ? to : first + options.logRange - 1n;
@@ -58,6 +74,7 @@ export function createCollector({ config, options = collectorOptions(), rpc, rea
   async function checkpoint(force = false) {
     if (!force && Date.now() - lastCheckpointAt < options.checkpointEveryMs) return;
     await saveCheckpoint(options.checkpointPath, state);
+    if (options.indexPath) await saveText(options.indexPath, index.serialize());
     lastCheckpointAt = Date.now();
   }
 
@@ -89,6 +106,9 @@ export function createCollector({ config, options = collectorOptions(), rpc, rea
       const reconciliation = s.reconcile(state);
       if (!reconciliation.ok) { if (attempt >= 3) throw new Error('BOOTSTRAP_RECONCILE_FAILED'); continue; }
       state.bootstrap = { block: block, hash: head.hash, at: Date.now(), reason, attempt, requests: reader.stats.requests };
+      live = null;
+      pendingGap = index.covered.to !== null && index.covered.to < block ? { from: index.covered.to + 1n, to: block } : null;
+      if (index.covered.to === null) { index.markCovered(block, block); snapshotIndex(); }
       state.stats.lastSuccessAt = Date.now();
       s.setStatus(state, 'fresh', null);
       log('info', `bootstrap complete at block ${block} (${reason}, attempt ${attempt})`);
@@ -122,6 +142,80 @@ export function createCollector({ config, options = collectorOptions(), rpc, rea
     state.stats.backfill = { from: from, to: to, logs: processed.decoded, at: Date.now() };
   }
 
+  // --- event index --------------------------------------------------------
+  const unitsMap = () => new Map([...state.markets.values()].map(mk => [mk.id, m.units(mk.priceDecimals, mk.lotDecimals, state.exchangeInfo.collateralDecimals)]));
+  function ingestLive(logs, from, to) {
+    try {
+      index.ingest(logs.filter(l => indexTopics.includes(l.topics[0])), unitsMap());
+      live = live && live.to + 1n === from ? { from: live.from, to } : { from, to };
+      markLive();
+      snapshotIndex();
+      if (polls - lastPrunePoll >= 500) { lastPrunePoll = polls; index.prune(to); }
+    } catch (error) { log('warn', `index ingest failed: ${error.message}`); }
+  }
+  // Live blocks count as covered once they touch the backfilled range.
+  function markLive() { if (live && (index.covered.to === null || live.from <= index.covered.to + 1n)) index.markCovered(live.from, live.to); }
+  // Open interest, TVL and funding per market at the current block, once per bucket.
+  function snapshotIndex() {
+    if (!state.block || !state.exchangeInfo) return false;
+    const id = index.bucketOf(state.block.number);
+    if (lastSnapshotBucket === id) return false;
+    lastSnapshotBucket = id;
+    return index.recordSnapshot(snapshotFrom(state.block, state.exchangeInfo, [...state.markets.values()]));
+  }
+  function snapshotFrom(block, info, markets) {
+    const c = Number(info.collateralDecimals);
+    let oiCNS = 0n, longCNS = 0n, shortCNS = 0n, insuranceCNS = 0n;
+    const rows = markets.map(mk => {
+      const u = m.units(mk.priceDecimals, mk.lotDecimals, c);
+      const long = m.notionalCNS(mk.markPNS, mk.longOpenInterestLNS, u), short = m.notionalCNS(mk.markPNS, mk.shortOpenInterestLNS, u);
+      oiCNS += long + short; longCNS += long; shortCNS += short; insuranceCNS += mk.insuranceBalanceCNS;
+      return { id: mk.id, longCNS: long, shortCNS: short, markPNS: mk.markPNS, longLNS: mk.longOpenInterestLNS, shortLNS: mk.shortOpenInterestLNS, fundingRatePct100k: mk.fundingRatePct100k, insuranceCNS: mk.insuranceBalanceCNS, positionBalanceCNS: mk.positionBalanceCNS };
+    });
+    return { block: BigInt(block.number), ts: Number(block.timestamp), oiCNS, longCNS, shortCNS, tvlCNS: BigInt(info.balanceCNS), insuranceCNS, protocolCNS: BigInt(info.protocolBalanceCNS), accounts: BigInt(info.numberOfAccounts), markets: rows };
+  }
+  // Historical snapshot through archive reads; skipped where the provider has pruned state.
+  async function snapshotAt(block) {
+    const [blk, info, ids] = await Promise.all([reader.getBlock(block), reader.readExchange(block), reader.readMarketIds(block)]);
+    const markets = (await reader.readMarkets(ids, block)).map(s.normalizeMarket);
+    return index.recordSnapshot(snapshotFrom(blk, info, markets));
+  }
+  // Samples every bucket boundary newly covered by the backfill, newest first.
+  async function sampleBoundaries(contiguousFrom, floor) {
+    for (let b = (sampledTo - 1n) / index.bucketBlocks * index.bucketBlocks; b >= contiguousFrom && b >= floor && !stopRequested; b -= index.bucketBlocks) {
+      try { await snapshotAt(b); } catch { /* state pruned by the provider */ }
+      sampledTo = b;
+    }
+  }
+  // Newest-to-oldest walk over the index window, concurrent, in the background.
+  async function backfillIndex(range = null) {
+    if (backfilling || !state.block) return null;
+    backfilling = true;
+    const to = range?.to ?? state.block.number, from = range?.from ?? (to > options.indexBlocks ? to - options.indexBlocks : 0n);
+    if (!range) { index.startBackfill(from); sampledTo = to + 1n; }
+    const started = performance.now(), requestsBefore = reader.stats.requests;
+    try {
+      const result = await runBackfill({
+        fetchLogs: (lo, hi) => reader.getLogs({ fromBlock: lo, toBlock: hi, topics: indexTopics }), from, to, chunk: options.indexLogRange, concurrency: options.indexConcurrency, isRunning: () => !stopRequested,
+        onChunk: async logs => { index.ingest(logs, unitsMap()); },
+        onProgress: ({ contiguousFrom }) => {
+          if (!range) index.backfill.contiguousFrom = contiguousFrom;
+          if (contiguousFrom <= to) { index.markCovered(contiguousFrom, to); markLive(); }
+          if (options.indexSnapshots && !range) sampling = sampling.then(() => sampleBoundaries(contiguousFrom, from)).catch(() => {});
+        }
+      });
+      if (range && !result.complete) pendingGap = { from, to: result.contiguousFrom - 1n }; // retry the rest later
+      await sampling; // boundary snapshots belong to the backfill
+      if (!range) index.finishBackfill({ contiguousFrom: result.contiguousFrom, complete: result.complete, chunks: result.chunks, error: result.failed ? 'HORIZON' : null });
+      log('info', `index backfill ${range ? 'gap ' : ''}${result.complete ? 'complete' : 'stopped'} at block ${result.contiguousFrom} (${result.chunks} chunks, ${reader.stats.requests - requestsBefore} requests, ${Math.round((performance.now() - started) / 1000)} s, ${index.size} records)`);
+      return result;
+    } catch (error) {
+      if (!range) index.finishBackfill({ contiguousFrom: index.backfill.contiguousFrom, complete: false, error: error.message });
+      log('warn', `index backfill failed: ${error.message}`);
+      return null;
+    } finally { backfilling = false; }
+  }
+
   async function poll() {
     if (!state.block) throw new Error('NOT_BOOTSTRAPPED');
     polls++;
@@ -131,7 +225,8 @@ export function createCollector({ config, options = collectorOptions(), rpc, rea
     if (head.number <= state.block.number) { state.stats.lastSuccessAt = Date.now(); return; }
     const from = state.block.number + 1n, to = head.number;
     if (to - from + 1n > options.maxResumeGap) return bootstrap('gap');
-    const processed = processLogs(await fetchLogs(from, to), { chain: state.chain });
+    const logs = await fetchLogs(from, to);
+    const processed = processLogs(logs, { chain: state.chain });
     const ids = await reader.readMarketIds(to);
     const known = new Set(state.markets.keys());
     const added = ids.filter(id => !known.has(id)), removed = [...known].filter(id => !ids.includes(id));
@@ -157,6 +252,7 @@ export function createCollector({ config, options = collectorOptions(), rpc, rea
     for (const [id, read] of refreshed) s.replaceMarketPositions(state, id, read.positions, read.markPNS);
     s.applyPositionReads(state, positionReads);
     s.appendHistory(state, processed);
+    ingestLive(logs, from, to);
     state.stats.polls++; state.stats.logs += processed.decoded; state.stats.dirtyReads += positionReads.length;
     const reconciliation = s.reconcile(state);
     if (!reconciliation.ok) {
@@ -250,11 +346,14 @@ export function createCollector({ config, options = collectorOptions(), rpc, rea
         } else log('info', 'checkpoint rejected (non-canonical or too old); bootstrapping');
       }
     } catch (error) { log('warn', `checkpoint unusable: ${error.message}`); }
+    try { const text = options.indexPath ? await loadText(options.indexPath) : null; if (text) log('info', `index aggregates loaded: ${index.load(text)} buckets`); } catch (error) { log('warn', `index file unusable: ${error.message}`); }
     while (running) {
       const started = performance.now();
       try {
         if (!state.block) { await bootstrap('start'); await backfillHistory(); }
         else await poll();
+        if (!indexStarted && state.block) { indexStarted = true; backfillIndex().catch(() => {}); }
+        else if (pendingGap && !backfilling) { const gap = pendingGap; pendingGap = null; backfillIndex(gap).catch(() => {}); }
         consecutiveErrors = 0;
         refreshBook().catch(error => log('warn', `book refresh failed: ${error.message}`)); // concurrent, like verify()
         sample();
@@ -270,7 +369,7 @@ export function createCollector({ config, options = collectorOptions(), rpc, rea
     }
   }
 
-  function stop() { running = false; }
+  function stop() { running = false; stopRequested = true; }
 
-  return { state, options, reader, start, stop, bootstrap, poll, verify, backfillHistory, refreshBook, sample, freshness, checkpoint: () => checkpoint(true) };
+  return { state, index, options, reader, start, stop, bootstrap, poll, verify, backfillHistory, backfillIndex, refreshBook, sample, freshness, checkpoint: () => checkpoint(true), get backfilling() { return backfilling; } };
 }

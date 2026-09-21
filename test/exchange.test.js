@@ -26,6 +26,7 @@ function fakeContract({ failBatchesAbove = Infinity } = {}) {
       case 'getFundingInterval': return 8571n;
       case 'getContractVersion': return [1n, 7n, 4n];
       case 'isHalted': return false;
+      case 'getWithdrawAllowanceData': return [250000000000n, args[0] + 500n, args[0], 100000000n];
       case 'getPerpetualExistsBitmap': return [(1n << 1n) | (1n << 10n), 0n, 0n, 0n];
       case 'getMarginFractions': return [1500n, 2500n, 1500n, 30000000n, 90n, 95n];
       default: throw new Error('UNSUPPORTED:' + name);

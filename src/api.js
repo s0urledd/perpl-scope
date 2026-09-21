@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import * as m from './math.js';
 import { metrics as computeMetrics } from './state.js';
 import { stressAt } from './metrics.js';
+import { createStats, TRADE_COLUMNS } from './stats.js';
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json; charset=utf-8', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json' };
 const json = (_, value) => typeof value === 'bigint' ? value.toString() : value;
@@ -28,6 +29,7 @@ const ACCOUNT_MAX_INFLIGHT = 4;
 
 export function createApi({ collector, reference = null, webDir = fileURLToPath(new URL('../web/', import.meta.url)), version = '0.2.0', now = () => Date.now() }) {
   const { state } = collector;
+  const stats = createStats({ collector, reference, now });
   const cd = () => state.exchangeInfo?.collateralDecimals ?? 6;
   const accountCache = new Map();
   const accountInflight = new Map();
@@ -64,6 +66,13 @@ export function createApi({ collector, reference = null, webDir = fileURLToPath(
     return { market_id: f.perpId, symbol: market?.symbol ?? null, funding_event_block: f.fundingEventBlock.toString(), emitted_block: f.block.toString(), tx: f.tx, rate_pct: m.fundingRateFraction(f.actualRatePct100k) * 100, specified_rate_pct: m.fundingRateFraction(f.specifiedRatePct100k) * 100, funding_price: market ? dec(f.fundingPricePNS, market.priceDecimals) : f.fundingPricePNS.toString(), payment_per_unit: market ? dec(f.fundingPaymentPNS, scale) : f.fundingPaymentPNS.toString(), funding_sum: market ? dec(f.fundingSumPNS, scale) : f.fundingSumPNS.toString(), overwrite: f.allowOverwrite };
   }
 
+  // Feed entry from an index record (same shape as the event-history entry).
+  function indexLiquidationEntry(r) {
+    const market = state.markets.get(r.perpId);
+    const pd = market?.priceDecimals ?? 0, ld = market?.lotDecimals ?? 0, c = cd();
+    const price = BigInt(r.pricePNS), lot = BigInt(r.lotLNS);
+    return { block: String(r.block), timestamp: stats.tsOf(r.block), tx: r.tx, log_index: r.logIndex, market_id: r.perpId, symbol: market?.symbol ?? null, account_id: String(r.accountId), side: r.side === 0 ? 'long' : 'short', mark_price: dec(BigInt(r.markPNS), pd), exit_price: dec(price, pd), liquidated_size: dec(lot, ld), remaining_size: dec(BigInt(r.endLotLNS), ld), liquidated_notional: market ? dec(m.notionalCNS(price, lot, m.units(pd, ld, c)), c) : null, delta_pnl: dec(BigInt(r.pnlCNS), c), funding: dec(BigInt(r.fundingCNS), c), position_amount: dec(BigInt(r.amountCNS ?? 0), c), remaining_deposit: dec(BigInt(r.depositCNS), c), on_order_book: Boolean(r.onOrderBook), full: r.endLotLNS === 0 };
+  }
   function liquidationEntry(l) {
     const market = state.markets.get(l.perpId);
     const pd = market?.priceDecimals ?? 0, ld = market?.lotDecimals ?? 0;
@@ -108,7 +117,7 @@ export function createApi({ collector, reference = null, webDir = fileURLToPath(
     const c = cd(), pd = priceDec(market);
     return { market_id: market.id, symbol: market.symbol, price_decimals: pd, lot_decimals: market.lotDecimals, block: state.block.number.toString(), move_pct: move, side: r.side, price: dec(r.pricePNS, pd), mark: dec(market.markPNS, pd), liquidated: { count: r.count, notional: dec(r.notionalCNS, c), share_of_oi_pct: pct(r.shareBps) }, shortfall: dec(r.shortfallCNS, c), insurance_coverage_pct: pct(r.insuranceCoverageBps), remaining_notional: dec(r.remainingNotionalCNS, c), liquidity: r.depthCNS === null ? null : { depth: dec(r.depthCNS, c), levels: r.depthLevels, absorption_pct: pct(r.absorptionBps) }, positions_hit: r.hit.slice(0, 20).map(p => positionView(p, market)) };
   }
-  async function accountLookup(key) {
+  async function accountLookup(key, query = new URLSearchParams()) {
     const address = /^0x[0-9a-fA-F]{40}$/.test(key) ? key : null;
     const id = !address && /^[1-9]\d{0,9}$/.test(key) ? BigInt(key) : null;
     if (!address && id === null) throw Object.assign(new Error('INVALID_ACCOUNT'), { status: 400 });
@@ -137,7 +146,10 @@ export function createApi({ collector, reference = null, webDir = fileURLToPath(
     const total = (field) => positions.reduce((a, p) => a + Number(p[field] ?? 0), 0);
     const closest = positions.filter(p => p.liquidation_distance_pct !== null).sort((a, b) => a.liquidation_distance_pct - b.liquidation_distance_pct)[0] ?? null;
     // Positions are rebuilt from the current snapshot on every request; only the on-chain account record is cached.
-    return { account: { id: accountId.toString(), address: info.accountAddr, balance: dec(info.balanceCNS, c), locked_balance: dec(info.lockedBalanceCNS, c), frozen: Number(info.frozen) }, account_read_block: block.toString(), positions, totals: { positions: positions.length, notional: total('notional').toFixed(c), equity: total('equity').toFixed(c), pnl: total('pnl').toFixed(c), deposit: total('deposit').toFixed(c) }, closest_liquidation: closest ? { market_id: closest.market_id, symbol: closest.symbol, side: closest.side, distance_pct: closest.liquidation_distance_pct, liquidation_price: closest.liquidation_price } : null };
+    const analytics = stats.account(accountId, { limit: clamp(query.get('limit'), 200, 2000) });
+    const equity = Number(dec(info.balanceCNS + info.lockedBalanceCNS, c)) + total('equity');
+    const notional = total('notional');
+    return { account: { id: accountId.toString(), address: info.accountAddr, balance: dec(info.balanceCNS, c), locked_balance: dec(info.lockedBalanceCNS, c), frozen: Number(info.frozen) }, account_read_block: block.toString(), positions, totals: { positions: positions.length, notional: notional.toFixed(c), equity: total('equity').toFixed(c), pnl: total('pnl').toFixed(c), deposit: total('deposit').toFixed(c), account_value: equity.toFixed(c), margin_usage_pct: equity > 0 ? Number((total('deposit') / equity * 100).toFixed(2)) : null, effective_leverage: equity > 0 ? Number((notional / equity).toFixed(2)) : null }, closest_liquidation: closest ? { market_id: closest.market_id, symbol: closest.symbol, side: closest.side, distance_pct: closest.liquidation_distance_pct, liquidation_price: closest.liquidation_price } : null, ...analytics };
   }
   function seriesView(query) {
     const hours = Math.min(Math.max(Number(query.get('hours')) || 24, 1), 168);
@@ -179,7 +191,7 @@ export function createApi({ collector, reference = null, webDir = fileURLToPath(
     const { market, metrics: x } = entry;
     const limit = clamp(query.get('limit'), 25, 500);
     const sorted = [...x.positions].sort((a, b) => (b.markNotionalCNS > a.markNotionalCNS ? 1 : b.markNotionalCNS < a.markNotionalCNS ? -1 : 0));
-    return { ...marketSummary(entry), ladder: ladderView(x.ladder, market), liquidation_map: mapView(x.map), liquidity: liquidityView(x, market, true), adl_queue: adlView(x), health: x.health.map(h => ({ from_pct: pct(h.fromBps), to_pct: pct(h.toBps), count: h.count, notional: dec(h.notionalCNS, cd()) })), concentration_by_side: { long: concentrationView(x.concentration.long), short: concentrationView(x.concentration.short) }, top_positions: sorted.slice(0, limit).map(p => positionView(p, market)), funding_history: state.history.funding.filter(f => f.perpId === market.id).slice(-48).map(f => fundingEntry(f, market)), recent_liquidations: state.history.liquidations.filter(l => l.perpId === market.id).slice(-25).reverse().map(liquidationEntry) };
+    return { ...marketSummary(entry), ladder: ladderView(x.ladder, market), liquidation_map: mapView(x.map), liquidity: liquidityView(x, market, true), adl_queue: adlView(x), health: x.health.map(h => ({ from_pct: pct(h.fromBps), to_pct: pct(h.toBps), count: h.count, notional: dec(h.notionalCNS, cd()) })), concentration_by_side: { long: concentrationView(x.concentration.long), short: concentrationView(x.concentration.short) }, top_positions: sorted.slice(0, limit).map(p => positionView(p, market)), funding_history: state.history.funding.filter(f => f.perpId === market.id).slice(-48).map(f => fundingEntry(f, market)), recent_liquidations: collector.index.size ? collector.index.recentLiquidations(25, market.id).map(indexLiquidationEntry) : state.history.liquidations.filter(l => l.perpId === market.id).slice(-25).reverse().map(liquidationEntry) };
   }
 
   function positionsList(entry, query, { defaultLimit = 50, maxLimit = 1000 } = {}) {
@@ -208,6 +220,7 @@ export function createApi({ collector, reference = null, webDir = fileURLToPath(
       exchange: { version: state.exchangeInfo.version, halted: state.exchangeInfo.halted, accounts: state.exchangeInfo.numberOfAccounts.toString(), collateral_token: state.exchangeInfo.collateralToken, collateral_decimals: c, exchange_balance: dec(state.exchangeInfo.balanceCNS, c), protocol_balance: dec(state.exchangeInfo.protocolBalanceCNS, c), funding_interval_blocks: state.exchangeInfo.fundingInterval.toString(), block_time_ms: state.stats.blockTimeMs ?? null },
       totals: { markets: t.markets, positions: t.positions, liquidatable: t.liquidatable, bankrupt: t.bankrupt, total_notional: dec(t.notionalCNS, c), total_deposit: dec(t.depositCNS, c), total_equity: dec(t.fmvCNS, c), insurance_total: dec(t.insuranceCNS, c), notional_at_5pct: dec(t.notionalAt500Bps, c), notional_at_10pct: dec(t.notionalAt1000Bps, c), shortfall_at_10pct: dec(t.shortfallAt1000Bps, c), insurance_coverage_at_10pct: t.shortfallAt1000Bps > 0n ? pct(m.floorDiv(t.insuranceCNS * 10000n, t.shortfallAt1000Bps)) : null, all_reconciled: t.allReconciled, liquidations_24h: liq24.length, liquidated_notional_24h: dec(liqNotional, c), liquidity: overviewLiquidity(computed) },
       series_points: state.series.points.length,
+      index: stats.indexStatus(),
       markets: computed.markets.map(marketSummary)
     };
   }
@@ -236,22 +249,28 @@ export function createApi({ collector, reference = null, webDir = fileURLToPath(
 
   function referenceView() {
     if (!reference) return { enabled: false };
-    return { enabled: true, error: reference.error, fetched_at: reference.last?.at ?? null, chain_id: reference.last?.chainId ?? null, markets: [...state.markets.values()].map(market => ({ id: market.id, symbol: market.symbol, comparison: reference.compare(market, latestFunding(market.id)?.fundingSumPNS ?? null) })) };
+    const day = stats.stats(new URLSearchParams('window=24h')).markets;
+    return { enabled: true, error: reference.error, fetched_at: reference.last?.at ?? null, chain_id: reference.last?.chainId ?? null, markets: [...state.markets.values()].map(market => ({ id: market.id, symbol: market.symbol, chain_volume_24h: day.find(x => x.id === market.id)?.chain_volume_24h ?? null, comparison: reference.compare(market, latestFunding(market.id)?.fundingSumPNS ?? null) })) };
   }
 
   const routes = [
-    ['GET', /^\/api\/v1\/health$/, () => ({ ok: true, version, snapshot: snapshot(), collector: { polls: state.stats.polls, errors: state.stats.errors, last_error: errorCode(state.stats.lastError), last_poll_ms: state.stats.lastPollMs, uptime_ms: now() - state.stats.startedAt, rpc_requests: collector.reader.stats.requests } })],
+    ['GET', /^\/api\/v1\/health$/, () => ({ ok: true, version, snapshot: snapshot(), collector: { polls: state.stats.polls, errors: state.stats.errors, last_error: errorCode(state.stats.lastError), last_poll_ms: state.stats.lastPollMs, uptime_ms: now() - state.stats.startedAt, rpc_requests: collector.reader.stats.requests, index_records: collector.index.size, backfilling: collector.backfilling }, memory: { rss_mb: Math.round(process.memoryUsage().rss / 1048576), heap_mb: Math.round(process.memoryUsage().heapUsed / 1048576) } })],
     ['GET', /^\/api\/v1\/overview$/, () => ({ snapshot: snapshot(), ...overview() })],
     ['GET', /^\/api\/v1\/markets$/, () => ({ snapshot: snapshot(), markets: computeMetrics(state).markets.map(marketSummary) })],
     ['GET', /^\/api\/v1\/markets\/(\d+)$/, (match, query) => ({ snapshot: snapshot(), market: marketDetail(entryFor(match[1]), query) })],
     ['GET', /^\/api\/v1\/markets\/(\d+)\/positions$/, (match, query) => { const csv = query.get('format') === 'csv'; const body = { snapshot: snapshot(), ...positionsList(entryFor(match[1]), query, csv ? { defaultLimit: 5000, maxLimit: 5000 } : {}) }; return csv ? { csv: toCsv(body.positions, POSITION_COLUMNS), filename: `perplscope-${safeName(body.symbol)}-positions-${body.snapshot.block}.csv` } : body; }],
     ['GET', /^\/api\/v1\/markets\/(\d+)\/stress$/, (match, query) => ({ snapshot: snapshot(), ...stressView(entryFor(match[1]), query) })],
     ['GET', /^\/api\/v1\/markets\/(\d+)\/book$/, match => ({ snapshot: snapshot(), ...bookView(entryFor(match[1])) })],
-    ['GET', /^\/api\/v1\/accounts\/([0-9a-zA-Zx]{1,42})$/, async match => ({ snapshot: snapshot(), ...(await accountLookup(match[1])) })],
+    ['GET', /^\/api\/v1\/accounts\/([0-9a-zA-Zx]{1,42})$/, async (match, query) => ({ snapshot: snapshot(), ...(await accountLookup(match[1], query)) })],
+    ['GET', /^\/api\/v1\/accounts\/([0-9a-zA-Zx]{1,42})\/trades$/, async (match, query) => { const a = await accountLookup(match[1], new URLSearchParams({ limit: '2000' })); if (query.get('format') === 'csv') return { csv: toCsv(a.history.map(e => ({ ...e, timestamp: e.timestamp })), TRADE_COLUMNS), filename: `perplscope-account-${a.account.id}-trades-${state.block.number}.csv` }; return { snapshot: snapshot(), account: a.account, coverage: a.coverage, trades: a.history }; }],
+    ['GET', /^\/api\/v1\/stats$/, (_, query) => ({ snapshot: snapshot(), ...stats.stats(query) })],
+    ['GET', /^\/api\/v1\/stats\/series$/, (_, query) => ({ snapshot: snapshot(), ...stats.series(query) })],
+    ['GET', /^\/api\/v1\/leaderboard$/, (_, query) => ({ snapshot: snapshot(), ...stats.leaderboard(query) })],
+    ['GET', /^\/api\/v1\/index$/, () => ({ snapshot: snapshot(), ...stats.indexStatus() })],
     ['GET', /^\/api\/v1\/series$/, (_, query) => ({ snapshot: snapshot(), ...seriesView(query) })],
     ['GET', /^\/api\/v1\/markets\/(\d+)\/ladder$/, match => { const e = entryFor(match[1]); return { snapshot: snapshot(), market_id: e.market.id, symbol: e.market.symbol, ladder: ladderView(e.metrics.ladder, e.market), liquidation_map: mapView(e.metrics.map) }; }],
     ['GET', /^\/api\/v1\/markets\/(\d+)\/funding$/, (match, query) => { const e = entryFor(match[1]); const limit = clamp(query.get('limit'), 48, 1000); return { snapshot: snapshot(), market_id: e.market.id, symbol: e.market.symbol, current: fundingView(e.market), history: state.history.funding.filter(f => f.perpId === e.market.id).slice(-limit).map(f => fundingEntry(f, e.market)) }; }],
-    ['GET', /^\/api\/v1\/liquidations$/, (_, query) => { const limit = clamp(query.get('limit'), 100, 1000); const market = query.get('market'); const list = state.history.liquidations.filter(l => !market || String(l.perpId) === market).slice(-limit).reverse(); if (query.get('format') === 'csv') return { csv: toCsv(list.map(liquidationEntry), LIQUIDATION_COLUMNS), filename: `perplscope-liquidations-${state.block?.number ?? 'unknown'}.csv` }; return { snapshot: snapshot(), total: list.length, liquidations: list.map(liquidationEntry), deleverages: state.history.deleverages.slice(-limit).reverse().map(d => ({ block: d.block.toString(), tx: d.tx, market_id: d.perpId, account_id: d.accountId.toString(), side: d.positionType === 0 ? 'long' : 'short', force_close: d.forceClose, deleverage_price: d.deleveragePricePNS.toString(), start_size: d.startLotLNS.toString(), end_size: d.endLotLNS.toString() })) }; }],
+    ['GET', /^\/api\/v1\/liquidations$/, (_, query) => { const limit = clamp(query.get('limit'), 100, 1000); const market = query.get('market'); const fromIndex = collector.index.size > 0; const list = fromIndex ? collector.index.recentLiquidations(limit, market ? Number(market) : null).map(indexLiquidationEntry) : state.history.liquidations.filter(l => !market || String(l.perpId) === market).slice(-limit).reverse().map(liquidationEntry); if (query.get('format') === 'csv') return { csv: toCsv(list, LIQUIDATION_COLUMNS), filename: `perplscope-liquidations-${state.block?.number ?? 'unknown'}.csv` }; return { snapshot: snapshot(), source: fromIndex ? 'index' : 'history', total: list.length, liquidations: list, deleverages: state.history.deleverages.slice(-limit).reverse().map(d => ({ block: d.block.toString(), tx: d.tx, market_id: d.perpId, account_id: d.accountId.toString(), side: d.positionType === 0 ? 'long' : 'short', force_close: d.forceClose, deleverage_price: d.deleveragePricePNS.toString(), start_size: d.startLotLNS.toString(), end_size: d.endLotLNS.toString() })) }; }],
     ['GET', /^\/api\/v1\/validation$/, () => ({ snapshot: snapshot(), ...validation() })],
     ['GET', /^\/api\/v1\/reference$/, () => ({ snapshot: snapshot(), ...referenceView() })],
     ['GET', /^\/api\/v1\/events$/, () => ({ snapshot: snapshot(), parameter_changes: state.history.params.slice(-100).reverse().map(p => ({ ...p, block: p.block.toString() })), unwinds: state.history.unwinds.slice(-50).reverse().map(u => ({ ...u, block: u.block.toString() })), diagnostics: state.history.validation.slice(-50).reverse().map(v => ({ ...v, block: v.block.toString(), accountId: v.accountId.toString(), markPricePNS: v.markPricePNS.toString(), liqPricePNS: v.liqPricePNS?.toString() ?? null, bankruptcyPricePNS: v.bankruptcyPricePNS?.toString() ?? null })) })]

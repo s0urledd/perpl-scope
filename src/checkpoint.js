@@ -16,3 +16,14 @@ export async function loadCheckpoint(path, target) {
   try { text = await readFile(path, 'utf8'); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
   return deserialize(text, target);
 }
+
+// Small text files (index aggregates) with the same atomic-rename discipline.
+export async function saveText(path, text) {
+  await mkdir(dirname(path), { recursive: true });
+  const tmp = `${path}.${process.pid}.tmp`;
+  await writeFile(tmp, text);
+  await rename(tmp, path);
+}
+export async function loadText(path) {
+  try { return await readFile(path, 'utf8'); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+}

@@ -80,13 +80,17 @@ export function createReader({ rpc, exchange, multicall = MULTICALL3, batchSize 
   }
 
   async function readExchange(block) {
-    const [info, accounts, interval, version, halted] = await multi([
-      { name: 'getExchangeInfo' }, { name: 'numberOfAccounts' }, { name: 'getFundingInterval' }, { name: 'getContractVersion' }, { name: 'isHalted' }], block);
+    const numeric = typeof block === 'bigint';
+    const [info, accounts, interval, version, halted, allowance] = await multi([
+      { name: 'getExchangeInfo' }, { name: 'numberOfAccounts' }, { name: 'getFundingInterval' }, { name: 'getContractVersion' }, { name: 'isHalted' },
+      ...(numeric ? [{ name: 'getWithdrawAllowanceData', args: [block] }] : [])], block);
     return {
       balanceCNS: info[0], protocolBalanceCNS: info[1], recycleBalanceCNS: info[2],
       collateralDecimals: Number(info[3]), collateralToken: info[4],
       numberOfAccounts: accounts, fundingInterval: interval,
-      version: version.map(Number).join('.'), halted: Boolean(halted)
+      version: version.map(Number).join('.'), halted: Boolean(halted),
+      // Global withdrawal rate limit at this block: remaining allowance, when it expires, refill rate.
+      withdrawAllowance: allowance ? { allowanceCNS: allowance[0], expiryBlock: allowance[1], lastAllowanceBlock: allowance[2], cnsPerBlock: allowance[3] } : null
     };
   }
 

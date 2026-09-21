@@ -38,6 +38,7 @@ export function createFakeExchange({ markets = [1, 20], fundingInterval = 8571n 
       case 'getFundingInterval': return state.fundingInterval;
       case 'getContractVersion': return [1n, 7n, 4n];
       case 'isHalted': return state.halted;
+      case 'getWithdrawAllowanceData': return [250000000000n, args[0] + 500n, args[0] - 10n, 100000000n];
       case 'getPerpetualExistsBitmap': { const words = [0n, 0n, 0n, 0n]; for (const id of state.markets.keys()) words[Math.floor(id / 256)] |= 1n << BigInt(id % 256); return words; }
       case 'getPerpetualInfoV2': return info(market(args[0]));
       case 'getMarginFractions': { const m = market(args[0]); return [m.initHdths, m.maintHdths, m.initHdths, 30000000n, 90n, 95n]; }
