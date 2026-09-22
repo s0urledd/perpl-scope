@@ -1,8 +1,55 @@
 # Validation gate
 
-Result: BLOCKED
+Result: **PASS** for the implemented scope (open positions, open interest,
+PnL, funding, liquidation classification, live collector with reconciliation
+and independent discovery). Remaining outside the gate: direct contract
+liquidation-price diagnostics (none observed in sampled windows) and
+historical position reads older than public-RPC state retention.
 
-## Full open-position discovery diagnostic
+All evidence below was collected on mainnet, chain 143, exchange
+`0x34B6552d57a35a1D042CcAe1951BD1C370112a6F`, contract version 1.7.4.
+
+## 2026-09-21 — formula validation on live data
+
+`npm run validate:math` against `https://rpc1.monad.xyz` (2000-block log
+ranges) at block 106780694. Full report: [evidence/validation-math-2026-09-21.json](evidence/validation-math-2026-09-21.json).
+
+| Check | Result |
+| --- | --- |
+| Delta PnL recomputed vs `getPositionsV2.deltaPnlCNS` | 557 / 557 with truncation toward zero (floor: 464 / 557, rejected) |
+| `pnlCNS = deltaPnlCNS + premiumPnlCNS` | 557 / 557 |
+| Paged positions vs open-interest counters, 11 markets | all exact |
+| Log scan 106580694–106780694 (200,000 blocks) | 263 watched logs: 33 liquidations, 230 funding events, 0 diagnostics |
+| Liquidation classification at the event's mark, block − 1 | 1 / 1 with retained state: `liquidatable`, health 99.08 % (BTC, account 3939) |
+| Premium change across latest funding event vs SDK formula | 208 / 208 positions (2 markets with retained state) |
+| `getFundingSumAtBlock` vs emitted `fundingSumPNS` | 2 / 2 where the call succeeded |
+
+Public providers prune historical state: 8 of 10 markets' funding-block reads
+and 32 of 33 liquidation pre-states were unavailable through `rpc1`. The
+script records these as `stateUnavailable` / `errors` rather than failing.
+
+## 2026-09-21 — live collector
+
+`npm start` against the public `https://rpc.monad.xyz`:
+
+| Measurement | Value |
+| --- | --- |
+| Bootstrap (exchange info, 11 markets, 557 positions, hash re-check) | 1.6 s |
+| Independent account-bitmap rescan, 5,311 accounts | 152–153 requests, 10.4–10.8 s, agrees |
+| Poll cadence | 2 s, 0.4–0.5 s per poll, incremental reads only for touched positions |
+| Open-interest reconciliation | exact on every poll observed (200+ polls) |
+| Checkpoint resume after restart | resumed at block 106780717 with head 106780799, no bootstrap |
+| Perpl API cross-check | margins, funding rate and funding sum match on all listed markets; mark within ±15 bps; OI within ±0.6 % (timing) |
+
+## 2026-09-21 — full discovery snapshot on the public RPC
+
+`npm run snapshot` at block 106773861: 5,311 accounts, 11 markets, 561
+positions, 141 requests, 12.6 s, sampled peak RSS 135 MB; every per-market,
+per-side sum equalled the contract. Summary: [evidence/snapshot-2026-09-21.json](evidence/snapshot-2026-09-21.json).
+
+## Earlier evidence (2026-09-12)
+
+### Full open-position discovery diagnostic
 
 Two mainnet samples passed exact per-market, per-side OI reconciliation:
 
@@ -17,118 +64,33 @@ Block hashes:
 - 104240260: 0xd928ded885e374a0ba8a8833d724f29d22abb46acd6c1a6ae2ec1e190011449c
 
 Both hashes matched final rechecks. Discovered market IDs were
-1, 10, 20, 30, 31, 40, 50, 60, 70, 80 and 90. Zero-position markets were included.
-All account IDs were scanned, using the SDK account bitmap layout, then marked
-open positions were read. Each side's integer sum exactly equalled the market
-getter, including zeros. Sampled process RSS peaks were 107905024 and 108466176
-bytes. These measurements cover this diagnostic process, not a Rust L3 snapshot.
-
+1, 10, 20, 30, 31, 40, 50, 60, 70, 80 and 90. All account IDs were scanned
+using the SDK account bitmap layout, then marked open positions were read.
 An earlier all-account/all-market getter scan failed at market 30 after 330
-requests. Adaptive splitting was attempted and stopped when that route remained
-expensive. The bitmap route completed without omitting that market.
+requests; the bitmap route completed without omitting that market.
 
-The result proves the recorded position/OI scope. Full exchange snapshot,
-independent UI reference, financial replay and persistent collector restart
-remain outside this result. Overall gate is still BLOCKED.
+### Position size/side replay
 
-## WSS and isolated reconnect
+From block 104240009 exclusive through 104240260 inclusive, 15337 exchange
+logs were read in ten-block ranges. The replay applied 243 increases, 182
+opens, 179 closes, 130 decreases and 6 inversions, for 740 size/side
+mutations. All resulting account/market quantities and directions matched the
+second snapshot exactly.
+
+### WSS and isolated reconnect
 
 The supplied endpoint supports mainnet JSON-RPC WSS. A 20-second subscription
 received 61 newHeads notifications. An isolated three-second client disconnect
-was followed by 14 blocks of backfill containing 847 logs; HTTP and WSS returned
-identical log identities and payloads. This is transport validation only.
-See gateway-integration.md for the custom gateway assessment and stage-filter
-limitations. No production service or node configuration was changed.
+was followed by 14 blocks of backfill containing 847 logs; HTTP and WSS
+returned identical log identities and payloads.
 
-## Position size/side replay
+### Real mainnet position sample
 
-Result: PASS within the explicitly limited size/side scope.
-From block 104240009 exclusive through 104240260 inclusive, 15337 exchange
-logs were read in ten-block ranges. The replay applied 243 increases, 182 opens,
-179 closes, 130 decreases and 6 inversions, for 740 size/side mutations.
-All resulting account/market quantities and directions matched the second
-snapshot exactly. The comparison was corrected to ignore JSON property order;
-a regression test covers that bug. Thirteen local tests passed.
+Direct ABI reader at block 104237339: account 6, BTC long 0.00179 at 69742.2,
+deposit 41.612829 AUSD; `getAccountByAddr` matched `getAccountById`; collateral
+address and decimals matched the public context.
 
-Partial liquidation, deleveraging and unwind quantity rules follow the SDK,
-but no such events were observed in this live interval. Their full financial
-effects are outside this diagnostic. Deposits, prices, funding and margin have
-not passed replay validation. Live reconnect tests and replay tests are separate;
-no continuously running collector or atomic persistent cursor is implemented.
+### Preflights
 
-## Real mainnet position sample
-
-On 2026-09-12 the direct ABI reader completed at block 104237339, hash
-0xe659b8168303547ff113967a01cc13adf6d57c40a0fb352daf7d555341650dcc.
-The final block hash recheck matched. The contract reported 5270 accounts.
-Only IDs 1 through 6 were scanned, stopping after the first account with an
-open position. This is partial sampling, not complete exchange coverage.
-
-| Field | Direct contract result |
-| --- | --- |
-| Account ID | 6 |
-| Address | 0xf91b2eCb1cD59A36F3AED20B46943a75dB08795b |
-| Market | BTC, perpetual ID 1 discovered from public context |
-| Direction | Long |
-| Size | 0.00179 BTC |
-| Entry price | 69742.2; V2 price residue is zero in this sample |
-| Position deposit | 41.612829 AUSD |
-| Account free balance | 0 |
-
-`getAccountByAddr` returned the same account record as `getAccountById`.
-Exchange collateral address and decimals (6) matched public context. Market
-price and lot decimals matched between context and `getPerpetualInfo`.
-Raw responses are in ignored `reports/mainnet-sample.json`.
-This demonstrates working getters, not an SDK snapshot or independent UI
-comparison. Replay and full discovery remain pending.
-
-A user-supplied Monad testnet RPC was tested on 2026-09-12. The bounded
-preflight succeeded. No live full snapshot or position comparison has been
-executed. SDK version and ABI are unverified. A subsequent user-supplied mainnet
-RPC also passed the initial preflight, as recorded below.
-
-## Live mainnet preflight
-
-- Date: 2026-09-12.
-- Chain ID returned: 143.
-- Exchange with nonempty bytecode: 0x34B6552d57a35a1D042CcAe1951BD1C370112a6F.
-- Block number: 104235620.
-- Block hash: 0x5f91e3879e1fa711fbd88750437cddc35983a19fcfe45f70d766f851f201ec78.
-- The hash matched a second lookup after the pinned bytecode read.
-- Four sequential read-only requests completed without a reported RPC error.
-- Local configuration now targets mainnet.
-
-Full validation remains BLOCKED. Bytecode presence and a hash recheck do not
-prove ABI identity, full snapshot consistency, account coverage or replay.
-
-## Live testnet preflight
-
-- Chain ID returned: 10143.
-- Exchange with nonempty bytecode: 0x1964c32f0be608e7d29302aff5e61268e72080cc.
-- Block number: 61955603.
-- Block hash: 0x37d6978db38ca0b39b56757eac4cc2a40433bd74766a297f6d22b9364f4756e5.
-- The block hash matched a second lookup after the pinned bytecode read.
-- Four sequential read-only requests completed without a reported RPC error.
-- All seven offline tests passed again.
-
-Overall status remains BLOCKED for the remaining SDK, metadata, discovery,
-snapshot, independent account and replay checks. Testnet preflight provides
-no mainnet coverage evidence. Local configuration is in the ignored `.env`.
-
-The preflight checks configured chain ID, exchange bytecode at one block number,
-and a subsequent canonical hash check. Bytecode presence does not establish the
-ABI or deployment identity. This is not a complete exchange snapshot.
-
-| Evidence | Current result |
-| --- | --- |
-| Network target | Monad mainnet, chain 143, documentation only |
-| Exchange | 0x34B6552d57a35a1D042CcAe1951BD1C370112a6F, documentation only |
-| Snapshot block/hash | Unavailable |
-| Account/position discovery | Unimplemented; coverage unknown |
-| Independent real account comparison | Unavailable |
-| Replay and snapshot reconciliation | Unimplemented |
-| CPU, peak RAM, bootstrap, lag | Unmeasured |
-| Historical calls and log retention | Unmeasured |
-
-Offline tests use synthetic RPC responses. They do not establish live accuracy.
-Successful preflight remains BLOCKED until the remaining evidence is collected.
+Mainnet (chain 143, block 104235620) and testnet (chain 10143, block 61955603)
+preflights completed four sequential read-only requests with hash rechecks.

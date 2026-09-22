@@ -1,0 +1,183 @@
+{
+  "status": "PASS",
+  "chain_id": "143",
+  "exchange_address": "0x34B6552d57a35a1D042CcAe1951BD1C370112a6F",
+  "checks": {
+    "delta_pnl": {
+      "checked": 557,
+      "truncAgree": 557,
+      "floorAgree": 464,
+      "pnlSumAgree": 557,
+      "markMismatch": 0
+    },
+    "open_interest": [
+      {
+        "id": 1,
+        "symbol": "BTC",
+        "positions": 181,
+        "long": "531713",
+        "short": "531713",
+        "contractLong": "531713",
+        "contractShort": "531713",
+        "matches": true
+      },
+      {
+        "id": 10,
+        "symbol": "MON",
+        "positions": 86,
+        "long": "6701740",
+        "short": "6701740",
+        "contractLong": "6701740",
+        "contractShort": "6701740",
+        "matches": true
+      },
+      {
+        "id": 20,
+        "symbol": "ETH",
+        "positions": 87,
+        "long": "87152",
+        "short": "87152",
+        "contractLong": "87152",
+        "contractShort": "87152",
+        "matches": true
+      },
+      {
+        "id": 30,
+        "symbol": "SOL",
+        "positions": 0,
+        "long": "0",
+        "short": "0",
+        "contractLong": "0",
+        "contractShort": "0",
+        "matches": true
+      },
+      {
+        "id": 31,
+        "symbol": "SOL_v2",
+        "positions": 52,
+        "long": "2740379",
+        "short": "2740379",
+        "contractLong": "2740379",
+        "contractShort": "2740379",
+        "matches": true
+      },
+      {
+        "id": 40,
+        "symbol": "HYPE",
+        "positions": 56,
+        "long": "35329",
+        "short": "35329",
+        "contractLong": "35329",
+        "contractShort": "35329",
+        "matches": true
+      },
+      {
+        "id": 50,
+        "symbol": "ZEC",
+        "positions": 43,
+        "long": "298661",
+        "short": "298661",
+        "contractLong": "298661",
+        "contractShort": "298661",
+        "matches": true
+      },
+      {
+        "id": 60,
+        "symbol": "LIT",
+        "positions": 33,
+        "long": "64251",
+        "short": "64251",
+        "contractLong": "64251",
+        "contractShort": "64251",
+        "matches": true
+      },
+      {
+        "id": 70,
+        "symbol": "VVV",
+        "positions": 0,
+        "long": "0",
+        "short": "0",
+        "contractLong": "0",
+        "contractShort": "0",
+        "matches": true
+      },
+      {
+        "id": 80,
+        "symbol": "TAO",
+        "positions": 0,
+        "long": "0",
+        "short": "0",
+        "contractLong": "0",
+        "contractShort": "0",
+        "matches": true
+      },
+      {
+        "id": 90,
+        "symbol": "PUMP",
+        "positions": 19,
+        "long": "4534205",
+        "short": "4534205",
+        "contractLong": "4534205",
+        "contractShort": "4534205",
+        "matches": true
+      }
+    ],
+    "log_scan": {
+      "from_block": "106580694",
+      "to_block": "106780694",
+      "logs": 263,
+      "range_splits": 7,
+      "liquidations": 33,
+      "diagnostics": 0,
+      "funding_events": 230
+    },
+    "liquidation_price_vectors": {
+      "found": 0,
+      "checked": 0,
+      "within1Tick": 0,
+      "within10Ticks": 0,
+      "exact": 0,
+      "stateUnavailable": 0,
+      "samples": []
+    },
+    "liquidation_classification": {
+      "found": 33,
+      "checked": 1,
+      "liquidatableOrBankrupt": 1,
+      "healthy": 0,
+      "missing": 0,
+      "stateUnavailable": 0,
+      "samples": [
+        {
+          "block": "106765050",
+          "perpId": 1,
+          "accountId": "3939",
+          "side": "short",
+          "status": "liquidatable",
+          "healthBps": "9908",
+          "mark": "854582",
+          "computed_liq_micro_pns": "854301571428",
+          "exit_pns": "854905",
+          "liquidated_lot": "7",
+          "remaining_lot": "0"
+        }
+      ]
+    },
+    "funding": {
+      "events": 10,
+      "sumGetterAgree": 2,
+      "positionsChecked": 208,
+      "premiumAgree": 208,
+      "samples": [],
+      "errors": 8
+    }
+  },
+  "block_number": "106780694",
+  "block_hash": "0x46dd53262d2ebed2dc8126654240a63cc79aeb1ed8884a193bffc20936ee494e",
+  "rpc": {
+    "requests": 254,
+    "calls": 88,
+    "splits": 0,
+    "failures": 15
+  }
+}

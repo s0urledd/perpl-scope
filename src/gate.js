@@ -12,7 +12,7 @@ export function configuration(env) {
   return { url: url.href, chain, exchange };
 }
 
-export function rpcClient(url, fetcher = fetch) {
+export function rpcClient(url, fetcher = fetch, { timeoutMs = 10000, maxBytes = 1024 * 1024 } = {}) {
   let id = 0;
   return async (method, params) => {
     const requestId = ++id;
@@ -21,7 +21,7 @@ export function rpcClient(url, fetcher = fetch) {
         method: 'POST', redirect: 'error',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ jsonrpc: '2.0', id: requestId, method, params }),
-        signal: AbortSignal.timeout(10000)
+        signal: AbortSignal.timeout(timeoutMs)
       });
       if (!response.ok) throw new Error('RPC_HTTP');
       const reader = response.body.getReader();
@@ -30,7 +30,7 @@ export function rpcClient(url, fetcher = fetch) {
         const { done, value } = await reader.read();
         if (done) break;
         size += value.length;
-        if (size > 1024 * 1024) { await reader.cancel(); throw new Error('RPC_TOO_LARGE'); }
+        if (size > maxBytes) { await reader.cancel(); throw new Error('RPC_TOO_LARGE'); }
         chunks.push(Buffer.from(value));
       }
       const data = JSON.parse(Buffer.concat(chunks).toString());

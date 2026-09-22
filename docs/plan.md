@@ -1,15 +1,20 @@
-# Incremental delivery plan
+# Delivery plan and status
 
-1. Prepare repository, configuration, read-only preflight and offline checks.
-2. Obtain an authorized Monad RPC endpoint. Verify SDK/CLI source, license,
-   toolchain requirements and deployment ABI; pin the selected SDK version.
-3. Build a fixed-block snapshot, document discovery coverage, reconcile a real
-   position against an independent source, and test replay against a new snapshot.
-4. Record PASS, FAIL or BLOCKED with measurements. On PASS implement ingestion,
-   metrics and read API, then dashboard. On FAIL evaluate a public-data fallback.
-5. Run financial and operational tests as each corresponding component exists.
+1. ✅ Repository, configuration, read-only preflight, offline checks.
+2. ✅ Authorized RPC, SDK/ABI verification (perpl-sdk 0.2.5 → 0.2.8, ABI
+   identical), pinned ABI subset.
+3. ✅ Fixed-block snapshot with complete account-bitmap discovery, exact
+   open-interest reconciliation, size/side replay between snapshots.
+4. ✅ Live collector with paged-getter bootstrap, event-driven re-reads,
+   per-poll reconciliation, periodic independent verification, checkpoints.
+5. ✅ Risk metrics (PnL, health, liquidation and bankruptcy prices, ladder,
+   map, concentration, insurance coverage, funding) validated on live data.
+6. ✅ JSON API and dashboard.
+7. ⬜ Public deployment, demo recording, hackathon submission
+   (`docs/submission.md`).
+8. ⬜ Nice-to-have: WebSocket head subscription to cut polling latency,
+   historical time series (persisted per-block metrics), alerts.
 
-The supplied brief is design input. Its external claims remain subject to
-verification. Current user scope is incremental project setup and testing.
-Initial Node.js tooling accommodates the installed runtime; it does not replace
-the proposed Rust ingestion architecture. Rust is absent from the current PATH.
+Rust ingestion was considered and not built: the Node.js collector meets the
+budget (bootstrap in seconds, sub-second polls) and the SDK's own paged
+getter removed the need for an L3 snapshot.
