@@ -3,7 +3,7 @@
 // latest liquidations and flows.
 import { get, stream } from '../api.js';
 import { usd, compact, int, price, pct, num, esc, timeOnly, ago, duration } from '../format.js';
-import { kpi, seg, table, mkt, sideTag, addr, ratio, pctCell, fundingCell, fundingTip, tradeAction, chartTools, skeleton, skChart, empty, assignColors, colorOf, hasColor, logo, ICON, OTHER_HEX, SLOT_HEX } from '../ui.js';
+import { kpi, seg, table, mkt, sideTag, addr, ratio, pctCell, fundingCell, fundingTip, tradeAction, chartTools, skeleton, skChart, empty, assignColors, colorOf, hasColor, logo, ICON, OTHER_HEX, SLOT_HEX, mergeByAsset } from '../ui.js';
 import { sparkline, stackedBars, lineChart, signedBars, twoSided, toggleSeries, COLORS, CUMULATIVE } from '../charts.js';
 
 const WINDOWS = [['24h', '24H'], ['7d', '7D'], ['30d', '30D'], ['all', 'All']];
@@ -128,7 +128,7 @@ export function mount(el, { query, setQuery }) {
 
   // Stacked by market: the six largest markets keep their colour, the rest fold into Other.
   function byMarket(metric) {
-    const all = (series.by_market ?? []).filter(m => m[metric].some(v => num(v) > 0));
+    const all = mergeByAsset(series.by_market ?? [], ['volume', 'liquidated', 'fees']).filter(m => m[metric].some(v => num(v) > 0));
     const top = all.filter(m => hasColor(m.id)), rest = all.filter(m => !hasColor(m.id));
     const list = top.map(m => ({ id: m.id, name: m.symbol, color: colorOf(m.id), data: m[metric].map(num) }));
     if (rest.length) list.push({ name: 'Other', color: OTHER_HEX, data: series.times.map((_, i) => rest.reduce((a, m) => a + num(m[metric][i]), 0)) });
@@ -139,7 +139,8 @@ export function mount(el, { query, setQuery }) {
   function renderVolume() {
     const node = $('main-chart'), b = series.meta.bucket_seconds;
     node.innerHTML = '';
-    $('chart-meta').textContent = `${w === 'all' ? 'All-time' : `Last ${w}`} · ${BUCKET_NAMES[b] ?? `${series.meta.bucket}`} bars · UTC`;
+    // With the daily/weekly switch shown, the meta names only the span.
+    $('chart-meta').textContent = BUCKET_CHOICES[w] ? `${w === 'all' ? 'All-time' : `Last ${w}`} · UTC` : `${w === 'all' ? 'All-time' : `Last ${w}`} · ${BUCKET_NAMES[b] ?? `${series.meta.bucket}`} bars · UTC`;
     const list = byMarket('volume');
     stackedBars(node, { times: series.times, series: list, bucketSeconds: b, cumulative: true, zoom: true });
     $('legend').innerHTML = list.map(s => `<button class="lg" data-action="toggle" data-name="${esc(s.name)}"><i style="background:${s.color}"></i>${legendLogo(s)}${esc(s.name)}</button>`).join('')

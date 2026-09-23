@@ -137,3 +137,19 @@ export function download(filename, text, type = 'text/csv') {
   const a = Object.assign(document.createElement('a'), { href: url, download: filename });
   document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+// Per-market series merged by displayed asset: a relisted market and its
+// delisted original ('SOL_v2' shown as 'SOL', and 'SOL') become one series.
+// The row keeps the id of the member with the most activity, for its colour.
+export function mergeByAsset(rows, fields) {
+  const byName = new Map();
+  for (const r of rows) {
+    const total = fields.reduce((a, f) => a + r[f].reduce((b, v) => b + (Number(v) || 0), 0), 0);
+    const cur = byName.get(r.symbol);
+    if (!cur) { byName.set(r.symbol, { ...r, _total: total, ...Object.fromEntries(fields.map(f => [f, r[f].map(v => Number(v) || 0)])) }); continue; }
+    for (const f of fields) cur[f] = cur[f].map((v, i) => v + (Number(r[f][i]) || 0));
+    if (total > cur._total) cur.id = r.id;
+    cur._total += total;
+  }
+  return [...byName.values()];
+}
