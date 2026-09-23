@@ -65,7 +65,14 @@ const pad = n => String(n).padStart(2, '0');
 export function dateTime(ts) { if (!ts) return '—'; const d = new Date(Number(ts) * 1000); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`; }
 export function date(ts) { if (!ts) return '—'; const d = new Date(Number(ts) * 1000); return `${d.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' })} ${d.getUTCDate()}, ${d.getUTCFullYear()}`; }
 export function timeOnly(ts) { const d = new Date(Number(ts) * 1000); return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`; }
-export function multiple(pctValue) { const n = num(pctValue); if (n === null) return '—'; return n >= 1000 ? `${(n / 100).toFixed(n >= 10000 ? 0 : 1)}×` : `${n.toFixed(0)}%`; }
+// Cover ratios round down, so a cover below 100 % never reads as full.
+export function multiple(pctValue) {
+  const n = num(pctValue);
+  if (n === null) return '—';
+  if (n >= 10000) return `${Math.floor(n / 100)}×`;
+  if (n >= 1000) return `${(Math.floor(n / 10) / 10).toFixed(1)}×`;
+  return n >= 100 ? `${Math.floor(n)}%` : `${(Math.floor(n * 10) / 10).toFixed(1)}%`;
+}
 export const short = a => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '—');
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 export const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ESC[c]);

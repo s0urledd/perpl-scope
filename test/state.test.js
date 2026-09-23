@@ -54,7 +54,7 @@ test('history is bounded and status transitions are validated', () => {
 });
 
 test('checkpoint round trip preserves BigInt state exactly', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'perpl-scope-'));
+  const dir = await mkdtemp(join(tmpdir(), 'plumb-'));
   try {
     const state = bootstrap();
     s.appendHistory(state, { funding: [{ block: 1n, perpId: 1, fundingPaymentPNS: -34n, fundingSumPNS: -35673n, allowOverwrite: false }] });
@@ -70,4 +70,13 @@ test('checkpoint round trip preserves BigInt state exactly', async () => {
     assert.equal(await loadCheckpoint(join(dir, 'missing.json'), target), null);
     await assert.rejects(loadCheckpoint(path, { chain: '10143', exchange: target.exchange }), /CHECKPOINT_TARGET_MISMATCH/);
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('history appended twice for the same logs keeps one copy', async () => {
+  const { createState, appendHistory } = await import('../src/state.js');
+  const state = createState({ chain: '143', exchange: '0x0' });
+  const f = { perpId: 1, block: 10n, tx: '0xab', logIndex: 3, fundingEventBlock: 10n };
+  appendHistory(state, { funding: [f] });
+  appendHistory(state, { funding: [{ ...f }, { ...f, logIndex: 4 }] });
+  assert.equal(state.history.funding.length, 2);
 });

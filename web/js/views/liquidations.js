@@ -27,7 +27,7 @@ export function mount(el, { query, setQuery }) {
     $('kpis').innerHTML = [
       kpi({ label: `Liquidated ${w}`, value: usd(h.liquidated.value), delta: h.liquidated.change_pct, invert: true, note: `${int(h.liquidations.value)} liquidations` }),
       kpi({ label: 'Share of volume', value: `${num(h.volume.value) ? (num(h.liquidated.value) / num(h.volume.value) * 100).toFixed(2) : '0.00'}%`, note: `of ${usd(h.volume.value)} traded` }),
-      kpi({ label: 'Auto-deleveraging', value: int(h.deleverages), note: 'positions reduced by ADL' }),
+      kpi({ label: 'ADL and force closes', value: int(h.deleverages), note: 'positions closed by the protocol', tip: 'PositionDeleveraged events: auto-deleveraging against a bankrupt position, or a force close at the mark price (flagged on the event).' }),
       kpi({ label: 'Largest (recent)', value: largest ? usd(largest.notional) : '—', note: largest ? `${esc(largest.symbol)} ${esc(largest.side ?? '')} · ${ago(largest.ts)}` : '' })
     ].join('');
     const node = $('chart'); node.innerHTML = '';
@@ -45,7 +45,7 @@ export function mount(el, { query, setQuery }) {
     $('feed').innerHTML = table({ id: 'liq', columns: [
       { key: 't', label: 'Time (UTC)', render: r => `<span class="muted num">${dateTime(r.ts)}</span>` },
       { key: 'm', label: 'Market', render: r => mkt(r.market, r.symbol) },
-      { key: 'k', label: 'Type', render: r => (r.kind === 'deleverage' ? '<span class="tag warn">ADL</span>' : `<span class="tag">${r.on_book ? 'Order book' : 'Liquidation'}</span>`) },
+      { key: 'k', label: 'Type', render: r => (r.kind === 'deleverage' ? (r.force_close ? '<span class="tag warn">Force close</span>' : '<span class="tag warn">ADL</span>') : `<span class="tag">${r.on_book ? 'Order book' : 'Liquidation'}</span>`) },
       { key: 's', label: 'Position', render: r => sideTag(r.side) },
       { key: 'a', label: 'Trader', render: r => addr(r.address, r.account) },
       { key: 'sz', label: 'Size', n: true, render: r => size(r.size) },

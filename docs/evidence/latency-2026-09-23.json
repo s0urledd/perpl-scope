@@ -1,0 +1,135 @@
+{
+ "measured_at": "2026-09-23",
+ "setup": "development instance, remote RPC polled every 400 ms (no execution events), ClickHouse 26.8; script: scripts/measure-latency.js",
+ "unit": "milliseconds; n = samples, p50/p90/max",
+ "after_collector_follows_commits": {
+  "seconds": 90,
+  "blocks_seen": 299,
+  "block_time_ms": 301,
+  "rpc_roundtrip_ms": {
+   "n": 647,
+   "p50": 38,
+   "p90": 40,
+   "max": 203
+  },
+  "finalization_lag_ms": {
+   "n": 297,
+   "p50": 553,
+   "p90": 688,
+   "max": 827
+  },
+  "finalization_lag_blocks": {
+   "n": 299,
+   "p50": 2,
+   "p90": 2,
+   "max": 2
+  },
+  "sse_block_after_proposed_ms": {
+   "n": 294,
+   "p50": 1028,
+   "p90": 1435,
+   "max": 1729
+  },
+  "sse_block_after_finalized_ms": {
+   "n": 294,
+   "p50": 487,
+   "p90": 871,
+   "max": 1174
+  },
+  "sse_block_interval_ms": {
+   "n": 89,
+   "p50": 1000,
+   "p90": 1017,
+   "max": 1482
+  },
+  "trade_on_tape_after_proposed_ms": {
+   "n": 55,
+   "p50": 937,
+   "p90": 1378,
+   "max": 1495
+  },
+  "contract_snapshot_after_proposed_ms": {
+   "n": 294,
+   "p50": 1390,
+   "p90": 1819,
+   "max": 2157
+  },
+  "contract_snapshot_after_finalized_ms": {
+   "n": 294,
+   "p50": 841,
+   "p90": 1245,
+   "max": 1602
+  },
+  "contract_snapshot_interval_ms": {
+   "n": 90,
+   "p50": 1028,
+   "p90": 1044,
+   "max": 1540
+  }
+ },
+ "before_collector_follows_commits": {
+  "seconds": 60,
+  "blocks_seen": 199,
+  "block_time_ms": 300,
+  "rpc_roundtrip_ms": {
+   "n": 424,
+   "p50": 38,
+   "p90": 42,
+   "max": 492
+  },
+  "finalization_lag_ms": {
+   "n": 196,
+   "p50": 553,
+   "p90": 688,
+   "max": 871
+  },
+  "finalization_lag_blocks": {
+   "n": 198,
+   "p50": 2,
+   "p90": 2,
+   "max": 2
+  },
+  "sse_block_after_proposed_ms": {
+   "n": 194,
+   "p50": 1024,
+   "p90": 1429,
+   "max": 1619
+  },
+  "sse_block_after_finalized_ms": {
+   "n": 194,
+   "p50": 494,
+   "p90": 880,
+   "max": 1065
+  },
+  "sse_block_interval_ms": {
+   "n": 59,
+   "p50": 1001,
+   "p90": 1067,
+   "max": 1286
+  },
+  "trade_on_tape_after_proposed_ms": {
+   "n": 18,
+   "p50": 1134,
+   "p90": 1360,
+   "max": 1507
+  },
+  "contract_snapshot_after_proposed_ms": {
+   "n": 194,
+   "p50": 2086,
+   "p90": 3017,
+   "max": 3582
+  },
+  "contract_snapshot_after_finalized_ms": {
+   "n": 194,
+   "p50": 1496,
+   "p90": 2467,
+   "max": 3031
+  },
+  "contract_snapshot_interval_ms": {
+   "n": 26,
+   "p50": 2306,
+   "p90": 2318,
+   "max": 2834
+  }
+ }
+}

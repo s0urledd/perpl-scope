@@ -8,19 +8,31 @@ import { roundTrips, performance, insights, activityGrid } from './analytics.js'
 import { metrics as computeMetrics } from './state.js';
 
 const bad = (message, status = 400) => Object.assign(new Error(message), { status });
-const HOUR = 3600, DAY = 86400;
+const HOUR = 3600, DAY = 86400, YEAR = 365 * DAY; // funding is annualised over 365 days
 
+// A value is served for ttlMs, then (up to twice that age) served stale while
+// it is recomputed in the background; older values, and `fresh` requests,
+// wait for a new computation. A computation never replaces a newer one.
 export function createCache({ now = () => Date.now(), max = 500 } = {}) {
-  const store = new Map(); // key -> { at, value, pending }
-  async function get(key, ttlMs, compute) {
+  const store = new Map(); // key -> { at, value, seq, pending }
+  let seq = 0;
+  async function get(key, ttlMs, compute, { fresh = false } = {}) {
     const hit = store.get(key);
-    const fresh = hit && hit.value !== undefined && now() - hit.at < ttlMs;
-    if (fresh) return hit.value;
-    if (hit?.pending) return hit.value !== undefined ? hit.value : hit.pending; // stale while revalidating
-    const pending = compute().then(value => { store.set(key, { at: now(), value, pending: null }); return value; }, error => { const cur = store.get(key); if (cur) cur.pending = null; if (cur && cur.value === undefined) store.delete(key); throw error; });
-    if (store.size >= max) { const oldest = store.keys().next().value; store.delete(oldest); }
-    store.set(key, { at: hit?.at ?? 0, value: hit?.value, pending });
-    return hit?.value !== undefined ? hit.value : pending;
+    const age = hit && hit.value !== undefined ? now() - hit.at : Infinity;
+    if (!fresh && age < ttlMs) return hit.value;
+    const stale = !fresh && age < 2 * ttlMs;
+    if (!fresh && hit?.pending) return stale ? hit.value : hit.pending;
+    const n = ++seq;
+    const pending = compute().then(value => {
+      const cur = store.get(key);
+      if (!cur || n > cur.seq) store.set(key, { at: now(), value, seq: n, pending: cur?.pending === pending ? null : cur?.pending ?? null });
+      else if (cur.pending === pending) cur.pending = null;
+      return value;
+    }, error => { const cur = store.get(key); if (cur?.pending === pending) cur.pending = null; if (cur && cur.value === undefined && !cur.pending) store.delete(key); throw error; });
+    if (stale) pending.catch(() => {}); // a failed background refresh keeps the stale value
+    if (!store.has(key) && store.size >= max) store.delete(store.keys().next().value);
+    store.set(key, { at: hit?.at ?? 0, value: hit?.value, seq: hit?.seq ?? 0, pending });
+    return stale ? hit.value : pending;
   }
   return { get, clear: () => store.clear(), size: () => store.size };
 }
@@ -117,7 +129,7 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
       oi += one; insurance += market.insuranceBalanceCNS; longs += x.long.count; shorts += x.short.count;
       markets.set(market.id, { market, x, oi: one });
     }
-    return { block: state.block.number, oi, tvl: state.exchangeInfo.balanceCNS, insurance, protocol: state.exchangeInfo.protocolBalanceCNS, accounts: state.exchangeInfo.numberOfAccounts, positions: longs + shorts, longs, shorts, markets, fundingInterval: state.exchangeInfo.fundingInterval, blockTimeMs: state.stats.blockTimeMs || 400 };
+    return { block: state.block.number, oi, tvl: state.exchangeInfo.balanceCNS, insurance, protocol: state.exchangeInfo.protocolBalanceCNS, accounts: state.exchangeInfo.numberOfAccounts, positions: longs + shorts, longs, shorts, markets, fundingInterval: state.exchangeInfo.fundingInterval, blockTimeMs: state.stats.blockTimeMs || null };
   }
   // Spread and the mean cost of buying and of selling $10K at market, in bps
   // from the mid, read from the on-chain book (null when it holds less).
@@ -128,13 +140,15 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
     const mean = k10?.buy?.filled && k10?.sell?.filled ? (k10.buy.bps + k10.sell.bps) / 2 : null;
     return { spread_bps: Math.round((ask - bid) / ((ask + bid) / 2) * 1000000) / 100, cost_10k_bps: mean === null ? null : Math.round(mean * 100) / 100 };
   }
+  // Time-scaled figures need the measured block time (null until known).
   function fundingOf(market, cur) {
     const perInterval = m.fundingRateFraction(market.fundingRatePct100k);
-    const intervalMs = Number(cur.fundingInterval) * cur.blockTimeMs;
-    return { rate_pct: perInterval * 100, rate_8h_pct: intervalMs ? perInterval * (8 * 3600000 / intervalMs) * 100 : null, apr_pct: intervalMs ? perInterval * (365 * 86400000 / intervalMs) * 100 : null, interval_seconds: intervalMs ? Math.round(intervalMs / 1000) : null };
+    const intervalMs = cur.blockTimeMs ? Number(cur.fundingInterval) * cur.blockTimeMs : null;
+    return { rate_pct: perInterval * 100, rate_8h_pct: intervalMs ? perInterval * (8 * 3600000 / intervalMs) * 100 : null, apr_pct: intervalMs ? perInterval * (YEAR * 1000 / intervalMs) * 100 : null, interval_seconds: intervalMs ? Math.round(intervalMs / 1000) : null };
   }
 
-  async function protocol(query) {
+  // `fresh` computes now instead of serving a cached value (live headline push).
+  async function protocol(query, { fresh = false } = {}) {
     const w = windowOf(query);
     return cache.get(`protocol:${w}`, w === '24h' ? 2000 : 8000, async () => {
       const { from, to } = rangeOf(w);
@@ -190,7 +204,7 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
         current: live ? { block: live.block.toString(), open_interest: dec(live.oi, c), tvl: dec(live.tvl, c), insurance: dec(live.insurance, c), protocol_balance: dec(live.protocol, c), accounts: live.accounts.toString(), positions: live.positions, long_positions: live.longs, short_positions: live.shorts, long_position_share_pct: live.positions ? Math.round(live.longs / live.positions * 10000) / 100 : null } : null,
         markets
       };
-    });
+    }, { fresh });
   }
 
   function bucketOf(w, query) {
@@ -243,7 +257,7 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
         const f = flowT.get(t);
         const netFlow = f ? B(f.deposits) - B(f.withdrawals) : 0n;
         tvl += f ? netFlow + B(f.protocol_in) - B(f.protocol_out) : 0n;
-        const point = { t, volume: dec(s.volume, c), trades: s.trades, fees: dec(feesOf(s), c), protocol_fees: dec(s.prot_fees, c), taker_buy: dec(s.taker_buy, c), taker_sell: dec(s.taker_sell, c), liquidations: s.liquidations, liquidated: dec(s.liquidated, c), realized_pnl: dec(s.realized, c), open_interest: baseComplete ? dec(oi, c) : null };
+        const point = { t, volume: dec(s.volume, c), trades: s.trades, fees: dec(feesOf(s), c), protocol_fees: dec(s.prot_fees, c), insurance_fees: dec(s.ins_fees, c), taker_buy: dec(s.taker_buy, c), taker_sell: dec(s.taker_sell, c), liquidations: s.liquidations, liquidated: dec(s.liquidated, c), realized_pnl: dec(s.realized, c), open_interest: baseComplete ? dec(oi, c) : null };
         if (marketFilter === null) Object.assign(point, { traders: tradersT.get(t) ?? 0, deposits: dec(f?.deposits ?? 0, c), withdrawals: dec(f?.withdrawals ?? 0, c), net_flow: dec(netFlow, c), new_accounts: Number(f?.new_accounts ?? 0), tvl: baseComplete ? dec(tvl, c) : null });
         else { const r = pick[0]; Object.assign(point, { open: r && B(r.open_price) > 0n ? price(r.open_price, marketFilter) : null, high: r && B(r.high_price) > 0n ? price(r.high_price, marketFilter) : null, low: r && B(r.low_price) > 0n ? price(r.low_price, marketFilter) : null, close: prices.get(marketFilter) ? price(prices.get(marketFilter), marketFilter) : null }); }
         return point;
@@ -257,7 +271,15 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
   // --- feeds ------------------------------------------------------------------
   function tradeView(r, addressOf = null) {
     const id = Number(r.market), c = cd();
-    return { block: String(r.block), log_index: Number(r.log_index), ts: Number(r.ts), tx: r.tx, kind: r.kind, market: id, symbol: symbol(id), account: Number(r.account), address: addressOf?.get(Number(r.account))?.address ?? null, side: Number(r.side) === 0 ? 'long' : Number(r.side) === 1 ? 'short' : null, buy: Number(r.buy) === 1, role: r.role, price: B(r.price) > 0n ? price(r.price, id) : null, size: size(r.lot, id), notional: dec(r.notional, c), fee: dec(B(r.fee) + B(r.builder_fee), c), pnl: dec(B(r.pnl) + B(r.funding), c), leverage: Number(r.leverage) ? Number(r.leverage) / 100 : null, remaining: size(r.end_lot, id), mark: B(r.mark) > 0n ? price(r.mark, id) : null, on_book: (Number(r.flags) & 1) === 1 };
+    return { block: String(r.block), log_index: Number(r.log_index), ts: Number(r.ts), tx: r.tx, kind: r.kind, market: id, symbol: symbol(id), account: Number(r.account), address: addressOf?.get(Number(r.account))?.address ?? null, side: Number(r.side) === 0 ? 'long' : Number(r.side) === 1 ? 'short' : null, buy: Number(r.buy) === 1, role: r.role, price: B(r.price) > 0n ? price(r.price, id) : null, size: size(r.lot, id), notional: dec(r.notional, c), fee: dec(r.fee, c), pnl: dec(B(r.pnl) + B(r.funding), c), leverage: Number(r.leverage) ? Number(r.leverage) / 100 : null, remaining: size(r.end_lot, id), mark: B(r.mark) > 0n ? price(r.mark, id) : null, on_book: (Number(r.flags) & 1) === 1, force_close: (Number(r.flags) & 2) === 2 };
+  }
+  // Live feed rows with addresses: an account's address never changes, so
+  // ids are looked up in the accounts table once and kept (bounded).
+  const known = new Map(); // id -> { address }
+  async function tradeViews(rows) {
+    const ids = [...new Set(rows.map(r => Number(r.account)))].filter(id => id > 0 && !known.has(id));
+    if (ids.length) for (const [id, v] of await queries.addresses(ids).catch(() => new Map())) { if (known.size >= 20000) known.delete(known.keys().next().value); known.set(id, { address: v.address }); }
+    return rows.map(r => tradeView(r, known));
   }
   async function liquidations(query) {
     const limit = Math.min(Math.max(Number(query.get('limit')) || 100, 1), 500);
@@ -298,8 +320,16 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
       const rows = await queries.fundingSeries(Math.floor(from / bucket) * bucket, to, bucket);
       const live = current();
       const markets = [...(live?.markets ?? new Map())].map(([id, lm]) => ({ id, symbol: symbol(id), ...fundingOf(lm.market, live), long_positions: lm.x.long.count, short_positions: lm.x.short.count, open_interest: dec(lm.oi, cd()) }));
+      // Each bucket is annualised with the spacing of its own funding events
+      // (block times change), or today's interval when none is known.
+      const intervalOf = new Map(markets.map(x => [x.id, x.interval_seconds]));
       const series = new Map();
-      for (const r of rows) { const id = Number(r.market); const arr = series.get(id) ?? []; arr.push({ t: Number(r.t), rate_pct: Number(r.rate) / 1000 }); series.set(id, arr); }
+      for (const r of rows) {
+        const id = Number(r.market), rate = Number(r.rate) / 1000, spacing = Number(r.spacing) || intervalOf.get(id) || null;
+        const arr = series.get(id) ?? [];
+        arr.push({ t: Number(r.t), rate_pct: rate, apr_pct: spacing ? rate * YEAR / spacing : null, interval_seconds: spacing ? Math.round(spacing) : null });
+        series.set(id, arr);
+      }
       return { meta: metaOf({ window: w, bucket_seconds: bucket }), markets, series: [...series].map(([id, points]) => ({ id, symbol: symbol(id), points })) };
     });
   }
@@ -338,7 +368,7 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
       const c = cd();
       return {
         meta: metaOf({ window: w, from, to, sort, market, coverage: coverageOf(from, to) }), total,
-        rows: rows.map((r, i) => { const id = Number(r.account), open = openPositions(id); const vol = B(r.volume), net = B(r.realized) - B(r.fees); return { rank: offset + i + 1, account: id, address: addr.get(id)?.address ?? null, pnl: dec(net, c), realized: dec(r.realized, c), fees: dec(r.fees, c), volume: dec(vol, c), maker_share_pct: share(B(r.maker_volume), vol), trades: Number(r.trades), roi_on_volume_bps: vol > 0n ? Number(net * 100000000n / vol) / 10000 : null, liquidations: Number(r.liquidations), liquidated: dec(r.liquidated, c), deposits: dec(r.deposits, c), withdrawals: dec(r.withdrawals, c), markets: (r.markets ?? []).map(Number).map(symbol), open_positions: open.count, open_notional: dec(open.notional, c), unrealized_pnl: dec(open.upnl, c) }; })
+        rows: rows.map(r => { const id = Number(r.account), open = openPositions(id); const vol = B(r.volume), net = B(r.realized) - B(r.fees); return { rank: Number(r.rank), account: id, address: addr.get(id)?.address ?? null, pnl: dec(net, c), realized: dec(r.realized, c), fees: dec(r.fees, c), volume: dec(vol, c), maker_share_pct: share(B(r.maker_volume), vol), trades: Number(r.trades), roi_on_volume_bps: vol > 0n ? Number(net * 100000000n / vol) / 10000 : null, liquidations: Number(r.liquidations), liquidated: dec(r.liquidated, c), deposits: dec(r.deposits, c), withdrawals: dec(r.withdrawals, c), markets: (r.markets ?? []).map(Number).map(symbol), open_positions: open.count, open_notional: dec(open.notional, c), unrealized_pnl: dec(open.upnl, c) }; })
       };
     });
   }
@@ -386,15 +416,16 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
     const c = cd();
     const view = await cache.get(`wallet:${acct.id}`, 4000, async () => {
       const all = rangeOf('all');
-      const [marketRows, daily, recentRows, flowRows] = await Promise.all([queries.accountMarkets(acct.id, all.from, all.to), queries.accountSeries(acct.id, all.from, all.to, DAY), queries.accountTrades(acct.id, { limit: 100 }), queries.accountFlows(acct.id, { limit: 100 })]);
+      const [marketRows, daily, recentRows, flowRows, firstTrade] = await Promise.all([queries.accountMarkets(acct.id, all.from, all.to), queries.accountSeries(acct.id, all.from, all.to, DAY), queries.accountTrades(acct.id, { limit: 100 }), queries.accountFlows(acct.id, { limit: 100 }), queries.accountFirstTrade(acct.id)]);
       const sums = { volume: 0n, maker: 0n, trades: 0, fees: 0n, realized: 0n, funding: 0n, liquidations: 0, deposits: 0n, withdrawals: 0n };
       for (const r of marketRows) { sums.volume += B(r.volume); sums.maker += B(r.maker_volume); sums.trades += Number(r.trades); sums.fees += B(r.fees); sums.realized += B(r.realized); sums.funding += B(r.funding_paid); sums.liquidations += Number(r.liquidations); sums.deposits += B(r.deposits); sums.withdrawals += B(r.withdrawals); }
       const active = daily.filter(r => Number(r.trades) > 0);
       let cum = 0n;
       const addr = new Map([[acct.id, { address: acct.address }]]);
       return {
+        meta: metaOf({ coverage: { complete: ingest.coverage.contiguousTs() !== null, backfill: ingest.progress() } }),
         account: { id: acct.id, address: acct.address, created: acct.created },
-        summary: { volume: dec(sums.volume, c), trades: sums.trades, realized: dec(sums.realized, c), fees: dec(sums.fees, c), net_pnl: dec(sums.realized - sums.fees, c), funding: dec(sums.funding, c), liquidations: sums.liquidations, deposits: dec(sums.deposits, c), withdrawals: dec(sums.withdrawals, c), net_flow: dec(sums.deposits - sums.withdrawals, c), first_trade: active.length ? Number(active[0].t) : null, last_trade: recentRows.length ? Number(recentRows[0].ts) : null, active_days: active.length, maker_share_pct: share(sums.maker, sums.volume) },
+        summary: { volume: dec(sums.volume, c), trades: sums.trades, realized: dec(sums.realized, c), fees: dec(sums.fees, c), net_pnl: dec(sums.realized - sums.fees, c), funding: dec(sums.funding, c), liquidations: sums.liquidations, deposits: dec(sums.deposits, c), withdrawals: dec(sums.withdrawals, c), net_flow: dec(sums.deposits - sums.withdrawals, c), first_trade: firstTrade, last_trade: recentRows.length ? Number(recentRows[0].ts) : null, active_days: active.length, maker_share_pct: share(sums.maker, sums.volume) },
         markets: marketRows.filter(r => Number(r.market) !== 0 && Number(r.trades) > 0).map(r => ({ market: Number(r.market), symbol: symbol(Number(r.market)), volume: dec(r.volume, c), trades: Number(r.trades), realized: dec(r.realized, c), fees: dec(r.fees, c), net_pnl: dec(B(r.realized) - B(r.fees), c), liquidations: Number(r.liquidations) })).sort((a, b) => Number(b.volume) - Number(a.volume)),
         pnl_daily: daily.map(r => { const net = B(r.realized) - B(r.fees); cum += net; return { t: Number(r.t), net_pnl: dec(net, c), realized: dec(r.realized, c), fees: dec(r.fees, c), volume: dec(r.volume, c), trades: Number(r.trades), cumulative: dec(cum, c) }; }),
         recent_trades: recentRows.map(r => tradeView(r, addr)),
@@ -402,7 +433,7 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
       };
     });
     const live = accountState ? await accountState(view.account.id).catch(() => null) : null;
-    return { meta: metaOf({ coverage: { complete: ingest.coverage.contiguousTs() !== null, backfill: ingest.progress() } }), ...view, portfolio: live?.portfolio ?? null, positions: live?.positions ?? [] };
+    return { ...view, portfolio: live?.portfolio ?? null, positions: live?.positions ?? [] };
   }
 
   // Wallet page, analytics part: round trips over the account's events
@@ -414,8 +445,9 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
       const [total, rows] = await Promise.all([queries.accountEventCount(acct.id), queries.accountEvents(acct.id, { limit: maxTripEvents })]);
       const { trips, openTrips } = roundTrips(rows);
       const perf = performance(trips);
-      const tripView = t => ({ market: t.market, symbol: symbol(t.market), side: t.side === 0 ? 'long' : 'short', open_ts: t.openTs, first_ts: t.firstTs, close_ts: t.closeTs, hold_seconds: t.complete && t.closeTs !== null ? t.closeTs - t.openTs : null, entry_notional: dec(t.entryNotional, c), exit_notional: dec(t.exitNotional, c), max_size: size(t.maxLot, t.market), realized: dec(t.realized, c), fees: dec(t.fees, c), funding: dec(t.funding, c), net_pnl: dec(t.net, c), return_pct: t.entryNotional > 0n ? Number(t.net * 1000000n / t.entryNotional) / 10000 : null, max_leverage: t.maxLeverage ? t.maxLeverage / 100 : null, complete: t.complete, liquidated: t.liquidated, deleveraged: t.deleveraged, events: t.events });
+      const tripView = t => ({ market: t.market, symbol: symbol(t.market), side: t.side === 0 ? 'long' : 'short', open_ts: t.openTs, first_ts: t.firstTs, close_ts: t.closeTs, hold_seconds: t.complete && t.closeTs !== null ? t.closeTs - t.openTs : null, entry_notional: dec(t.entryNotional, c), exit_notional: dec(t.exitNotional, c), max_size: size(t.maxLot, t.market), realized: dec(t.realized, c), fees: dec(t.fees, c), funding: dec(t.funding, c), net_pnl: dec(t.net, c), return_pct: t.complete && t.entryNotional > 0n ? Number(t.net * 1000000n / t.entryNotional) / 10000 : null, max_leverage: t.maxLeverage ? t.maxLeverage / 100 : null, complete: t.complete, liquidated: t.liquidated, deleveraged: t.deleveraged, events: t.events });
       return {
+        meta: metaOf(),
         account: { id: acct.id, address: acct.address },
         performance: {
           based_on: { events: rows.length, total_events: total, truncated: total > rows.length, since: rows.length ? Number(rows[0].ts) : null },
@@ -438,20 +470,23 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
         trips: trips.slice(-200).reverse().map(tripView),
         open_trips: openTrips.map(tripView)
       };
-    }).then(view => ({ meta: metaOf(), ...view }));
+    });
   }
 
   // Every trading account's net PnL and volume per window, sorted, shared by
   // all wallet pages and refreshed each minute; a rank is a binary search.
+  // An account is ranked by its own values in the same table, so its rank
+  // never exceeds the table's size.
   const PERIODS = ['24h', '7d', '30d', 'all'];
   function scores(w) {
     return cache.get(`scores:${w}`, 60000, async () => {
       const { from, to } = rangeOf(w);
       const rows = await queries.accountScores(from, to);
       const desc = (a, b) => b - a;
-      return { pnl: rows.map(r => Number(r.pnl)).sort(desc), volume: rows.map(r => Number(r.volume)).sort(desc) };
+      return { of: new Map(rows.map(r => [Number(r.account), { pnl: Number(r.pnl), volume: Number(r.volume) }])), pnl: rows.map(r => Number(r.pnl)).sort(desc), volume: rows.map(r => Number(r.volume)).sort(desc) };
     });
   }
+  // 1 + the number of values strictly greater (ties share a rank).
   const rankIn = (sorted, value) => { let lo = 0, hi = sorted.length; while (lo < hi) { const mid = (lo + hi) >> 1; if (sorted[mid] > value) lo = mid + 1; else hi = mid; } return lo + 1; };
 
   // One account over rolling windows: activity, net PnL, closed trips and
@@ -463,14 +498,14 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
       const periods = await Promise.all(PERIODS.map(async w => {
         const { from, to } = rangeOf(w);
         const [{ rows }, table] = await Promise.all([queries.accounts(from, to, { account: acct.id, limit: 1 }), scores(w)]);
-        const r = rows[0];
+        const r = rows[0], own = table.of.get(acct.id);
         const view = { window: w, from, to, coverage_complete: ingest.coverage.spanCovered(from, to - 1), traders: table.pnl.length };
         if (!r || !Number(r.trades)) return { ...view, trades: 0, volume: '0', net_pnl: '0', realized: '0', fees: '0', liquidations: 0, rank: null };
         const net = B(r.realized) - B(r.fees);
-        return { ...view, trades: Number(r.trades), volume: dec(r.volume, c), net_pnl: dec(net, c), realized: dec(r.realized, c), fees: dec(r.fees, c), funding: dec(r.funding_paid, c), liquidations: Number(r.liquidations), pnl_per_volume_bps: B(r.volume) > 0n ? Number(net * 100000000n / B(r.volume)) / 10000 : null, rank: { pnl: rankIn(table.pnl, Number(net)), volume: rankIn(table.volume, Number(B(r.volume))), of: table.pnl.length } };
+        return { ...view, trades: Number(r.trades), volume: dec(r.volume, c), net_pnl: dec(net, c), realized: dec(r.realized, c), fees: dec(r.fees, c), funding: dec(r.funding_paid, c), liquidations: Number(r.liquidations), pnl_per_volume_bps: B(r.volume) > 0n ? Number(net * 100000000n / B(r.volume)) / 10000 : null, rank: own ? { pnl: rankIn(table.pnl, own.pnl), volume: rankIn(table.volume, own.volume), of: table.pnl.length } : null };
       }));
-      return { account: { id: acct.id, address: acct.address }, periods };
-    }).then(view => ({ meta: metaOf(), ...view }));
+      return { meta: metaOf(), account: { id: acct.id, address: acct.address }, periods };
+    });
   }
 
   async function walletTrades(key, query) {
@@ -498,18 +533,18 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
     return cache.get('integrity', 60000, async () => {
       const complete = ingest.coverage.contiguousTs() !== null && ingest.coverage.intervals.length === 1;
       if (!complete || !state.block) return { complete, open_interest: [], tvl: null };
-      const block = state.block.number, head = ingest.status.live.to;
+      // The contract side is read before the query: a poll meanwhile moves the state to another block.
+      const block = state.block.number, blockTs = state.block.timestamp, head = ingest.status.live.to, balance = state.exchangeInfo.balanceCNS;
+      const markets = [...state.markets.values()].map(x => ({ id: x.id, symbol: x.symbol, long: x.longOpenInterestLNS, short: x.shortOpenInterestLNS }));
       if (head === null || head < block) return { complete, pending: true, open_interest: [], tvl: null };
-      const cum = await queries.cumulativeAtBlock(block, state.block.timestamp);
-      const checks = [];
-      for (const market of state.markets.values()) {
+      const cum = await queries.cumulativeAtBlock(block, blockTs);
+      const checks = markets.map(market => {
         const ev = cum.oi.get(market.id) ?? { long: 0n, short: 0n };
-        checks.push({ market: market.id, symbol: market.symbol, events_long: size(ev.long, market.id), contract_long: size(market.longOpenInterestLNS, market.id), events_short: size(ev.short, market.id), contract_short: size(market.shortOpenInterestLNS, market.id), ok: ev.long === market.longOpenInterestLNS && ev.short === market.shortOpenInterestLNS });
-      }
-      const tvlOk = cum.net === state.exchangeInfo.balanceCNS;
-      return { complete, block: block.toString(), method: 'Running sums of indexed events up to the contract snapshot block compared with the contract counters read at that same block.', open_interest: checks, tvl: { events: dec(cum.net, cd()), contract: dec(state.exchangeInfo.balanceCNS, cd()), ok: tvlOk } };
+        return { market: market.id, symbol: market.symbol, events_long: size(ev.long, market.id), contract_long: size(market.long, market.id), events_short: size(ev.short, market.id), contract_short: size(market.short, market.id), ok: ev.long === market.long && ev.short === market.short };
+      });
+      return { complete, block: block.toString(), method: 'Running sums of indexed events up to the contract snapshot block compared with the contract counters read at that same block.', open_interest: checks, tvl: { events: dec(cum.net, cd()), contract: dec(balance, cd()), ok: cum.net === balance } };
     });
   }
 
-  return { protocol, series, liquidations, trades, funding, fundingOverview, flows, leaderboard, search, profile, walletAnalytics, walletPeriods, walletTrades, compare, integrity, cache, tradeView, rangeOf };
+  return { protocol, series, liquidations, trades, funding, fundingOverview, flows, leaderboard, search, profile, walletAnalytics, walletPeriods, walletTrades, compare, integrity, cache, tradeView, tradeViews, rangeOf };
 }

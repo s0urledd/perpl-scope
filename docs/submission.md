@@ -20,7 +20,7 @@ Judging criteria:
 
 | Brief | Where |
 | --- | --- |
-| Volume, open interest, TVL, fees / revenue, active users over 24h / 7d / 30d / all time | Overview KPIs with the window switch, each compared with the previous period and with a sparkline (`/api/v1/protocol`) |
+| Volume, open interest, TVL, fees / revenue, active users over 24h / 7d / 30d / all time | Overview KPIs with the window switch, each compared with the previous period (open interest and TVL: change within the window) and with a sparkline (`/api/v1/protocol`) |
 | Time-series charts with timeframes | Volume by market (per period or cumulative), open interest, TVL, net deposits, active traders, fees, liquidations; hourly, 4-hourly or daily by window; CSV and PNG download (`/api/v1/protocol/series`) |
 | Deposit / withdrawal flows | Net deposits chart; latest deposits and withdrawals; per-wallet flows tab (`/api/v1/flows`) |
 | Per-market breakdown, long / short skew | Markets table and market pages. Perpl's long and short open interest are equal by construction, so skew is shown as the share of positions per side, average leverage per side and taker buy share |
@@ -42,23 +42,29 @@ Judging criteria:
 
 ### Beyond the brief
 
-- **Rank of any wallet** by PnL and by volume among all accounts, for 24h,
+- **Rank of any wallet** by PnL and by volume among the accounts that traded
+  in the window, for 24h,
   7d, 30d and all time.
 - **Trade actions** (open, add, reduce, close, flip, liquidated) on every
   tape, with a size filter.
 - **Risk measured from the contract:**
-  - liquidation ladder with bad debt and insurance cover;
-  - order-book cover and the cost of a market order, walked from the
+  - notional at risk and bad debt for a market-wide move, with each market's
+    insurance cover;
+  - liquidation ladder per market;
+  - order-book absorption and the cost of a market order, walked from the
     on-chain book;
   - stress test;
-  - auto-deleveraging queue.
+  - in the API: liquidation map and an estimated auto-deleveraging order.
+- **PnL as the contract settles it:** funding realized at position
+  increases and liquidation fees are counted, which event PnL alone misses.
 - **Integrity checks:**
   - open interest and TVL rebuilt from every event since launch are
     compared with the contract's own counters;
   - the decoder's linking counters and the collector's reconciliation are
     on the status page.
 - **Self-hosted on a Monad node:**
-  - execution events via Monode for new blocks within milliseconds;
+  - execution events via Monode: proposed-block trades on the tape within
+    milliseconds, finalized data about a second after the block;
   - no dependency on Perpl's API or any third-party indexer.
 
 ## Demo (about three minutes)
@@ -101,8 +107,8 @@ Judging criteria:
 - [ ] Refresh the screenshots in `docs/images/` from the deployment.
 - [ ] Record the demo while the dashboard is live, so the block number
       advances.
-- [ ] Make the repository public (also restores free CI minutes) and link it
-      in the project profile.
+- [x] Make the repository public (also restores free CI minutes).
+- [ ] Link the repository in the project profile.
 - [ ] Write-up: the README's opening and "Why the numbers hold".
 
 ## Claims and their evidence
@@ -116,6 +122,8 @@ Judging criteria:
 | Live positions match the contract | Reconciliation every poll; independent rescan hourly (`/api/v1/validation`) |
 | PnL and funding formulas match the contract | `docs/validation-gate.md` (557 / 557, 208 / 208) |
 | 24 h volume matches Perpl's own figure | Within 0.001 % on 2026-09-21 and 0.035 % on 2026-09-23 (all markets within 0.1 %) |
+| A liquidation's result is the trader's balance change | The trader gets back exactly 80 % of the remaining margin (`accAmountCNS`), e.g. at block 107,162,461; the rest is counted as a fee (`test/decode.test.js`) |
+| Fees are not double counted | A builder's share is inside the fill fee and the protocol part on all 1.6 million fills that carry one (checked in ClickHouse, 2026-09-23) |
 
 Claims to avoid:
 - exact prediction of liquidation execution prices;

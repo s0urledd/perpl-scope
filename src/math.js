@@ -42,6 +42,8 @@ export function floorDiv(a, b) {
 }
 
 export function absBig(a) { return a < 0n ? -a : a; }
+export function maxBig(a, b) { return a > b ? a : b; }
+export function minBig(a, b) { return a < b ? a : b; }
 
 // Effective entry price in PNS x Q16 (SDK Position::effective_entry_price).
 // Long entries are stored rounded up with the residue kept separately; short

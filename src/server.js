@@ -51,30 +51,38 @@ const statusOf = () => ({
 api = createApi({ collector, analytics, sse, statusOf, reference, version: pkg.version, onError: (error, path) => log('error', `${path}: ${error.message}`) });
 
 // --- real-time -----------------------------------------------------------------
-let lastPush = 0, pushTimer = null, lastRollup = 0;
+let lastPush = 0, pushTimer = null, lastRollup = 0, pushing = false;
+// One headline computation at a time: while one runs, commits only schedule
+// the next, so a slow ClickHouse never piles queries up.
 async function pushHeadline() {
-  pushTimer = null; lastPush = Date.now();
+  pushTimer = null;
+  if (pushing) { pushTimer = setTimeout(pushHeadline, 2000); return; }
+  pushing = true; lastPush = Date.now();
   try {
-    const p = await analytics.protocol(new URLSearchParams('window=24h'));
+    const p = await analytics.protocol(new URLSearchParams('window=24h'), { fresh: true }); // never the cached previous push
     sse.send('protocol', { meta: p.meta, headline: p.headline, current: p.current, markets: p.markets.map(x => ({ id: x.id, symbol: x.symbol, mark: x.mark ?? null, close: x.close, change_pct: x.change_pct, volume: x.volume, open_interest: x.open_interest ?? null, funding: x.funding ?? null })) });
-  } catch (error) { log('warn', `headline push failed: ${error.message}`); }
+  } catch (error) { log('warn', `headline push failed: ${error.message}`); } finally { pushing = false; }
 }
 ingest.on(event => {
   if (event.type === 'commit') {
     sse.send('block', { block: event.to.toString(), ts: event.ts, finalized: event.finalized?.toString() ?? null });
+    collector.wake(); // contract state follows the new block without waiting for its poll timer
     const trades = event.ev.filter(r => r.role === 'taker' && ['open', 'increase', 'decrease', 'close', 'invert', 'liquidation'].includes(r.kind));
-    if (trades.length) sse.send('trades', trades.slice(-100).map(r => analytics.tradeView({ ...r, ts: r.ts })));
+    const push = (name, rows) => analytics.tradeViews(rows).then(views => sse.send(name, views)).catch(error => log('warn', `${name} push failed: ${error.message}`));
+    if (trades.length) push('trades', trades.slice(-100));
     const liqs = event.ev.filter(r => r.kind === 'liquidation' || r.kind === 'deleverage');
-    if (liqs.length) sse.send('liquidations', liqs.map(r => analytics.tradeView(r)));
+    if (liqs.length) push('liquidations', liqs);
     if (!pushTimer) pushTimer = setTimeout(pushHeadline, Math.max(0, 2000 - (Date.now() - lastPush)));
     const hour = Math.floor(event.ts / 3600);
     if (hour !== lastRollup) { lastRollup = hour; setTimeout(() => rollups.run(), 5000); }
   } else if (event.type === 'backfill') sse.send('backfill', event.progress);
 });
 if (config.monodeUrl) {
-  feeds.execEvents = createExecEvents({ url: config.monodeUrl, exchange: config.exchange, log, onFinalized: n => ingest.notifyFinalized(n, 'exec-events'), onProposed: ({ block, ts, logs }) => { const rows = speculativeTrades(logs, ingest); if (rows.length) sse.send('proposed', { block, ts, trades: rows.map(r => analytics.tradeView(r)) }); } });
+  feeds.execEvents = createExecEvents({ url: config.monodeUrl, exchange: config.exchange, log, onFinalized: n => ingest.notifyFinalized(n, 'exec-events'), onProposed: ({ block, ts, logs }) => { const rows = speculativeTrades(logs, ingest); if (rows.length) analytics.tradeViews(rows).then(views => sse.send('proposed', { block, ts, trades: views.map(v => ({ ...v, log_index: null })) })).catch(() => {}); } }); // a proposed block has no final log index
   feeds.execEvents.start();
-} else if (config.wsUrl) {
+}
+// Also with Monode: if it stops, WebSocket heads keep waking the ingest.
+if (config.wsUrl) {
   feeds.heads = createHeadSubscription({ url: config.wsUrl, log, onHead: () => ingest.notifyFinalized(undefined, 'ws-head') });
   feeds.heads.start();
 }
@@ -84,7 +92,7 @@ collector.on(() => snapshots.maybeRecord());
 // --- serve -------------------------------------------------------------------
 const port = Number(env.PORT || 8787), host = env.HOST || '0.0.0.0';
 const server = createServer((req, res) => { api.handle(req, res).catch(error => { log('error', `request failed: ${error.message}`); if (!res.headersSent) { res.writeHead(500); res.end(); } }); });
-server.listen(port, host, () => log('info', `perpl-scope ${pkg.version} listening on ${host}:${port} (chain ${config.chain})`));
+server.listen(port, host, () => log('info', `plumb ${pkg.version} listening on ${host}:${port} (chain ${config.chain})`));
 reference?.start();
 const running = [collector.start(), ingest.start()];
 const rollupTimer = setInterval(() => rollups.run(), Number(env.ROLLUP_MS || 60000));

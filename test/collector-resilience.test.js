@@ -11,7 +11,8 @@ import { saveCheckpoint, loadCheckpoint } from '../src/checkpoint.js';
 import { createFakeExchange, EXCHANGE } from './helpers/fake-exchange.js';
 
 const config = { url: 'https://example.invalid', chain: '143', exchange: EXCHANGE };
-const options = (path, env = {}) => ({ ...collectorOptions({ POLL_MS: 1, LOG_RANGE: 100, BACKFILL_BLOCKS: 50, FUNDING_HISTORY_EVENTS: 2, VERIFY_BLOCKS: 1000000, CHECKPOINT_MS: 0, BOOK_DISABLED: '1', ...env }), checkpointPath: path });
+// The fake chain's timestamps are fixed in the past: block age is not checked.
+const options = (path, env = {}) => ({ ...collectorOptions({ MAX_BLOCK_AGE_MS: 0, POLL_MS: 1, LOG_RANGE: 100, BACKFILL_BLOCKS: 50, FUNDING_HISTORY_EVENTS: 2, VERIFY_BLOCKS: 1000000, CHECKPOINT_MS: 0, BOOK_DISABLED: '1', ...env }), checkpointPath: path });
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function withDir(fn) { const dir = await mkdtemp(join(tmpdir(), 'perpl-resilience-')); try { await fn(dir); } finally { await rm(dir, { recursive: true, force: true }); } }
 async function until(check, ms = 3000) { const end = Date.now() + ms; while (!check()) { if (Date.now() > end) throw new Error('TIMEOUT'); await sleep(5); } }
@@ -91,4 +92,33 @@ test('a head that stops advancing is reported stale while polls still succeed', 
 
 test('a zero account scan batch is clamped instead of looping forever', () => {
   assert.equal(collectorOptions({ ACCOUNT_SCAN_BATCH: '0' }).accountScanBatch, 1);
+});
+
+test('wake() polls without waiting for the poll timer', async () => {
+  await withDir(async dir => {
+    const fake = createFakeExchange();
+    fake.open(1, 5n, 0, 100000n); fake.open(1, 6n, 1, 100000n);
+    const collector = createCollector({ config, options: { ...options(join(dir, 'checkpoint.json')), pollMs: 60000, minPollMs: 0 }, rpc: fake.rpc });
+    const run = collector.start();
+    await until(() => collector.state.block !== null && collector.state.status === 'fresh');
+    const before = collector.state.block.number;
+    fake.advance(); fake.open(1, 7n, 0, 1000n);
+    collector.wake();
+    await until(() => collector.state.block.number > before, 2000);
+    collector.stop();
+    await run;
+  });
+});
+
+test('a head far behind the clock is stale even while it advances', async () => {
+  await withDir(async dir => {
+    const fake = createFakeExchange();
+    fake.open(1, 5n, 0, 100000n);
+    const collector = createCollector({ config, options: { ...options(join(dir, 'checkpoint.json')), maxBlockAgeMs: 60000 }, rpc: fake.rpc });
+    await collector.bootstrap('test');
+    const ts = collector.state.block.timestamp * 1000;
+    assert.equal(collector.freshness(ts + 5000).status, 'fresh');
+    const late = collector.freshness(ts + 120000);
+    assert.equal(late.status, 'stale'); assert.equal(late.reason, 'head-behind'); assert.equal(late.blockAgeMs, 120000);
+  });
 });

@@ -33,7 +33,7 @@ export function mount(el, { params, query, setQuery, navigate }) {
     const p = d.portfolio, perf = an?.performance, s = d.summary;
     const wait = '<span class="skeleton" style="display:inline-block;width:72px;height:22px;vertical-align:middle"></span>';
     return `<div class="kpis k7">${[
-      kpi({ label: 'Account value', value: usd(p?.account_value), note: p ? `${int(p.positions)} open · ${p.leverage ?? 0}x lev.` : 'live state unavailable', tip: 'Free + locked balance + equity of open positions, from the contract at the current block.' }),
+      kpi({ label: 'Account value', value: usd(p?.account_value), note: p ? `${int(p.positions)} open · ${p.leverage ?? 0}x lev.` : 'live state unavailable', tip: 'Account balance (including what open orders lock) plus the equity of open positions, from the contract at the current block.' }),
       kpi({ label: 'Unrealized PnL', value: pnl(p?.unrealized_pnl), note: p?.closest_liquidation ? `closest liq. ${pct(p.closest_liquidation.distance_pct, { digits: 1 })} away` : '' }),
       kpi({ label: 'Net PnL', value: pnl(s.net_pnl), note: `after ${usd(s.fees)} fees`, tip: `All-time realized PnL including funding (${usd(s.realized, { sign: true })}) minus trading fees (${usd(s.fees)}).` }),
       kpi({ label: 'Win rate', value: !perf ? wait : perf.win_rate_pct === null ? '—' : pct(perf.win_rate_pct, { digits: 1 }), note: perf ? `${int(perf.wins)}W · ${int(perf.losses)}L of ${int(perf.closed_trips)} trips` : 'analysing round trips…' }),
@@ -103,11 +103,11 @@ export function mount(el, { params, query, setQuery, navigate }) {
     const d = data, body = $('tab-body');
     if (tab === 'overview') {
       body.innerHTML = `
-        ${d.positions.length ? `<div class="panel-head"><h2>Open positions</h2><span class="meta">Contract state at block ${esc(d.meta.block ?? '')}</span></div><div class="panel-body flush">${table({ id: 'pos', columns: POS_COLS, rows: d.positions })}</div>` : ''}
+        ${d.positions.length ? `<div class="panel-head"><h2>Open positions</h2><span class="meta">Contract state at block ${esc(d.portfolio?.block ?? d.meta.block ?? '')}</span></div><div class="panel-body flush">${table({ id: 'pos', columns: POS_COLS, rows: d.positions })}</div>` : ''}
         <div class="panel-head"><h2>By period</h2><span class="meta">Rolling windows · rank among every account that traded in the window</span></div>
         <div class="panel-body flush" id="periods">${periods ? periodsTable() : skeleton(4)}</div>
         <div class="grid g-main" style="padding:16px;gap:16px">
-          <section class="panel"><div class="panel-head"><h2>Realized PnL</h2><div class="head-right">${chartTools('pnl-chart', `wallet-${d.account.id}-pnl`)}<div class="seg sm"><button data-action="pnl-cum" class="${pnlMode === 'cumulative' ? 'on' : ''}">Cumulative</button><button data-action="pnl-daily" class="${pnlMode === 'daily' ? 'on' : ''}">Daily</button></div></div></div><div class="panel-body"><div class="chart" id="pnl-chart"></div></div></section>
+          <section class="panel"><div class="panel-head"><h2>Net PnL (after fees)</h2><div class="head-right">${chartTools('pnl-chart', `wallet-${d.account.id}-pnl`)}<div class="seg sm"><button data-action="pnl-cum" class="${pnlMode === 'cumulative' ? 'on' : ''}">Cumulative</button><button data-action="pnl-daily" class="${pnlMode === 'daily' ? 'on' : ''}">Daily</button></div></div></div><div class="panel-body"><div class="chart" id="pnl-chart"></div></div></section>
           <section class="panel"><div class="panel-head"><h2>Performance</h2><span class="meta">Closed round trips, net of fees</span></div><div id="perf">${an ? perfPanel(an.performance, d.summary) : perfSkeleton()}</div></section>
         </div>
         <div class="grid g-2" style="padding:0 16px 16px;gap:16px">
@@ -125,7 +125,7 @@ export function mount(el, { params, query, setQuery, navigate }) {
     } else if (tab === 'positions') {
       const p = d.portfolio;
       body.innerHTML = `${p ? `<div class="stat-grid" style="border-bottom:1px solid var(--line)">
-          <div class="stat"><span>Free balance</span><span>${usdFull(p.balance)}</span></div><div class="stat"><span>Locked (orders)</span><span>${usdFull(p.locked_balance)}</span></div>
+          <div class="stat"><span>Balance</span><span>${usdFull(p.balance)}</span></div><div class="stat"><span>Available</span><span>${usdFull(p.available_balance ?? p.balance)}</span></div><div class="stat"><span>Locked by orders</span><span>${usdFull(p.locked_balance)}</span></div>
           <div class="stat"><span>Position margin</span><span>${usdFull(p.position_margin)}</span></div><div class="stat"><span>Account value</span><span>${usdFull(p.account_value)}</span></div>
           <div class="stat"><span>Margin usage</span><span>${pct(p.margin_usage_pct, { digits: 1 })}</span></div><div class="stat"><span>Effective leverage</span><span>${p.leverage ?? 0}x</span></div>
         </div>` : ''}${table({ id: 'pos', columns: POS_COLS, rows: d.positions, emptyText: 'No open positions' })}`;
@@ -208,7 +208,7 @@ export function mount(el, { params, query, setQuery, navigate }) {
   }
   const loadAnalytics = () => get(`wallets/${encodeURIComponent(key)}/analytics`, { maxAge: 20000 }).then(a => { if (!alive) return; an = a; applyAnalytics(); }).catch(() => {});
   get(`wallets/${encodeURIComponent(key)}`, { maxAge: 3000 }).then(d => { if (!alive) return; data = d; render(); loadAnalytics(); loadPeriods(); }).catch(error => {
-    el.innerHTML = `<div class="page-head"><div><div class="sub"><a href="#/traders">Traders</a> / Wallet</div><h1 class="mono">${esc(short(key))}</h1></div></div><section class="panel">${empty(error.status === 404 ? 'No Perpl account for this address yet (accounts appear when their creation block is indexed).' : `Could not load wallet (${error.message})`)}</section>`;
+    el.innerHTML = `<div class="page-head"><div><div class="sub"><a href="#/traders">Traders</a> / Wallet</div><h1 class="mono">${esc(short(key))}</h1></div></div><section class="panel">${empty(error.status === 404 ? 'No Perpl account for this address (checked in the index and on the contract).' : `Could not load wallet (${error.message})`)}</section>`;
   });
   const timer = setInterval(() => { if (!data || tab === 'trades') return; get(`wallets/${encodeURIComponent(key)}`, { maxAge: 0 }).then(d => { if (!alive) return; data = d; const scroll = window.scrollY; render(); window.scrollTo({ top: scroll }); loadAnalytics(); loadPeriods(); }).catch(() => {}); }, 20000);
   return {

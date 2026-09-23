@@ -1,6 +1,6 @@
 # Methodology
 
-Version 2 (2026-09-23). PerplScope uses two sources, both read at finalized
+Version 3 (2026-09-23). Plumb uses two sources, both read at finalized
 blocks:
 
 - **History** (volume, fees, flows, liquidations, funding payments, realized
@@ -8,14 +8,16 @@ blocks:
   deployment, decoded once into ClickHouse (see the second half of this
   document).
 - **Current state** (positions, liquidation prices, open interest, TVL,
-  insurance, the order book) is read from the contract at one pinned block.
-  The block number, hash and freshness accompany every response.
+  insurance) is read from the contract at the collector's latest finalized
+  block. The order book is walked separately, every 30 s, at its own block.
+  Risk responses carry the block, its hash and freshness; analytics
+  responses carry the last indexed block.
 
 Perpl's public API is never an input.
 
 ## Units
 
-The contract stores fixed-point integers. PerplScope keeps them as BigInt and
+The contract stores fixed-point integers. Plumb keeps them as BigInt and
 converts only for display.
 
 | Suffix | Meaning |
@@ -63,16 +65,18 @@ on-chain are checked against this classification on every validation run.
 
 - **Open interest**: sum of stored sizes per side. Must equal
   `longOpenInterestLNS` / `shortOpenInterestLNS` at the same block; any
-  difference marks the state stale. On a matched order book both sides are
-  equal by construction, so exposure is analysed per side rather than as a
-  long/short ratio.
+  difference marks the state stale. Both sides are equal on a matched book
+  (checked every poll), so open interest counts one side, and exposure is
+  analysed per side rather than as a long/short ratio.
 - **Liquidation ladder**: for each adverse move `k` in
   {0.5, 1, 2, 3, 5, 7.5, 10, 15, 20, 30, 50} %, the count and mark notional of
   positions whose liquidation distance is ≤ `k`, per side. **Shortfall** at
   `k` is the sum of `max(0, −FMV(P_k))` over positions whose bankruptcy price
   is crossed at the shocked price `P_k`; it is the bad debt that would arise
-  if no liquidation executed before the move. **Insurance coverage** divides
-  the market's `insuranceBalanceCNS` by that shortfall.
+  if no liquidation executed before the move. Longs are hit by a fall and
+  shorts by a rise, never both at once, so each side keeps its own figures
+  and a row's headline is its worse direction. **Insurance coverage** divides
+  the market's `insuranceBalanceCNS` by the shortfall of one direction.
 - **Liquidation map**: mark notional of positions binned by the signed
   distance of their liquidation price from the mark, 50 bps bins over ±30 %;
   positions beyond the range are reported as tails.
@@ -82,19 +86,20 @@ on-chain are checked against this classification on every validation run.
   squared shares, 0–10000) for all positions and per side.
 - **Insurance**: balance relative to total notional and to total maintenance
   margin; liquidation proceeds split from `getLiquidationInfo`.
-- **Funding**: `fundingRatePct100k / 10^5` per funding interval; the 8 h and
-  annualised equivalents scale by the measured block time (from block
-  timestamps over the last 1000 blocks) and `getFundingInterval` (8571
-  blocks). Next funding block: `block − block mod interval + interval`.
+- **Funding**: `fundingRatePct100k / 10^5` per funding interval
+  (`getFundingInterval`, 8,571 blocks). The 8 h and annual (365-day)
+  equivalents scale it by the interval's measured duration: block time from
+  block timestamps over 1,000 blocks at start, then re-measured every 3,000
+  blocks. Next funding block: `block − block mod interval + interval`.
   History from `FundingEventCompleted` (rate, funding price, payment per unit,
-  cumulative sum).
-- **On-chain liquidity**: the resting book is walked from the best bid and best ask through `getNextPriceBelowWithOrders` / `getNextPriceAboveWithOrders`, reading `getVolumeAtBookPrice` at each level, at the same pinned block as the positions, up to `BOOK_LEVELS` levels per side within `BOOK_RANGE_BPS` of the mark (defaults 40 and 15 %). Only the firm `bids` / `asks` counters count as depth; the `expBids` / `expAsks` counters were observed to hold expired orders awaiting clearing and are reported separately. **Depth within k %** is the notional of levels within k % of the mark on one side. **Cover** at move k is `depth within k % ÷ liquidation notional within k %` on the side the liquidations would trade into (long liquidations sell into bids, short liquidations buy from asks). A cover below 100 % means resting orders cannot absorb the forced flow without moving through the whole measured book.
+  cumulative sum). See [Funding](#funding) for the interval.
+- **On-chain liquidity**: the resting book is walked from the best bid and best ask through `getNextPriceBelowWithOrders` / `getNextPriceAboveWithOrders`, reading `getVolumeAtBookPrice` at each level, at its own pinned block (the collector's block when the walk starts; `book_block` and `age_blocks` give its age), every `BOOK_REFRESH_MS` (30 s), up to `BOOK_LEVELS` levels per side within `BOOK_RANGE_BPS` of the mark (defaults 40 and 15 %). A book older than three walks is treated as unavailable. Only the firm `bids` / `asks` counters count as depth; the `expBids` / `expAsks` counters were observed to hold expired orders awaiting clearing and are reported separately. **Depth within k %** is the notional of levels within k % of the mark on one side. **Cover** at move k is `depth within k % ÷ liquidation notional within k %` on the side the liquidations would trade into (long liquidations sell into bids, short liquidations buy from asks). A cover below 100 % means resting orders cannot absorb the forced flow without moving through the whole measured book. Exchange-wide, each market's depth absorbs at most its own demand: the figure is `Σ min(depth, demand) ÷ Σ demand` for a market-wide fall (longs into bids) and for a rise (shorts into asks), reported for the worse direction together with the weakest market and side.
 - **Cost of a market order**: the volume-weighted fill price of a $1K, $10K or $100K market buy (walking the asks up) or sell (walking the bids down) through the firm depth read from the contract, against the mid, in basis points; half the spread is included. When the levels read hold less than the order, the cost is reported as beyond the book instead of a number. The markets table shows the mean of buying and selling $10K, and the spread.
-- **Stress test**: for any signed move the same ladder arithmetic is evaluated at that single shock, returning the positions hit, shortfall, insurance cover and depth in range.
-- **Auto-deleveraging queue**: per side, profitable positions ranked by unrealised return on deposit (`pnl ÷ deposit`), most profitable first, as Perpl documents for ADL counterparty selection. The venue's exact ordering is off-chain, so the queue is an approximation of it.
+- **Stress test**: for any signed move the same ladder arithmetic is evaluated at that single shock, returning the positions hit, their share of that side's open interest, shortfall, insurance cover and depth in range.
+- **Auto-deleveraging queue (estimate)**: per side, profitable positions ranked by unrealised return on deposit (`pnl ÷ deposit`). Perpl documents only "a sorted list of opposing position IDs (most profitable first)" and that selection is performed off-chain, so the ranking metric is our assumption.
 - **Series**: every `SERIES_EVERY_BLOCKS` blocks the collector samples exchange totals and per-market notional, exposure at 10 %, shortfall, insurance, funding rate and 2 % depth into a bounded ring buffer persisted with the checkpoint.
-- **Basis**: `(mark − oracle) / oracle`.
-- **Exchange totals** sum the per-market values.
+- **Basis**: `(mark − oracle) / oracle`. Perpl clamps the mark to within ±0.25 % of the spot index, so this shows where the mark sits inside that clamp, not a free perpetual premium.
+- **Exchange totals** sum the per-market values. Move-based totals (notional at risk, shortfall, book absorption) take one market-wide direction at a time: every market falls (liquidating longs) or rises (liquidating shorts) by the same amount, and the headline reports the worse direction. Each market's insurance fund covers only its own market's shortfall, so exchange-wide cover is `Σ min(insurance, shortfall) ÷ Σ shortfall`.
 
 ## Validation status per metric
 
@@ -104,14 +109,14 @@ on-chain are checked against this classification on every validation run.
 | Delta PnL | validated | 557 / 557 positions equal the contract (truncation) |
 | Premium PnL | validated | Contract value; funding formula 208 / 208 across live events |
 | Funding history | validated | `getFundingSumAtBlock` equals emitted sums where state was available |
-| Liquidation classification | validated on available samples | Every on-chain liquidation with retained state was classified liquidatable (health 99.08 %) |
+| Liquidation classification | validated on 1 sample | The one on-chain liquidation with retained state in the sampled windows was classified liquidatable (health 99.08 %) |
 | Liquidation price | formula | Documentation and SDK; direct contract diagnostics (`CantLiquidatePosAboveMMR`) not observed in the sampled windows |
 | Ladder, map, shortfall, coverage | derived | Deterministic functions of the validated inputs above |
 | Concentration, health | derived | Deterministic |
 | Insurance balances | on-chain | `getPerpetualInfoV2` |
 | Resting depth | on-chain | Walked level by level; walk cost 40 requests for 11 markets in 2.4 s on the public RPC. Depth past a walk that hit its level cap is a lower bound (`complete: false`, shown as "≥") |
 | Liquidity cover, stress test | derived | Deterministic functions of validated inputs |
-| ADL queue | approximation | Ranking rule from the Perpl documentation; venue ordering is off-chain |
+| ADL queue | estimate | Perpl documents "most profitable first" without the metric; selection is off-chain |
 | Trade price, size and fee from linked fills | validated | Full history: 33,557,868 / 33,557,868 position events linked, and fee split equal to the fill fee on 18,630,950 / 18,630,950 building fills (2026-09-23) |
 | Volume | validated | 24 h maker-fill volume within 0.001 % (2026-09-21) and 0.035 % (2026-09-23) of Perpl's venue figure |
 | Open interest and TVL from events | validated | Summed from launch, both equal the contract at the same block: all 11 markets exact, TVL to the micro-dollar (2026-09-23, `docs/evidence/integrity-2026-09-23.json`) |
@@ -119,7 +124,11 @@ on-chain are checked against this classification on every validation run.
 Not modelled: individual resting orders (only aggregate depth per price
 level), cross-margin (the venue is isolated-margin), funding accrued between
 funding events, dynamic initial margin for large sizes (reported as
-`dynamic_max_leverage` only).
+`dynamic_max_leverage` only). Wallet flows count deposits and withdrawals
+only; internal transfers such as `TransferAccountToProtocol`,
+`TransferProtocolToAccount`, `AccountLiquidationCredit` and fee recycling are
+not attributed to wallets (they do not change the exchange's balance, so the
+TVL check is unaffected).
 
 ## History metrics from exchange events
 
@@ -142,14 +151,14 @@ the new side.
 
 | Metric | Definition |
 | --- | --- |
-| Volume | Sum of maker-fill notional (`MakerOrderFilled(V2)`, price × size), so each match counts once. It equals the taker side to the unit. |
-| Trades | Position changes (open, increase, decrease, close, invert). Per account, liquidations settled as taker also count. |
-| Fees | Sum of `feeCNS` on maker and taker fills. Fees are charged on fills that build a position (open, increase, invert). Their split into insurance fund (`insFeeCNS`) and protocol (`protFeeCNS`) comes from the position event, and must equal the fill fee; this is checked on every building fill at ingest. Builder fees are reported separately. Take rate is fees ÷ volume. |
+| Volume | Sum of maker-fill notional (`MakerOrderFilled(V2)`, price × size), so each match counts once. Its size equals the taker side exactly; notional agrees to rounding (about $50 over $5.27 billion). |
+| Trades | On the dashboard, matches between a maker and a taker (maker fills), each counted once. The API's `trades` counts position changes of both counterparties (open, increase, decrease, close, invert); per account, liquidations settled as taker also count. |
+| Fees | Sum of `feeCNS` on maker and taker fills, gross: maker rebates and referral shares are paid outside fills and are not deducted. Up to contract v1.1.7.4, only fills that build a position (open, increase, invert) are charged. Their split into insurance fund (`insFeeCNS`) and protocol (`protFeeCNS`) comes from the position event, and must equal the fill fee; this is checked on every building fill at ingest. A builder's share (`builderFeeCNS`) is included in the fill fee and in the protocol part, never added on top. Take rate is fees ÷ volume. From v1.1.7.5, which was not live on 2026-09-23, closes and decreases are charged as well and their position events carry no split; the insurance and protocol series would then cover opening fees only. An account's fees also include its liquidation fees (below). |
 | Active traders | Distinct accounts with at least one trade in the window (each account once per window or chart bucket). |
 | New accounts | `AccountCreated` events. |
 | Deposits, withdrawals, net flow | `CollateralDeposit` and `CollateralWithdrawal` amounts; net flow is deposits − withdrawals. |
-| Liquidations | `PositionLiquidated`: count, and notional as liquidated size × liquidation price. Deleverages come from `PositionDeleveraged(V2)`. |
-| Realized PnL | `deltaPnlCNS + fundingCNS` on decrease, close, invert, liquidation and deleverage events, before fees. **Net PnL** = realized − fees. |
+| Liquidations | `PositionLiquidated`: count, and notional as liquidated size × liquidation price. `PositionDeleveraged(V2)` is auto-deleveraging, or a force close at the mark price when its `forceClose` flag is set; all 11 to date are force closes. |
+| Realized PnL | `deltaPnlCNS + fundingCNS` on decrease, close, invert, liquidation and deleverage events, plus `premiumPnlSettledCNS` on increases (the contract realizes accrued funding whenever the lot changes), before fees. On a liquidation the event's `deltaPnlCNS` is the would-be PnL at the exit price: the trader gets back only part of the remaining margin (`accAmountCNS`, 80 % by default) and the rest is the account's **liquidation fee**; a loss beyond the removed deposit falls on the insurance fund and is not counted against the trader. **Net PnL** = realized − fees (fill fees and liquidation fees). |
 | Taker buy share | Taker notional of position changes that buy (opening, adding to or flipping into a long; reducing or closing a short) ÷ all taker notional. Long and short open interest are equal on a matched book, so this is where directional pressure shows. |
 | Price, OHLC, change | Fill prices per market and bucket. Change is the last fill price of the window against the first. |
 | Open interest over time | Running sum since launch of each market's open-interest change (open and increase add, decrease, close, liquidation and deleverage remove; invert moves size across sides), priced at the last fill of each bucket. It is drawn only when history is contiguous from launch. The headline figure is the contract's counter at the mark. |
@@ -177,11 +186,16 @@ Evidence: `docs/evidence/integrity-2026-09-23.json`.
 
 ### Funding
 
-The current rate is the contract's `fundingRatePct100k` per funding interval
-(8,571 blocks). The 8 h and annual equivalents scale it by the interval
-length measured from block timestamps. History comes from
-`FundingEventCompleted`: rate, funding price, payment per unit and cumulative
-sum per market.
+The current rate is the contract's `fundingRatePct100k` per funding interval.
+Perpl describes funding as "approximately once per hour": every 8,571 blocks,
+assuming 0.42 s per block. At the measured 0.30 s blocks of September 2026 an
+interval lasts about 43 minutes (before 23 July 2026, at about 0.40 s, about
+57 minutes). The 8 h and annual (365-day) equivalents scale the rate by the
+interval's measured duration, so they state what a position actually pays
+per 8 hours of clock time; they are about 40 % higher than a nominal
+"hourly rate × 8". The funding map annualises each bucket with the interval
+length of its own time. History comes from `FundingEventCompleted`: rate,
+funding price, payment per unit and cumulative sum per market.
 
 ### Wallet analytics
 
@@ -190,8 +204,9 @@ sum per market.
   increases. It realizes PnL on decreases and ends with a close, a full
   liquidation or a full deleverage. A flip ends the trip and starts one on
   the other side. A trip's net result is realized PnL (funding included)
-  minus fees. A trip opened before the indexed history is marked incomplete
-  and left out of hold-time statistics.
+  minus fees: the funding settled at increases counts, and so does a
+  liquidation fee. A trip opened before the indexed history is marked
+  incomplete: it has no return and is left out of hold-time statistics.
 - **Performance** over closed trips:
   - win rate = winning trips ÷ closed trips;
   - profit factor = gross profit ÷ gross loss;
@@ -213,17 +228,18 @@ sum per market.
 - **Behaviour** notes are rule-based sentences over these numbers (style,
   discipline, streaks, leverage, timing); no model is involved, so every
   sentence traces to a figure on the page.
-- **Leaderboard** ranks accounts over any window by net PnL, losses, volume,
-  realized PnL, fees, trades, liquidated notional or flows. PnL per volume is
-  shown next to PnL, so large PnL from large volume can be told apart from an
-  edge.
+- **Leaderboard** ranks the accounts that traded in the window by net PnL,
+  losses, volume, realized PnL, fees, trades or liquidated notional, and the
+  accounts with deposits or withdrawals by flows. Ties share a rank, as on
+  wallet pages. PnL per volume is shown next to PnL, so large PnL from large
+  volume can be told apart from an edge.
 
 ### Cross-checks against the venue
 
 Perpl's public API is never an input. It is only used to check the volume
 rule against the venue's own reported 24 h volume:
 
-| Date | Pipeline | PerplScope | Perpl | Total gap | Largest market gap |
+| Date | Pipeline | Plumb | Perpl | Total gap | Largest market gap |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-21 | In-memory event index | $41,345,871 | $41,346,189 | 0.001 % | under 1 % |
 | 2026-09-23 | ClickHouse | $18,240,072 | $18,233,631 | 0.035 % | 0.07 % (SOL_v2) |

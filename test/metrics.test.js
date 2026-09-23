@@ -50,7 +50,11 @@ test('liquidation ladder accumulates exposure and shortfall by shock', () => {
   assert.equal(ladder[2].short.pricePNS, 1100000n);
   // At -30 % account 1 (bankrupt at 90k) is 10k underwater on 1 BTC at 70k: fmv = 10k + (70k-100k) = -20k
   assert.equal(ladder[3].long.shortfallCNS, 20000000000n + 0n + (50000000000n - 60000000000n < 0n ? 10000000000n : 0n));
-  assert.equal(ladder[3].insuranceCoverageBps, m.floorDiv(1000000000n * 10000n, ladder[3].totalShortfallCNS));
+  // Longs need a fall and shorts a rise: the row reports the worse direction.
+  assert.equal(ladder[3].worstShortfallCNS, ladder[3].long.shortfallCNS > ladder[3].short.shortfallCNS ? ladder[3].long.shortfallCNS : ladder[3].short.shortfallCNS);
+  assert.equal(ladder[3].insuranceCoverageBps, m.floorDiv(1000000000n * 10000n, ladder[3].worstShortfallCNS));
+  assert.equal(ladder[3].long.insuranceCoverageBps, m.floorDiv(1000000000n * 10000n, ladder[3].long.shortfallCNS));
+  assert.equal(ladder[2].worstNotionalCNS, ladder[2].long.notionalCNS > ladder[2].short.notionalCNS ? ladder[2].long.notionalCNS : ladder[2].short.notionalCNS);
   assert.equal(ladder[0].insuranceCoverageBps, null);
 });
 

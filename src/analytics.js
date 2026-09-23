@@ -7,12 +7,13 @@
 // new side of an inversion) and ends when it returns to zero (close, the old
 // side of an inversion, a full liquidation, deleveraging or unwind). A trip
 // already open when the history window starts is marked incomplete and left
-// out of hold-time statistics. PnL is realized (delta PnL + funding) net of
-// the fees paid on the trip's fills.
+// out of hold-time statistics. PnL is realized (delta PnL + funding, including
+// the funding settled when a position is increased) net of the fees paid on
+// the trip's fills and liquidations.
 const B = v => (typeof v === 'bigint' ? v : BigInt(v ?? 0));
 const LONG = 0, SHORT = 1;
 const USER = new Set(['open', 'increase', 'decrease', 'close', 'invert']);
-const REALIZING = new Set(['decrease', 'close', 'invert', 'liquidation', 'deleverage']);
+const REALIZING = new Set(['increase', 'decrease', 'close', 'invert', 'liquidation', 'deleverage']);
 const ENDING = new Set(['close', 'invert', 'liquidation', 'deleverage', 'unwind']);
 
 function newTrip(r, side, complete) {
@@ -27,11 +28,12 @@ export function roundTrips(rows) {
     const kind = r.kind;
     if (!USER.has(kind) && !ENDING.has(kind)) continue;
     const market = Number(r.market), side = Number(r.side);
-    const notional = B(r.notional), fee = B(r.fee) + B(r.builder_fee);
-    const realized = REALIZING.has(kind) ? B(r.pnl) + B(r.funding) : 0n;
-    if (USER.has(kind) || (kind === 'liquidation' && r.role === 'taker')) { totals.volume += notional; totals.trades++; totals.fees += fee; }
+    const notional = B(r.notional), fee = B(r.fee); // builder share included
+    const funding = REALIZING.has(kind) ? B(r.funding) : 0n, realized = REALIZING.has(kind) ? B(r.pnl) + funding : 0n;
+    if (USER.has(kind) || (kind === 'liquidation' && r.role === 'taker')) { totals.volume += notional; totals.trades++; }
+    if (USER.has(kind) || kind === 'liquidation') totals.fees += fee; // a liquidation's fee whatever its role
     if (kind === 'liquidation') totals.liquidations++;
-    totals.realized += realized; if (REALIZING.has(kind)) totals.funding += B(r.funding);
+    totals.realized += realized; totals.funding += funding;
 
     let trip = open.get(market);
     if (kind === 'open') {
@@ -40,11 +42,11 @@ export function roundTrips(rows) {
     }
     const oldSide = kind === 'invert' ? 1 - side : side;
     if (!trip) { trip = newTrip(r, oldSide, false); open.set(market, trip); }
-    trip.events++;
-    if (Number(r.leverage) > trip.maxLeverage) trip.maxLeverage = Number(r.leverage);
+    // Realize on the current trip (an increase settles the funding accrued so far).
+    trip.realized += realized; trip.funding += funding;
+    // A flip's event and leverage belong to the new side only.
+    if (kind !== 'invert') { trip.events++; if (Number(r.leverage) > trip.maxLeverage) trip.maxLeverage = Number(r.leverage); }
     if (kind === 'open' || kind === 'increase') { trip.entryNotional += notional; trip.fees += fee; if (B(r.end_lot) > trip.maxLot) trip.maxLot = B(r.end_lot); continue; }
-    // Reducing events: realize on the current trip.
-    trip.realized += realized; trip.funding += REALIZING.has(kind) ? B(r.funding) : 0n;
     if (kind === 'invert') {
       // The fill closes start_lot and opens end_lot on the other side; its fee
       // is charged for building the new position.
@@ -61,9 +63,9 @@ export function roundTrips(rows) {
     trip.fees += fee;
     trip.exitNotional += notional;
     if (!trip.complete && trip.maxLot < B(r.start_lot)) trip.maxLot = B(r.start_lot);
-    if (kind === 'liquidation') trip.liquidated = true;
-    if (kind === 'deleverage') trip.deleveraged = true;
     const ended = kind === 'close' || kind === 'unwind' || B(r.end_lot) === 0n;
+    if (kind === 'liquidation' && ended) trip.liquidated = true; // a partial liquidation leaves the trip open
+    if (kind === 'deleverage') trip.deleveraged = true;
     if (ended) { trip.closeTs = Number(r.ts); trip.closeBlock = Number(r.block); trips.push(trip); open.delete(market); }
   }
   for (const t of trips) t.net = t.realized - t.fees;
@@ -71,13 +73,14 @@ export function roundTrips(rows) {
   return { trips, openTrips, totals };
 }
 
-const median = sorted => (sorted.length ? sorted[Math.floor(sorted.length / 2)] : null);
+const median = sorted => { const n = sorted.length; return n ? (n % 2 ? sorted[(n - 1) / 2] : (sorted[n / 2 - 1] + sorted[n / 2]) / 2) : null; };
 
 export function performance(trips) {
   const closed = trips.filter(t => t.closeTs !== null).sort((a, b) => a.closeBlock - b.closeBlock);
   const wins = closed.filter(t => t.net > 0n), losses = closed.filter(t => t.net < 0n);
   const grossProfit = wins.reduce((a, t) => a + t.net, 0n), grossLoss = -losses.reduce((a, t) => a + t.net, 0n);
-  let equity = 0n, peak = 0n, maxDrawdown = 0n, drawdownStart = null, worstFrom = null, worstTo = null;
+  // A drawdown from the zero baseline starts at the curve's first point.
+  let equity = 0n, peak = 0n, maxDrawdown = 0n, drawdownStart = closed[0]?.closeTs ?? null, worstFrom = null, worstTo = null;
   const curve = [];
   for (const t of closed) {
     equity += t.net;
@@ -127,7 +130,7 @@ export function insights(perf, rows, { symbol = id => `#${id}` } = {}) {
   const out = [];
   if (!perf.closedTrips) return out;
   const pct = x => `${Math.round(x * 100)}%`;
-  const dur = s => (s < 120 ? `${s}s` : s < 7200 ? `${Math.round(s / 60)}m` : s < 172800 ? `${Math.round(s / 3600)}h` : `${Math.round(s / 86400)}d`);
+  const dur = s => (s < 120 ? `${Math.round(s)}s` : s < 7200 ? `${Math.round(s / 60)}m` : s < 172800 ? `${Math.round(s / 3600)}h` : `${Math.round(s / 86400)}d`);
   if (perf.long.trips + perf.short.trips >= 5) {
     const share = perf.long.trips / (perf.long.trips + perf.short.trips);
     if (share >= 0.7) out.push({ tag: 'bias', text: `Long bias: ${pct(share)} of round trips are longs.` });
@@ -145,7 +148,7 @@ export function insights(perf, rows, { symbol = id => `#${id}` } = {}) {
   if (perf.liquidatedTrips) out.push({ tag: 'risk', text: `${perf.liquidatedTrips} of ${perf.closedTrips} round trips ended in liquidation.` });
   if (perf.worstStreak >= 5) out.push({ tag: 'streak', text: `Longest losing streak: ${perf.worstStreak} trips in a row.` });
   const levs = rows.filter(r => (r.kind === 'open' || r.kind === 'increase') && Number(r.leverage) > 0).map(r => Number(r.leverage) / 100);
-  if (levs.length >= 5) { levs.sort((a, b) => a - b); const med = levs[Math.floor(levs.length / 2)]; out.push({ tag: 'leverage', text: `Median leverage on entries: ${med.toFixed(1)}x${med >= 20 ? ' (aggressive)' : ''}.` }); }
+  if (levs.length >= 5) { levs.sort((a, b) => a - b); const med = median(levs); out.push({ tag: 'leverage', text: `Median leverage on entries: ${med.toFixed(1)}x${med >= 20 ? ' (aggressive)' : ''}.` }); }
   const hours = new Array(24).fill(0); let n = 0;
   for (const r of rows) if (USER.has(r.kind)) { hours[new Date(Number(r.ts) * 1000).getUTCHours()]++; n++; }
   if (n >= 30) { const top = hours.map((c, h) => [h, c]).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([h]) => h).sort((a, b) => a - b); out.push({ tag: 'timing', text: `Most active around ${top.map(h => `${String(h).padStart(2, '0')}:00`).join(', ')} UTC.` }); }

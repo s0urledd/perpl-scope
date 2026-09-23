@@ -1,6 +1,6 @@
 # Architecture
 
-PerplScope reads two things from Monad and trusts nothing else:
+Plumb reads two things from Monad and trusts nothing else:
 
 - **Exchange events** since the deployment block. They are the only source
   for history: volume, fees, flows, liquidations, funding payments, realized
@@ -13,7 +13,7 @@ Both are read at finalized blocks, so an event row and a state snapshot never
 describe different forks, and nothing written is ever rolled back.
 
 ```
-        RPC host (Monad node)                               PerplScope
+        RPC host (Monad node)                               Plumb
  ┌────────────────────────────────┐          ┌───────────────────────────────────────────────┐
  │ monad-execution                │ shared   │ Monode sidecar ─ws─▶ wake-ups, proposed trades │
  │   execution event ring  ───────┼─memory──▶│                                                │
@@ -48,13 +48,17 @@ by address and by the topics the decoder knows.
 
 **Live loop.** The loop reads the finalized head, fetches logs for the new
 blocks, decodes and commits them, at most once per `LIVE_COMMIT_MS` (1 s).
-Between rounds it sleeps until one of these wakes it, fastest first:
+Between rounds it sleeps until one of these wakes it:
 
 1. the Monode sidecar reports `BlockFinalized` from the node's execution event
    ring (the node updates its database before emitting it, so `eth_getLogs`
    already answers for that block);
-2. a WebSocket `newHeads` subscription on the node;
-3. a `LIVE_POLL_MS` (400 ms) timer.
+2. a WebSocket `newHeads` subscription on the node (it runs alongside Monode
+   when both are configured, so either keeps the loop awake);
+3. a `LIVE_POLL_MS` (400 ms) timer, which covers both being down.
+
+Each commit also wakes the contract-state collector, so positions and risk
+follow the same block without waiting for their own timer.
 
 **Backfill.** Everything between the deployment block (54,773,010) and the
 live loop's start that is not yet covered is split into grid-aligned ranges
@@ -114,7 +118,7 @@ the status page and in `/api/v1/health` (`index.decoder_checks`).
 | Table | Contents | Key |
 | --- | --- | --- |
 | `ev` | Every decoded exchange event: kind, market, account, side, price, size, notional, fees, PnL, funding, amounts, flags | `(block, log_index)` |
-| `ev_account` | Copy of `ev` ordered by account (filled by a materialized view), for wallet queries | `(account, block, log_index)` |
+| `ev_account` | The rows of `ev` that belong to an account (fills and account-0 rows excluded), ordered by account and filled by a materialized view, for wallet queries | `(account, block, log_index)` |
 | `chunks` | Coverage intervals with their first and last block timestamps | `from_block` |
 | `markets`, `accounts` | Market metadata; account id ↔ address from `AccountCreated` | id |
 | `funding` | `FundingEventCompleted`: rate, funding price, payment, cumulative sum | `(market, funding_block, block, log_index)` |
@@ -162,14 +166,16 @@ The collector (`src/collector.js`) follows the finalized block:
   account position bitmaps, an enumeration path independent of the paged
   getter, and compares size, side and collateral of every position. A
   mismatch keeps the state stale until a rebuild succeeds.
-- **Order book** depth is walked level by level (bounded) at the same block
-  as the positions; depth past a walk that hit its level cap is reported as a
-  lower bound.
+- **Order book** depth is walked level by level (bounded) every
+  `BOOK_REFRESH_MS` (30 s), at the collector's block when the walk starts.
+  Depth past a walk that hit its level cap is reported as a lower bound; a
+  book older than three walks is reported as unavailable.
 - **Checkpoints** make restarts instant; one is trusted only if its block
   hash is still canonical.
 
 Status is `fresh`, `syncing` or `stale` with a reason (`rpc-errors`,
-`oi-mismatch`, `verification-mismatch`, `head-stalled`, `no-recent-poll`).
+`oi-mismatch`, `verification-mismatch`, `head-stalled`, `head-behind` (the
+newest block is more than a minute old), `no-recent-poll`).
 Every risk response carries the block, hash and age it was computed from.
 
 ## Integrity checks
@@ -194,10 +200,53 @@ The server pushes server-sent events on `/api/v1/stream`:
 | `protocol` | at most every 2 s | 24 h headline and per-market figures |
 | `backfill` | while indexing history | progress, rate and ETA |
 
+## Freshness
+
+What is read, how often, and how far behind the chain each figure is.
+Latencies were measured on 2026-09-23 over 90 s on the development
+instance, which polls a remote RPC (38 ms round trip) without execution
+events, with `scripts/measure-latency.js`
+([evidence](evidence/latency-2026-09-23.json)). Monad produced a block every
+301 ms.
+
+| Data | How it is read | Cadence | Behind the chain (median / p90) |
+| --- | --- | --- | --- |
+| Finalized head | `eth_getBlockByNumber('finalized')` | on each wake-up | 2 blocks, 0.55 s / 0.69 s after the block is proposed |
+| Exchange events (trades, fills, liquidations, funding, flows) | `eth_getLogs` over the new finalized blocks, one commit to ClickHouse | at most once per second | on the page 1.0 s / 1.4 s after the block is proposed (0.5 s / 0.9 s after it finalizes) |
+| Live tape (`trades` event) | server-sent events after each commit | each commit | 0.9 s / 1.4 s after the block is proposed |
+| Headline and market figures (24 h) | recomputed after commits and pushed | at most every 2 s | about 2 s |
+| Windowed analytics (7 d, 30 d, all), leaderboards | rolled hours + raw rows, cached | cached 8–20 s | at most the cache age |
+| Contract state (positions, liquidation prices, open interest, TVL, insurance, funding rate) | `eth_call` batches at the finalized block | after each commit (at most every 0.5 s), otherwise every 2 s | 1.4 s / 1.8 s after the block is proposed (0.8 s / 1.2 s after it finalizes); 2.1 s / 3.0 s before it followed commits |
+| Order book (depth, cost of a market order, book cover) | level-by-level walk | every 30 s | up to 30 s |
+| Risk series and snapshots (open interest, TVL, insurance over time) | sampled from contract state | every 200 blocks; stored every 5 min | 1–5 min |
+| Hourly rollups | `INSERT … SELECT` for closed hours | every 60 s | none: windows add the raw rows of open hours |
+| Independent verification | rescan of every account's position bitmap | every 12,000 blocks (about an hour) | — |
+
+Slower by design, not by lag:
+
+- **Funding** changes only at funding events, every 8,571 blocks (about
+  43 minutes at 0.30 s blocks). The rate shown between events is the one the
+  contract announced for the next event.
+- **The order book** is the slowest live input (30 s), because walking it
+  costs about 40 requests. Book figures carry their own block (`book_block`,
+  `age_blocks`).
+- **Wallet analytics** (round trips, performance) are computed on request:
+  about 1–2 s cold for a typical active wallet, up to about 10 s for the
+  heaviest, then cached for 30 s.
+- **History after downtime** is filled by the backfill, newest first, while
+  the live loop already follows the head; windows that are not yet covered
+  say so.
+
+With the execution-event ring (Monode), trades appear on the tape from the
+proposed block, within milliseconds of execution and dimmed until they
+finalize; finalized data still follows the timings above, because a commit
+waits for finalization and runs at most once per `LIVE_COMMIT_MS`.
+
 ## Performance
 
-Measured on the development instance (ClickHouse 26.8, 8 markets, about 4,900
-accounts):
+Measured on 2026-09-23 on the development instance (ClickHouse 26.8,
+11 markets, about 5,300 accounts). The heaviest wallets (close to a million
+trades) take about 10 s for their first profile and analytics:
 
 | Request | First | Cached |
 | --- | --- | --- |
@@ -221,7 +270,8 @@ with the number of viewers.
 | Archive unavailable or rate-limited | Backfill ranges retry on another source; ranges within the node's history use the node |
 | ClickHouse restart | Server waits for it; commits resume from coverage; interrupted commits are repaired |
 | Crash mid-commit | Rows outside recorded coverage are deleted on start |
-| Monode or WebSocket down | Falls back to the next wake-up source, then to polling |
+| Monode or WebSocket down | The other push source, if configured, keeps waking the loop; otherwise the 400 ms timer |
+| Order-book walk failing | Book figures are reported as unavailable once the last walk is older than three intervals |
 | Execution restarts (new event ring) | Monode exits on its health check and Docker restarts it on the new ring |
 | Missed or misread event | Contract reconciliation and the integrity check flag it; the collector rebuilds from state |
 | Disk refuses checkpoints | Reported on the status page; polls continue |

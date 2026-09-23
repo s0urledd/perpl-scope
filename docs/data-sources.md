@@ -3,7 +3,7 @@
 ## On-chain (authoritative)
 
 - Monad mainnet, chain 143. Exchange `0x34B6552d57a35a1D042CcAe1951BD1C370112a6F`
-  (contract version 1.7.4 via `getContractVersion()`), collateral AUSD
+  (contract version 1.7.4 via `getContractVersion()`, Perpl release v1.1.7.4; `ContractVersionSet` at block 95,662,781, still current on 2026-09-23), collateral AUSD
   `0x00000000eFE302BEAA2b3e6e1b18d08D69a9012a`, 6 decimals (via
   `getExchangeInfo()`).
 - Getters used: `getPerpetualExistsBitmap`, `getPerpetualInfoV2`,
@@ -51,9 +51,9 @@
 
 | Endpoint | `eth_getLogs` range | History | `blockTimestamp` on logs | Use |
 | --- | --- | --- | --- | --- |
-| Own node (Huginn, `monad-rpc`) | 1000 blocks | about 3.3 days of logs and state | yes | Live ingest, recent backfill, contract state |
+| Own node (Huginn, `monad-rpc`) | 1000 blocks | a few days of logs and state (`LIVE_HISTORY_BLOCKS` defaults to 600,000 blocks, about 2 days at 0.30 s) | yes | Live ingest, recent backfill, contract state |
 | https://rpc1.monad.xyz, https://rpc2.monad.xyz | 1000 blocks | archive, from genesis | yes | One-time backfill of older ranges |
-| https://rpc.monad.xyz | 100 blocks | recent | not checked | Fallback only |
+| https://rpc.monad.xyz | 100 blocks | recent | not checked | Not used (probed only) |
 | https://rpc-mainnet.monadinfra.com | 100 blocks | recent | not checked | Not used |
 
 On the node, 1500-block ranges are rejected, and 1000 unfiltered blocks
@@ -74,9 +74,11 @@ transaction events to a shared-memory ring. The Monode sidecar
 restricted mode:
 - block lifecycle events: `BlockStart`, `BlockEnd`, `BlockReject`,
   `BlockFinalized`;
-- `TxnLog` events of the exchange address.
+- `TxnLog` events of the exchange address;
+- Monode's own TPS and top-accesses summaries, which are not filtered and
+  which Plumb ignores.
 
-PerplScope uses them only to wake the ingest and to show proposed trades
+Plumb uses them only to wake the ingest and to show proposed trades
 early. Stored data always comes from `eth_getLogs` over finalized blocks,
 because a log's index in the ring is its position within the transaction,
 not within the block.

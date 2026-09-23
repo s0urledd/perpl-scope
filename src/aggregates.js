@@ -4,14 +4,16 @@
 //
 //   volume    maker-fill notional (each match once)
 //   fees      maker + taker fill fees (= insurance + protocol fee on the
-//             position events); builder fees reported separately
+//             position events); a builder's share is part of the fill fee
+//             and of the protocol fee, never added on top
 //   realized  deltaPnl + funding on decrease, close, invert, liquidation and
-//             deleverage events
+//             deleverage events, plus the funding settled when a position is
+//             increased (the contract realizes it whenever the lot changes)
 //   oi_*      signed lot changes per side; their running sum from the
 //             deployment block is the open interest (checked against the
 //             contract's counters)
 export const USER = "('open','increase','decrease','close','invert')";
-export const REALIZING = "('decrease','close','invert','liquidation','deleverage')";
+export const REALIZING = "('increase','decrease','close','invert','liquidation','deleverage')";
 export const FILLS = "('maker_fill','taker_fill')";
 export const ACCOUNT_TRADES = `(kind IN ${USER} OR (kind = 'liquidation' AND role = 'taker'))`;
 
@@ -60,7 +62,7 @@ export const ACCOUNT = [
   ['volume', `sumIf(notional, ${ACCOUNT_TRADES})`, 'sum(volume)'],
   ['maker_volume', `sumIf(notional, kind IN ${USER} AND role = 'maker')`, 'sum(maker_volume)'],
   ['trades', `countIf(${ACCOUNT_TRADES})`, 'sum(trades)'],
-  ['fees', `sumIf(fee + builder_fee, ${ACCOUNT_TRADES})`, 'sum(fees)'],
+  ['fees', `sumIf(fee, kind IN ${USER} OR kind = 'liquidation')`, 'sum(fees)'], // trading fees and liquidation fees
   ['realized', `sumIf(pnl + funding, kind IN ${REALIZING})`, 'sum(realized)'],
   ['funding_paid', `sumIf(funding, kind IN ${REALIZING})`, 'sum(funding_paid)'],
   ['liquidations', "countIf(kind = 'liquidation')", 'sum(liquidations)'],

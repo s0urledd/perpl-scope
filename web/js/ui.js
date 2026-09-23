@@ -31,8 +31,18 @@ export function assignColors(idsByVolume) {
 export const colorOf = id => (colorMap[id] === undefined ? OTHER_HEX : SLOT_HEX[colorMap[id]]);
 export const hasColor = id => colorMap[id] !== undefined;
 
+// --- market logos: self-hosted, keyed by base asset (sources in web/img/markets/README.md)
+const LOGOS = { BTC: 'btc.svg', ETH: 'eth.svg', SOL: 'sol.svg', MON: 'mon.svg', HYPE: 'hype.png', ZEC: 'zec.svg', LIT: 'lit.png', VVV: 'vvv.png', TAO: 'tao.png', PUMP: 'pump.png' };
+// 'SOL_v2' and 'BTC Perp' are the same assets as 'SOL' and 'BTC'.
+const assetOf = symbol => String(symbol ?? '').replace(/(\s+perp|[_-]v\d+)$/i, '').trim().toUpperCase();
+// A market without a logo keeps its colour swatch.
+export const logo = (id, symbol, size = 16) => {
+  const file = LOGOS[assetOf(symbol)];
+  return file ? `<img class="tk" src="img/markets/${file}" alt="" width="${size}" height="${size}">` : `<i class="sw" style="background:${colorOf(id)}"></i>`;
+};
+
 // --- components ---------------------------------------------------------------------
-export const mkt = (id, symbol, name = null) => `<span class="mkt"><i class="sw" style="background:${colorOf(id)}"></i>${esc(symbol ?? `#${id}`)}${name ? ` <span class="nm">${esc(name)}</span>` : ''}</span>`;
+export const mkt = (id, symbol, name = null) => `<span class="mkt">${logo(id, symbol)}${esc(symbol ?? `#${id}`)}${name ? ` <span class="nm">${esc(name)}</span>` : ''}</span>`;
 export const sideTag = side => { const s = String(side ?? '').toLowerCase(); return s === 'long' || s === 'short' ? `<span class="side ${s}">${s === 'long' ? 'LONG' : 'SHORT'}</span>` : '<span class="faint">—</span>'; };
 export function addr(address, account, { star = true } = {}) {
   const key = address || String(account ?? '');
