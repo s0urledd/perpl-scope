@@ -16,6 +16,7 @@ import { createReference } from './reference.js';
 import { createApi } from './api.js';
 import { rateLimitFromEnv } from './ratelimit.js';
 import { createLandscape } from './landscape.js';
+import { createAlerts, kvStore } from './alerts.js';
 
 const env = process.env;
 const log = (level, message) => console.log(JSON.stringify({ t: new Date().toISOString(), level, message: String(message).replace(/https?:\/\/\S+|wss?:\/\/\S+/g, '<url>') }));
@@ -48,8 +49,17 @@ const reference = env.REFERENCE_ENABLED === '1' ? createReference({ url: env.PER
 // Market-share context from a public aggregator; LANDSCAPE_ENABLED=0 turns the outbound call off.
 const landscape = env.LANDSCAPE_ENABLED === '0' ? null : createLandscape({ url: env.LANDSCAPE_URL || undefined });
 const feeds = { execEvents: null, heads: null };
+// Telegram alerts, only with a bot token.
+const alerts = env.TELEGRAM_BOT_TOKEN ? createAlerts({
+  token: env.TELEGRAM_BOT_TOKEN, store: kvStore(ch), log,
+  site: env.PUBLIC_URL || undefined,
+  resolveAccount: key => analytics.resolveAccount(key), tradeViews: rows => analytics.tradeViews(rows), accountState: id => api.accountState(id),
+  symbolOf: id => analytics.symbolOf(id), marketIds: () => [...ingest.markets.keys()].sort((a, b) => a - b),
+  fundingSeed: () => ch.query('SELECT market, argMax(actual_rate, funding_block) AS actual_rate FROM funding FINAL WHERE actual_rate != 0 GROUP BY market')
+}) : null;
 const statusOf = () => ({
   index: { live: { ...ingest.status.live, from: ingest.status.live.from?.toString() ?? null, to: ingest.status.live.to?.toString() ?? null, finalized: ingest.status.live.finalized?.toString() ?? null }, backfill: ingest.progress(), coverage: ingest.coverage.intervals.map(x => ({ from: x.from.toString(), to: x.to.toString(), from_ts: x.fromTs, to_ts: x.toTs })), rollups: rollups.status, repaired_rows: ingest.status.repaired, decoder_checks: ingest.status.checks, clickhouse: ch.stats },
+  alerts: alerts ? { bot: alerts.stats.bot ?? null, chats: alerts.stats.chats, sent: alerts.stats.sent, failed: alerts.stats.failed } : null,
   feeds: { exec_events: feeds.execEvents?.status ?? null, heads: feeds.heads?.status ?? null, sse_clients: sse.clients }
 });
 api = createApi({ collector, analytics, sse, statusOf, reference, landscape, rateLimit: rateLimitFromEnv(env), version: pkg.version, onError: (error, path) => log('error', `${path}: ${error.message}`) });
@@ -69,6 +79,7 @@ async function pushHeadline() {
 }
 ingest.on(event => {
   if (event.type === 'commit') {
+    if (alerts && event.source === 'live') alerts.onCommit(event).catch(error => log('warn', `alerts failed: ${error.message}`));
     sse.send('block', { block: event.to.toString(), ts: event.ts, finalized: event.finalized?.toString() ?? null });
     collector.wake(); // contract state follows the new block without waiting for its poll timer
     const trades = event.ev.filter(r => r.role === 'taker' && ['open', 'increase', 'decrease', 'close', 'invert', 'liquidation'].includes(r.kind));
@@ -99,6 +110,7 @@ const server = createServer((req, res) => { api.handle(req, res).catch(error => 
 server.listen(port, host, () => log('info', `plumb ${pkg.version} listening on ${host}:${port} (chain ${config.chain})`));
 reference?.start();
 const running = [collector.start(), ingest.start()];
+alerts?.start();
 const rollupTimer = setInterval(() => rollups.run(), Number(env.ROLLUP_MS || 60000));
 rollups.run();
 
@@ -107,7 +119,7 @@ async function shutdown(signal) {
   if (stopping) return; stopping = true;
   log('info', `${signal} received; stopping`);
   clearInterval(rollupTimer);
-  collector.stop(); ingest.stop(); reference?.stop(); feeds.execEvents?.stop(); feeds.heads?.stop(); sse.close();
+  alerts?.stop(); collector.stop(); ingest.stop(); reference?.stop(); feeds.execEvents?.stop(); feeds.heads?.stop(); sse.close();
   try { await collector.checkpoint(); } catch (error) { log('warn', `checkpoint failed: ${error.message}`); }
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 3000).unref();

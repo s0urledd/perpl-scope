@@ -96,6 +96,26 @@ measured instead of estimated:
 The API adds the liquidation map, an estimated auto-deleveraging order, the
 health of every position and concentration per market.
 
+## Alerts
+
+A Telegram bot, run by the server when `TELEGRAM_BOT_TOKEN` is set. It
+long-polls Telegram, so it needs no public endpoint; subscriptions are kept
+in ClickHouse.
+
+- `/watch <address or id>`: every position change of the wallet (open,
+  add, reduce, close, flip, liquidation, deleverage) with price, size, PnL
+  and the transaction, and a warning when a position is within 10% and 5% of
+  its liquidation price (checked each minute against contract state; it
+  re-arms above 15%). Up to 20 wallets per chat.
+- `/liqs <min USD> [market]` and `/trades <min USD> [market]`: liquidations
+  and taker trades at least that large ($1K minimum).
+- `/funding on|off`: a message when a market's funding changes direction.
+- `/list`, `/unwatch`, `/stop`.
+
+The wallet page links to the bot with the wallet pre-filled
+(`t.me/<bot>?start=watch_<address>`). Events more than five minutes old,
+such as those replayed after downtime, are not sent.
+
 ## Status
 
 The data pipeline (live ingest, backfill, rollups), the integrity check

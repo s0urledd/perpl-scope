@@ -33,6 +33,11 @@ measured, not modelled: notional at risk for a market-wide move, the
 liquidation ladder, bad debt against each insurance fund, how much of it the
 book can absorb, and a stress test.
 
+**Alerts.** A Telegram bot sends a watched wallet's position changes and
+warns when one of its positions nears liquidation; it also sends large
+liquidations, large trades and funding flips, from the same events as the
+dashboard.
+
 The full list is in [docs/features.md](docs/features.md).
 
 ![Wallet profile](docs/images/wallet.png)

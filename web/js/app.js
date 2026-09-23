@@ -2,7 +2,7 @@
 // server-sent event stream and the indexing banner.
 import { get, stream } from './api.js';
 import { esc, short, int, dateTime, price } from './format.js';
-import { watch, toast, ICON, assignColors, download, logo } from './ui.js';
+import { watch, toast, ICON, assignColors, download, logo, setAlertsBot } from './ui.js';
 import { disposeAll, chartCsv, chartPng } from './charts.js';
 
 const routes = [
@@ -151,6 +151,7 @@ async function poll() {
   try {
     const h = await get('health', { maxAge: 0 });
     showBanner(h.index?.backfill);
+    setAlertsBot(h.alerts?.bot);
     if (!lastBlockAt && h.index?.live?.to) setLive('ok', `Block · #${int(h.index.live.to)}`);
   } catch { setLive('bad', 'Offline'); }
 }

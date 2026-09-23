@@ -3,7 +3,7 @@
 // hold time, best/worst markets), behaviour notes, trades, round trips, flows.
 import { get, stream } from '../api.js';
 import { usd, usdFull, int, price, pct, num, esc, size, duration, date, dateTime, ago, short } from '../format.js';
-import { kpi, tabs, table, mktLink, sideTag, pnl, pctCell, skeleton, skChart, empty, watch, ICON, EXPLORER, toast, chartTools } from '../ui.js';
+import { kpi, tabs, table, mktLink, sideTag, pnl, pctCell, skeleton, skChart, empty, watch, ICON, EXPLORER, toast, chartTools, alertsLink } from '../ui.js';
 import { lineChart, signedBars, COLORS } from '../charts.js';
 
 const TABS = [['overview', 'Overview'], ['positions', 'Positions'], ['trades', 'Trade history'], ['trips', 'Round trips'], ['flows', 'Deposits & withdrawals']];
@@ -27,6 +27,7 @@ export function mount(el, { params, query, setQuery, navigate }) {
           <a class="btn ghost" href="${EXPLORER}/address/${esc(a.address)}" target="_blank" rel="noopener noreferrer">${ICON.ext} Explorer</a>
           <button class="btn ghost" data-action="compare">${ICON.plus} Compare</button>
           <button class="btn ghost" data-action="share" title="Download a summary card (PNG)">${ICON.image} Share</button>
+          ${alertsLink(a.address) ? `<a class="btn ghost" href="${esc(alertsLink(a.address))}" target="_blank" rel="noopener noreferrer" title="Position changes and near-liquidation warnings in Telegram">${ICON.bell} Alerts</a>` : ''}
           <button class="btn ${starred ? '' : 'primary'}" data-action="watch">${starred ? ICON.star + ' Watching' : ICON.starOff + ' Watch'}</button>
         </div></div>`;
   }
