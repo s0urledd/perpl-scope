@@ -78,10 +78,12 @@ test('a head that stops advancing is reported stale while polls still succeed', 
   await withDir(async dir => {
     const fake = createFakeExchange();
     fake.open(1, 5n, 0, 100000n); fake.open(1, 6n, 1, 100000n);
-    const collector = createCollector({ config, options: options(join(dir, 'checkpoint.json'), { STALE_AFTER_MS: 40 }), rpc: fake.rpc });
+    // No checkpoint writes after polls, and a limit well above a slow runner's
+    // disk and scheduling delays: only the head's progress decides freshness.
+    const collector = createCollector({ config, options: options(join(dir, 'checkpoint.json'), { STALE_AFTER_MS: 250, CHECKPOINT_MS: 600000 }), rpc: fake.rpc });
     await collector.bootstrap('test');
     assert.equal(collector.freshness().status, 'fresh');
-    await sleep(70);
+    await sleep(300);
     await collector.poll(); // succeeds, but the head has not moved
     assert.deepEqual([collector.freshness().status, collector.freshness().reason], ['stale', 'head-stalled']);
     fake.advance();
