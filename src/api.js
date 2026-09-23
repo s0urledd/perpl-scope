@@ -351,11 +351,15 @@ export function createApi({ collector, analytics = null, sse = null, statusOf = 
     try {
       const info = await stat(file);
       if (!info.isFile()) return send(res, 404, { error: 'NOT_FOUND' });
+      // Dashboard files are revalidated on every load (a cheap 304 when
+      // unchanged), so a deploy never leaves a browser mixing old and new modules.
+      const etag = `W/"${info.size.toString(36)}-${Math.floor(info.mtimeMs).toString(36)}"`;
+      if (req.headers['if-none-match'] === etag) { res.writeHead(304, { etag, 'cache-control': 'no-cache' }); return res.end(); }
       const raw = await readFile(file);
       const zip = /\.(html|js|css|svg|json)$/.test(file) && /\bgzip\b/.test(req.headers['accept-encoding'] ?? '') && raw.length > 1024;
       const body = zip ? gzipSync(raw) : raw;
       const csp = extname(file) === '.html' ? CSP : extname(file) === '.svg' ? SVG_CSP : null;
-      res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream', 'cache-control': extname(file) === '.html' ? 'no-cache' : 'public, max-age=300', 'content-length': body.length, ...(zip ? { 'content-encoding': 'gzip', vary: 'accept-encoding' } : {}), ...SECURITY_HEADERS, ...(csp ? { 'content-security-policy': csp } : {}) });
+      res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-cache', etag, 'content-length': body.length, ...(zip ? { 'content-encoding': 'gzip', vary: 'accept-encoding' } : {}), ...SECURITY_HEADERS, ...(csp ? { 'content-security-policy': csp } : {}) });
       res.end(body);
     } catch { send(res, 404, { error: 'NOT_FOUND' }); }
   }
