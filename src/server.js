@@ -55,7 +55,7 @@ const alerts = env.TELEGRAM_BOT_TOKEN ? createAlerts({
   site: env.PUBLIC_URL || undefined,
   resolveAccount: key => analytics.resolveAccount(key), tradeViews: rows => analytics.tradeViews(rows), accountState: id => api.accountState(id),
   symbolOf: id => analytics.symbolOf(id), marketIds: () => [...ingest.markets.keys()].sort((a, b) => a - b),
-  fundingSeed: () => ch.query('SELECT market, argMax(actual_rate, funding_block) AS actual_rate FROM funding FINAL WHERE actual_rate != 0 GROUP BY market')
+  fundingSeed: () => ch.query('SELECT market, argMax(actual_rate, funding_block) AS rate FROM funding FINAL WHERE actual_rate != 0 GROUP BY market')
 }) : null;
 const statusOf = () => ({
   index: { live: { ...ingest.status.live, from: ingest.status.live.from?.toString() ?? null, to: ingest.status.live.to?.toString() ?? null, finalized: ingest.status.live.finalized?.toString() ?? null }, backfill: ingest.progress(), coverage: ingest.coverage.intervals.map(x => ({ from: x.from.toString(), to: x.to.toString(), from_ts: x.fromTs, to_ts: x.toTs })), rollups: rollups.status, repaired_rows: ingest.status.repaired, decoder_checks: ingest.status.checks, clickhouse: ch.stats },

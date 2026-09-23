@@ -100,21 +100,26 @@ health of every position and concentration per market.
 
 A Telegram bot, run by the server when `TELEGRAM_BOT_TOKEN` is set. It
 long-polls Telegram, so it needs no public endpoint; subscriptions are kept
-in ClickHouse.
+in ClickHouse. Everything is set from a button menu (`/menu`) or with
+commands.
 
-- `/watch <address or id>`: every position change of the wallet (open,
-  add, reduce, close, flip, liquidation, deleverage) with price, size, PnL
-  and the transaction, and a warning when a position is within 10% and 5% of
-  its liquidation price (checked each minute against contract state; it
-  re-arms above 15%). Up to 20 wallets per chat.
-- `/liqs <min USD> [market]` and `/trades <min USD> [market]`: liquidations
-  and taker trades at least that large ($1K minimum).
-- `/funding on|off`: a message when a market's funding changes direction.
-- `/list`, `/unwatch`, `/stop`.
+- **Wallets** (`/watch <address or id>`, or just send the address): every
+  position change (open, add, reduce, close, flip, liquidation, deleverage)
+  with size, price, PnL and the transaction, and a warning as a position
+  nears its liquidation price. Warning levels are per chat: early (20%, 10%,
+  5% away), standard (10%, 5%) or late (5%, 2%); checked each minute against
+  contract state, one message per level, re-armed once the position
+  recovers. Up to 20 wallets per chat.
+- **My positions** (`/positions`): the watched wallets' open positions now,
+  closest to liquidation first, with value, PnL, leverage and distance.
+- **Liquidations** and **large trades** above a size picked from the menu or
+  set with `/liqs 25k BTC`, `/trades 100k` (optionally for one market).
+- **Funding flips**: a message when a market's funding changes direction.
 
 The wallet page links to the bot with the wallet pre-filled
 (`t.me/<bot>?start=watch_<address>`). Events more than five minutes old,
-such as those replayed after downtime, are not sent.
+such as those replayed after downtime, are not sent. The bot sets its own
+command list and profile text on start.
 
 ## Status
 
