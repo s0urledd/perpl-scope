@@ -275,3 +275,18 @@ with the number of viewers.
 | Execution restarts (new event ring) | Monode exits on its health check and Docker restarts it on the new ring |
 | Missed or misread event | Contract reconciliation and the integrity check flag it; the collector rebuilds from state |
 | Disk refuses checkpoints | Reported on the status page; polls continue |
+
+## Source layout
+
+| Path | Contents |
+| --- | --- |
+| `src/ingest.js`, `src/decode.js`, `src/coverage.js` | Event ingest, decoding and linking, coverage |
+| `src/schema.js`, `src/rollup.js`, `src/aggregates.js`, `src/query.js` | ClickHouse schema, rollups, window queries |
+| `src/analytics-api.js`, `src/analytics.js`, `src/cohorts.js` | Protocol, trader, cohort and wallet analytics |
+| `src/collector.js`, `src/state.js`, `src/metrics.js`, `src/book.js`, `src/math.js` | Contract state and risk |
+| `src/api.js`, `src/live.js`, `src/server.js`, `src/ratelimit.js` | HTTP, server-sent events, execution events, rate limits, wiring |
+| `src/landscape.js`, `src/reference.js` | External context (market share) and the optional check against Perpl's API |
+| `web/` | Dashboard: plain JavaScript modules, no build step |
+| `deploy/` | ClickHouse settings, the Monode sidecar image and its event filter |
+| `scripts/` | Syntax check, formula validation against live state, latency measurement |
+| `test/` | Unit tests against a fake exchange, ClickHouse integration test |
