@@ -28,7 +28,7 @@ export function mount(el, { query, setQuery }) {
       <div class="hero-id">
         <img class="hero-logo" src="img/venues/perpl.png" alt="" width="44" height="44">
         <div><h1>Perpl <span class="hero-muted">Analytics</span></h1>
-          <div class="sub" id="hero-facts">Perpetuals exchange on Monad</div></div>
+          <div class="sub">Real-time protocol, wallet and risk analytics for Perpl on Monad.</div></div>
       </div>
       <div class="hero-actions"><a class="btn ghost" href="https://app.perpl.xyz" target="_blank" rel="noopener noreferrer">Trade on Perpl ${ICON.ext}</a><div id="win">${seg('window', WINDOWS, w)}</div></div>
     </div>
@@ -43,7 +43,7 @@ export function mount(el, { query, setQuery }) {
         <section class="panel fill">
           <div class="panel-head"><h2>Live trades</h2><div id="minsize">${segSm('min', MIN_SIZES, minSize)}</div></div>
           <div class="panel-body flush scroll" id="tape">${skeleton(8)}</div>
-          <div class="panel-foot"><span id="tape-meta">Finalized blocks · aggressor side</span><span id="tape-count"></span></div>
+          <div class="panel-foot"><span id="tape-meta">Finalized blocks · aggressor side · UTC</span><span id="tape-count"></span></div>
         </section>
       </div>
       <section class="panel">
@@ -108,9 +108,9 @@ export function mount(el, { query, setQuery }) {
     const partial = cov && !cov.complete ? ' <span class="tag warn" title="History for this window is still being indexed">partial</span>' : '';
     $('kpis').innerHTML = [
       kpi({ label: `Volume · ${wl}`, value: usd(h.volume.value), delta: ch(h.volume.change_pct), note: `${int(data.markets.reduce((a, m) => a + (m.fills ?? 0), 0))} trades${partial}`, spark: 'sp-vol', tip: 'Notional of every match, counted once (the maker side). A trade is one match between a maker and a taker.' }),
-      kpi({ label: 'Open interest · now', value: usd(c?.open_interest), delta: seriesChange('open_interest'), note: c ? `${int(c.positions)} open positions` : '', spark: 'sp-oi', tip: 'Long notional at the mark price; equal to short notional by construction, so each contract counts once. The change compares the window\'s first and last points of the event-derived series.' }),
-      kpi({ label: 'TVL · now', value: usd(c?.tvl), delta: seriesChange('tvl'), note: `${usd(h.net_flow.value, { sign: true })} net flow · ${wl}`, spark: 'sp-tvl', tip: 'Collateral held by the exchange contract, read from chain state.' }),
-      kpi({ label: `Fees · ${wl}`, value: usd(h.fees.value), delta: ch(h.fees.change_pct), note: `Revenue ${usd(h.protocol_fees.value)}${w === '24h' ? ` · ${usd((num(h.protocol_fees.value) ?? 0) * 365)} annualized` : ''}`, spark: 'sp-fees', tip: `Fees charged on fills, gross: ${usd(h.insurance_fees.value)} to the insurance fund and ${usd(h.protocol_fees.value)} protocol share, of which ${usd(h.builder_fees)} went to order builders. Rebates and referral shares are paid outside fills and are not deducted.` }),
+      kpi({ label: 'Open interest', value: usd(c?.open_interest), delta: seriesChange('open_interest'), note: c ? `${int(c.positions)} open positions` : '', spark: 'sp-oi', tip: 'Long notional at the mark price; equal to short notional by construction, so each contract counts once. The change compares the window\'s first and last points of the event-derived series.' }),
+      kpi({ label: 'TVL', value: usd(c?.tvl), delta: seriesChange('tvl'), note: `${usd(h.net_flow.value, { sign: true })} net flow · ${wl}`, spark: 'sp-tvl', tip: 'Collateral held by the exchange contract, read from chain state.' }),
+      kpi({ label: `Fees · ${wl}`, value: usd(h.fees.value), delta: ch(h.fees.change_pct), note: `Revenue ${usd(h.protocol_fees.value)}${w === '24h' ? ` · ${usd((num(h.protocol_fees.value) ?? 0) * 365)}/yr` : ''}`, spark: 'sp-fees', tip: `Fees charged on fills, gross: ${usd(h.insurance_fees.value)} to the insurance fund and ${usd(h.protocol_fees.value)} protocol share, of which ${usd(h.builder_fees)} went to order builders. Rebates and referral shares are paid outside fills and are not deducted.` }),
       kpi({ label: `Active traders · ${wl}`, value: int(h.traders.value), delta: ch(h.traders.change_pct), note: `${int(h.new_accounts.value)} new accounts`, spark: 'sp-tr' }),
       kpi({ label: `Liquidations · ${wl}`, value: usd(h.liquidated.value), delta: ch(h.liquidated.change_pct), invert: true, note: `${int(h.liquidations.value)} liquidations`, spark: 'sp-liq' })
     ].join('');
@@ -198,8 +198,6 @@ export function mount(el, { query, setQuery }) {
     const rows = data.markets.filter(m => num(m.volume) > 0 || num(m.open_interest) > 0);
     $('markets').innerHTML = table({ id: 'markets', columns: marketCols(), rows, sortKey: sort.key, sortDir: sort.dir, rowAttrs: r => `class="link" data-href="#/markets/${r.id}"` });
     $('markets-meta').textContent = `${rows.length} active markets · ${w === 'all' ? 'all-time' : w} activity, live prices and positions`;
-    const open = data.markets.filter(m => m.active !== false).length;
-    $('hero-facts').textContent = `Perpetuals exchange on Monad · ${open} markets${data.current ? ` · ${int(data.current.positions)} open positions` : ''}`;
   }
 
   function renderTape() {
@@ -208,7 +206,7 @@ export function mount(el, { query, setQuery }) {
     $('tape-count').textContent = rows.length ? `${int(Math.min(rows.length, 60))} shown` : '';
     if (!rows.length) { $('tape').innerHTML = empty(tape.length ? 'No trades of this size yet' : 'Waiting for trades'); return; }
     $('tape').innerHTML = table({ id: 'tape', compact: true, columns: [
-      { key: 't', label: 'Time (UTC)', render: r => `<span class="muted num">${timeOnly(r.ts)}</span>` },
+      { key: 't', label: 'Time', render: r => `<span class="muted num">${timeOnly(r.ts)}</span>` },
       { key: 'm', label: 'Market', render: r => mkt(r.market, r.symbol) },
       { key: 's', label: 'Action', render: tradeAction },
       { key: 'p', label: 'Price', n: true, render: r => price(r.price) },
@@ -289,7 +287,7 @@ export function mount(el, { query, setQuery }) {
   }));
   // A proposed trade still unmatched 10 finalized blocks later never finalized.
   off.push(stream.on('block', b => { let dropped = false; for (let i = tape.length - 1; i >= 0; i--) if (tape[i].proposed && Number(tape[i].block) <= Number(b.block) - 10) { tape.splice(i, 1); dropped = true; } if (dropped) renderTape(); }));
-  off.push(stream.on('proposed', p => { for (const r of p.trades) if (!tape.some(x => x.tx === r.tx)) tape.unshift({ ...r, proposed: true, fresh: true }); tape.length = Math.min(tape.length, 400); $('tape-meta').textContent = 'Proposed + finalized blocks'; renderTape(); }));
+  off.push(stream.on('proposed', p => { for (const r of p.trades) if (!tape.some(x => x.tx === r.tx)) tape.unshift({ ...r, proposed: true, fresh: true }); tape.length = Math.min(tape.length, 400); $('tape-meta').textContent = 'Proposed + finalized blocks · UTC'; renderTape(); }));
   off.push(stream.on('backfill', p => {
     const finished = backfill && !backfill.complete && p.complete;
     backfill = p;

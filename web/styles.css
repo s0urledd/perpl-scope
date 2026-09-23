@@ -118,7 +118,7 @@ button, input, select { font: inherit; color: inherit; }
 .grid { display: grid; gap: 16px; }
 .g-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .g-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.g-main { grid-template-columns: minmax(0, 2.1fr) minmax(0, 1fr); }
+.g-main { grid-template-columns: minmax(0, 1.8fr) minmax(0, 1fr); }
 @media (max-width: 1300px) { .top-inner { gap: 18px; } .nav a { padding: 7px 9px; } }
 @media (max-width: 1100px) { .g-2, .g-3, .g-main { grid-template-columns: minmax(0, 1fr); } .nav a { padding: 7px 8px; font-size: 13px; } .search kbd { display: none; } }
 /* Phones: the nav becomes a second, horizontally scrolling row. */
@@ -203,14 +203,22 @@ table.t { width: 100%; border-collapse: collapse; font-size: 13px; }
 .t th.sort { cursor: pointer; }
 .t th.sort:hover { color: var(--text-2); }
 .t th.sorted { color: var(--text); }
-.t td { padding: 0 12px; height: 42px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+/* Cells align to the top with a fixed inset, so the first line of every cell
+   (the value) sits on one line across the row; a second line (APR, counts)
+   hangs below it instead of pushing the value up. */
+.t td { padding: 11px 12px 8px; height: 42px; vertical-align: top; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .t tr:last-child td { border-bottom: 0; }
 .t tbody tr { transition: background 0.12s; }
 .t tbody tr.link { cursor: pointer; }
 .t tbody tr:hover { background: rgba(162, 164, 255, 0.045); }
 .t td:first-child, .t th:first-child { padding-left: 16px; }
 .t td:last-child, .t th:last-child { padding-right: 16px; }
-.t.compact td { height: 36px; }
+.t.compact td { height: 36px; padding-top: 8px; padding-bottom: 6px; }
+/* The live tape sits in the narrow column: tighter cells so every column fits. */
+#tape .t th, #tape .t td { padding-left: 8px; padding-right: 8px; }
+#tape .t th:first-child, #tape .t td:first-child { padding-left: 14px; }
+#tape .t th:last-child, #tape .t td:last-child { padding-right: 14px; }
+#tape .mkt { gap: 6px; }
 .t .sub { color: var(--text-3); font-size: 11.5px; }
 .t tr.flash td { animation: flash 1.6s ease-out; }
 @keyframes flash { from { background: rgba(162, 164, 255, 0.14); } to { background: transparent; } }
@@ -246,7 +254,7 @@ tr.inactive td { opacity: 0.5; }
 .ratio i { display: block; height: 100%; }
 .ratio i.l { background: var(--long); }
 .ratio i.s { background: var(--short); }
-.ratio-wrap { display: flex; flex-direction: column; gap: 4px; min-width: 96px; }
+.ratio-wrap { display: flex; flex-direction: column; gap: 4px; min-width: 96px; margin-top: 7px; }
 .ratio-wrap .lbl { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--text-2); }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
