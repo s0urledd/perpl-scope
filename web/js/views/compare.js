@@ -12,7 +12,7 @@ export function mount(el, { query, navigate }) {
   let alive = true;
   el.innerHTML = `
     <div class="page-head"><div><h1>Compare wallets</h1><div class="sub">Up to five wallets side by side. Add from any wallet page or paste addresses.</div></div>
-      <form id="add" style="display:flex;gap:8px"><div class="search" style="margin:0;width:360px"><input id="add-input" placeholder="Add address or account ID" autocomplete="off" spellcheck="false"></div><button class="btn primary" type="submit">${ICON.plus} Add</button></form></div>
+      <form id="add" style="display:flex;gap:8px;flex:0 1 440px;min-width:0"><div class="search" style="margin:0;flex:1;max-width:none"><input id="add-input" placeholder="Add address or account ID" autocomplete="off" spellcheck="false"></div><button class="btn primary" type="submit">${ICON.plus} Add</button></form></div>
     <div class="stack"><section class="panel" id="table">${skeleton(10)}</section>
     <section class="panel"><div class="panel-head"><h2>Cumulative net PnL</h2><div class="head-right"><div class="legend" id="legend"></div>${chartTools('chart', 'compare-pnl')}</div></div><div class="panel-body"><div class="chart" id="chart"></div></div></section></div>`;
   const $ = s => el.querySelector(`#${s}`);
