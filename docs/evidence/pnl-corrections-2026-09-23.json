@@ -1,0 +1,32 @@
+{
+  "measured_at": "2026-09-23",
+  "range": { "from_block": 54773010, "to_block": 107293456 },
+  "method": "PositionIncreased(V2) and PositionLiquidated logs re-read from the chain over the full history (read-only), joined with the stored rows of the index built by the previous decoder",
+  "funding_settled_at_increases": {
+    "events": 151626,
+    "net_to_traders_usd": 13234.335412,
+    "absolute_usd": 106859.376108,
+    "previously": "not counted in realized PnL or funding"
+  },
+  "liquidation_fees": {
+    "liquidations": 3341,
+    "with_fee": 3341,
+    "total_usd": 84764.531883,
+    "past_bankruptcy": 0,
+    "rule": "trader receives accAmountCNS = 80 % of the remaining margin (checked exactly on-chain); the rest is the liquidation fee",
+    "previously": "the event's would-be PnL was counted as realized"
+  },
+  "builder_fees": {
+    "fills_with_builder_share": 3193546,
+    "total_usd": 20345.061032,
+    "previously": "added on top of the fill fee in wallet fees and net PnL"
+  },
+  "accounts_whose_realized_pnl_changes": 2878,
+  "largest_changes_usd": [
+    { "account": 211, "change": -7627.737218 },
+    { "account": 25, "change": 5621.473206 },
+    { "account": 2159, "change": 5561.448723 },
+    { "account": 2172, "change": -4868.282847 },
+    { "account": 2830, "change": -4811.824091 }
+  ]
+}
