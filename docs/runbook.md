@@ -139,6 +139,9 @@ step.
 | `BOOK_LEVELS`, `BOOK_RANGE_BPS`, `BOOK_REFRESH_MS`, `BOOK_DISABLED` | `40`, `1500`, `30000`, `0` | Order-book walk |
 | `CHECKPOINT_PATH` | `data/checkpoint.json` (`/data/…` in Docker) | Collector checkpoint |
 | `REFERENCE_ENABLED` | `0` | `1` compares contract figures with Perpl's public API (never used for metrics) |
+| `LANDSCAPE_ENABLED`, `LANDSCAPE_URL` | `1`, DefiLlama open-interest overview | Market-share context on the overview; `0` makes no outbound call |
+| `RATE_LIMIT_PER_MIN`, `RATE_LIMIT_BURST` | `600`, `120` | Per-IP token bucket for `/api/` (`0` disables); CSV and `/compare` cost 10 |
+| `TRUST_PROXY` | `1` | Take the client from the last `X-Forwarded-For` entry when the peer is loopback (a proxy on the same host); `0` uses the peer address |
 
 ## Operating
 

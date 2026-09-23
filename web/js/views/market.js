@@ -2,7 +2,7 @@
 // liquidation ladder from live positions, top traders and recent trades.
 import { get, stream } from '../api.js';
 import { usd, int, price, pct, num, esc, timeOnly, dateTime, duration } from '../format.js';
-import { kpi, seg, table, mkt, sideTag, addr, ratio, pnl, pctCell, fundingCell, tradeAction, skeleton, skChart, empty, colorOf, chartTools, logo } from '../ui.js';
+import { kpi, seg, table, mkt, sideTag, addr, ratio, pnl, pctCell, fundingCell, fundingTip, tradeAction, skeleton, skChart, empty, colorOf, chartTools, logo } from '../ui.js';
 import { candles, signedBars, mirrored } from '../charts.js';
 
 const WINDOWS = [['24h', '24H'], ['7d', '7D'], ['30d', '30D'], ['all', 'All']];
@@ -26,6 +26,7 @@ export function mount(el, { params, query, setQuery }) {
         <section class="panel"><div class="panel-head"><h2>Funding rate</h2><span class="head-right"><span class="meta" id="f-meta"></span>${chartTools('funding', `market-${id}-funding`)}</span></div><div class="panel-body"><div class="chart sm" id="funding">${skChart()}</div></div></section>
         <section class="panel"><div class="panel-head"><h2>Liquidation ladder</h2><span class="head-right"><span class="meta">Notional liquidated by an adverse move of the mark</span>${chartTools('ladder', `market-${id}-ladder`, { csv: false })}</span></div><div class="panel-body"><div class="chart sm" id="ladder">${skChart()}</div></div></section>
       </div>
+      <section class="panel"><div class="panel-head"><div><h2>Largest positions</h2><div class="desc">Open now, from contract state · closest to liquidation highlighted</div></div><span class="meta" id="pos-meta"></span></div><div class="panel-body flush" id="positions">${skeleton(6)}</div></section>
       <div class="grid g-2">
         <section class="panel"><div class="panel-head"><h2>Top traders</h2><span class="meta" id="lb-meta"></span></div><div class="panel-body flush" id="lb">${skeleton(6)}</div></section>
         <section class="panel fill"><div class="panel-head"><h2>Recent trades</h2><span class="meta">Aggressor side</span></div><div class="panel-body flush scroll" id="trades">${skeleton(6)}</div></section>
@@ -43,7 +44,7 @@ export function mount(el, { params, query, setQuery }) {
     $('kpis').innerHTML = [
       kpi({ label: `Volume ${w}`, value: usd(row.volume), note: `${pct(row.share_pct, { digits: 1 })} of exchange` }),
       kpi({ label: 'Open interest', value: usd(row.open_interest), note: row.oi_cap_pct !== undefined && row.oi_cap_pct !== null ? `${pct(row.oi_cap_pct, { digits: 1 })} of cap` : '' }),
-      kpi({ label: 'Funding 8h', tip: 'Funding is paid every 8,571 blocks (Perpl: “approximately once per hour” at 0.42 s blocks; about 43 min at today’s block time). Shown scaled to 8 hours of clock time; APR over 365 days.', value: row.funding ? fundingCell(row.funding, { apr: false }) : '—', note: !row.funding ? '' : num(row.funding.rate_8h_pct) === 0 ? 'flat · no payments this interval' : `${pct(row.funding.apr_pct, { digits: 1, sign: true })} APR · ${row.funding.rate_8h_pct > 0 ? 'longs pay' : 'shorts pay'}` }),
+      kpi({ label: 'Funding 8h', tip: fundingTip(row.funding?.interval_seconds), value: row.funding ? fundingCell(row.funding, { apr: false }) : '—', note: !row.funding ? '' : num(row.funding.rate_8h_pct) === 0 ? 'flat · no payments this interval' : `${pct(row.funding.apr_pct, { digits: 1, sign: true })} APR · ${row.funding.rate_8h_pct > 0 ? 'longs pay' : 'shorts pay'}` }),
       kpi({ label: 'Traders', value: int(row.traders), note: `${int(row.fills)} trades` }),
       kpi({ label: 'Taker buy share', value: pct(row.taker_buy_share_pct, { digits: 1 }), note: `${usd(row.taker_buy)} bought · ${usd(row.taker_sell)} sold` }),
       kpi({ label: 'Liquidated', value: usd(row.liquidated), note: `${int(row.liquidations)} events` })
@@ -73,10 +74,26 @@ export function mount(el, { params, query, setQuery }) {
         <div class="stat"><span>Liquidatable now</span><span>${int(risk.positions.liquidatable)}</span></div><div class="stat"><span>Insurance fund</span><span>${usd(risk.insurance.balance)}</span></div>
         <div class="stat"><span>Largest position</span><span>${usd(risk.concentration?.largest?.notional)}</span></div><div class="stat"><span>Top 5 share</span><span>${pct(risk.concentration?.top5_pct, { digits: 1 })}</span></div>
       </div>${costTable(risk.liquidity)}`;
+    renderPositions(risk.top_positions ?? []);
     const ladder = risk.ladder ?? [];
     const lnode = $('ladder'); lnode.innerHTML = '';
     if (ladder.length) mirrored(lnode, { labels: ladder.map(x => `${x.shock_pct}%`), long: ladder.map(x => num(x.long.notional)), short: ladder.map(x => num(x.short.notional)) });
     else lnode.innerHTML = empty('No open positions');
+  }
+  // The largest open positions by notional; each row opens the wallet.
+  function renderPositions(rows) {
+    const shown = rows.slice(0, 15);
+    $('pos-meta').textContent = rows.length ? `Top ${shown.length} by notional` : '';
+    $('positions').innerHTML = table({ id: 'pos', compact: true, emptyText: 'No open positions', columns: [
+      { key: 'a', label: 'Account', render: r => addr(null, r.account_id) },
+      { key: 's', label: 'Side', render: r => sideTag(r.side) },
+      { key: 'n', label: 'Notional', n: true, render: r => usd(r.notional) },
+      { key: 'e', label: 'Entry', n: true, render: r => price(r.entry_price) },
+      { key: 'l', label: 'Leverage', n: true, render: r => (r.leverage ? `${Number(r.leverage).toFixed(1)}x` : '—') },
+      { key: 'u', label: 'uPnL', n: true, render: r => pnl(r.pnl) },
+      { key: 'q', label: 'Liq. price', n: true, render: r => price(r.liquidation_price) },
+      { key: 'd', label: 'To liq.', n: true, render: r => (r.liquidation_distance_pct === null ? '—' : `<span class="${r.liquidation_distance_pct < 5 ? 'neg' : r.liquidation_distance_pct < 15 ? 'warn-text' : 'muted'}">${pct(r.liquidation_distance_pct, { digits: 1 })}</span>`) }
+    ], rows: shown, rowAttrs: r => `class="link" data-href="#/wallet/${esc(r.account_id)}"` });
   }
   // What a market order costs against the on-chain book, from the mid.
   function costTable(L) {

@@ -14,6 +14,8 @@ import { createSse, createExecEvents, createHeadSubscription, speculativeTrades 
 import { createSnapshots } from './snapshots.js';
 import { createReference } from './reference.js';
 import { createApi } from './api.js';
+import { rateLimitFromEnv } from './ratelimit.js';
+import { createLandscape } from './landscape.js';
 
 const env = process.env;
 const log = (level, message) => console.log(JSON.stringify({ t: new Date().toISOString(), level, message: String(message).replace(/https?:\/\/\S+|wss?:\/\/\S+/g, '<url>') }));
@@ -43,12 +45,14 @@ const sse = createSse({ log });
 let api = null;
 const analytics = createAnalyticsApi({ ch, ingest, rollups, queries, collector, accountState: id => api.accountState(id) });
 const reference = env.REFERENCE_ENABLED === '1' ? createReference({ url: env.PERPL_CONTEXT_URL || undefined }) : null;
+// Market-share context from a public aggregator; LANDSCAPE_ENABLED=0 turns the outbound call off.
+const landscape = env.LANDSCAPE_ENABLED === '0' ? null : createLandscape({ url: env.LANDSCAPE_URL || undefined });
 const feeds = { execEvents: null, heads: null };
 const statusOf = () => ({
   index: { live: { ...ingest.status.live, from: ingest.status.live.from?.toString() ?? null, to: ingest.status.live.to?.toString() ?? null, finalized: ingest.status.live.finalized?.toString() ?? null }, backfill: ingest.progress(), coverage: ingest.coverage.intervals.map(x => ({ from: x.from.toString(), to: x.to.toString(), from_ts: x.fromTs, to_ts: x.toTs })), rollups: rollups.status, repaired_rows: ingest.status.repaired, decoder_checks: ingest.status.checks, clickhouse: ch.stats },
   feeds: { exec_events: feeds.execEvents?.status ?? null, heads: feeds.heads?.status ?? null, sse_clients: sse.clients }
 });
-api = createApi({ collector, analytics, sse, statusOf, reference, version: pkg.version, onError: (error, path) => log('error', `${path}: ${error.message}`) });
+api = createApi({ collector, analytics, sse, statusOf, reference, landscape, rateLimit: rateLimitFromEnv(env), version: pkg.version, onError: (error, path) => log('error', `${path}: ${error.message}`) });
 
 // --- real-time -----------------------------------------------------------------
 let lastPush = 0, pushTimer = null, lastRollup = 0, pushing = false;

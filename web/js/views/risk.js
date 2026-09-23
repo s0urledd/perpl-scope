@@ -3,7 +3,7 @@
 // test, all from contract state at the collector's latest finalized block.
 import { get } from '../api.js';
 import { usd, int, price, pct, num, esc, size, multiple } from '../format.js';
-import { kpi, table, mkt, sideTag, addr, pnl, skeleton, skChart, empty } from '../ui.js';
+import { kpi, table, mktLink, sideTag, addr, pnl, skeleton, skChart, empty } from '../ui.js';
 import { mirrored } from '../charts.js';
 
 // Depth read up to the walk's level cap is a lower bound.
@@ -44,7 +44,7 @@ export function mount(el, { query, setQuery }) {
     if (!marketId || !markets.some(m => m.id === marketId)) marketId = markets[0]?.id ?? null;
     $('mkt').innerHTML = markets.map(m => `<option value="${m.id}" ${m.id === marketId ? 'selected' : ''}>${esc(m.symbol)}</option>`).join('');
     $('table').innerHTML = table({ id: 'risk', columns: [
-      { key: 'm', label: 'Market', render: r => mkt(r.id, r.symbol) },
+      { key: 'm', label: 'Market', render: r => mktLink(r.id, r.symbol) },
       { key: 'oi', label: 'Notional', n: true, render: r => usd(r.open_interest.total_notional) },
       { key: 'pos', label: 'Positions', n: true, render: r => `${int(r.positions.count)}<div class="sub">${int(r.positions.long)}L · ${int(r.positions.short)}S</div>` },
       { key: 'a5', label: 'At risk 5%', n: true, render: r => usd(r.risk.notional_at_5pct) },
@@ -94,7 +94,7 @@ export function mount(el, { query, setQuery }) {
   $('mkt').addEventListener('change', e => { marketId = Number(e.target.value); setQuery({ market: marketId }); });
   $('move').addEventListener('input', e => { move = Number(e.target.value); $('move-label').textContent = `${move > 0 ? '+' : ''}${move}%`; clearTimeout(stressTimer); stressTimer = setTimeout(() => { stress().catch(() => {}); }, 120); });
   $('move').addEventListener('change', () => setQuery({ move }));
-  const timer = setInterval(() => load().catch(() => {}), 15000);
+  const timer = setInterval(() => load().catch(() => {}), 5000); // contract state, cached per block on the server
   load().catch(error => { $('kpis').innerHTML = `<div class="empty-state">${esc(error.message)}</div>`; });
   return {
     onAction(a, t) { if (a === 'pick') { marketId = Number(t.dataset.id); $('mkt').value = String(marketId); setQuery({ market: marketId }); } },

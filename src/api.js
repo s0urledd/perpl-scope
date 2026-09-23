@@ -42,7 +42,7 @@ const ACCOUNT_CACHE_MS = 15000;
 const ACCOUNT_MAX_INFLIGHT = 4;
 const ACCOUNT_MAX_QUEUED = 64;
 
-export function createApi({ collector, analytics = null, sse = null, statusOf = () => ({}), onError = () => {}, reference = null, webDir = fileURLToPath(new URL('../web/', import.meta.url)), version = '0.2.0', now = () => Date.now() }) {
+export function createApi({ collector, analytics = null, sse = null, statusOf = () => ({}), onError = () => {}, reference = null, landscape = null, rateLimit = null, webDir = fileURLToPath(new URL('../web/', import.meta.url)), version = '0.2.0', now = () => Date.now() }) {
   const { state } = collector;
   const cd = () => state.exchangeInfo?.collateralDecimals ?? 6;
   const accountCache = new Map();
@@ -318,6 +318,7 @@ export function createApi({ collector, analytics = null, sse = null, statusOf = 
     ['GET', /^\/api\/v1\/series$/, (_, query) => ({ snapshot: snapshot(), ...seriesView(query) }), risk],
     ['GET', /^\/api\/v1\/validation$/, async () => ({ snapshot: snapshot(), ...validation(), integrity: analytics ? await analytics.integrity().catch(() => null) : null }), risk],
     ['GET', /^\/api\/v1\/reference$/, () => ({ snapshot: snapshot(), ...referenceView() }), risk],
+    ['GET', /^\/api\/v1\/landscape$/, async () => { if (!landscape) throw Object.assign(new Error('LANDSCAPE_DISABLED'), { status: 404 }); return landscape.get(); }],
     ['GET', /^\/api\/v1\/events$/, () => ({ snapshot: snapshot(), parameter_changes: state.history.params.slice(-100).reverse().map(p => ({ ...p, block: p.block.toString() })), unwinds: state.history.unwinds.slice(-50).reverse().map(u => ({ ...u, block: u.block.toString() })), diagnostics: state.history.validation.slice(-50).reverse().map(v => ({ ...v, block: v.block.toString(), accountId: v.accountId.toString(), markPricePNS: v.markPricePNS.toString(), liqPricePNS: v.liqPricePNS?.toString() ?? null, bankruptcyPricePNS: v.bankruptcyPricePNS?.toString() ?? null })) }), risk]
   ];
 
@@ -362,6 +363,10 @@ export function createApi({ collector, analytics = null, sse = null, statusOf = 
   async function handle(req, res) {
     const url = new URL(req.url, 'http://localhost');
     if (!url.pathname.startsWith('/api/')) return req.method === 'GET' || req.method === 'HEAD' ? serveStatic(url.pathname, req, res) : send(res, 405, { error: 'METHOD_NOT_ALLOWED' });
+    if (rateLimit && url.pathname !== '/api/v1/health') {
+      const r = rateLimit.check(req, url.pathname, url.searchParams);
+      if (!r.ok) return send(res, 429, { error: 'RATE_LIMITED', retry_after_s: r.retryAfterS }, { 'retry-after': String(r.retryAfterS) });
+    }
     if (url.pathname === '/api/v1/stream' && req.method === 'GET') return sse ? sse.open(req, res, SECURITY_HEADERS) : send(res, 503, { error: 'STREAM_UNAVAILABLE' });
     const route = routes.find(([method, pattern]) => method === req.method && pattern.test(url.pathname));
     if (!route) return send(res, 404, { error: 'NOT_FOUND' });

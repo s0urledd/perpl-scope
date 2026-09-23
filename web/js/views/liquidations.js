@@ -2,7 +2,7 @@
 // full feed (on-book liquidations and auto-deleveraging), live.
 import { get, stream } from '../api.js';
 import { usd, int, price, esc, dateTime, ago, num, size } from '../format.js';
-import { kpi, seg, table, mkt, sideTag, addr, pnl, skeleton, skChart, empty, ICON, colorOf, hasColor, OTHER_HEX, assignColors, chartTools } from '../ui.js';
+import { kpi, seg, table, mktLink, sideTag, addr, pnl, skeleton, skChart, empty, ICON, colorOf, hasColor, OTHER_HEX, assignColors, chartTools } from '../ui.js';
 import { stackedBars } from '../charts.js';
 
 const WINDOWS = [['24h', '24H'], ['7d', '7D'], ['30d', '30D'], ['all', 'All']];
@@ -44,7 +44,7 @@ export function mount(el, { query, setQuery }) {
   function renderFeed(rows) {
     $('feed').innerHTML = table({ id: 'liq', columns: [
       { key: 't', label: 'Time (UTC)', render: r => `<span class="muted num">${dateTime(r.ts)}</span>` },
-      { key: 'm', label: 'Market', render: r => mkt(r.market, r.symbol) },
+      { key: 'm', label: 'Market', render: r => mktLink(r.market, r.symbol) },
       { key: 'k', label: 'Type', render: r => (r.kind === 'deleverage' ? (r.force_close ? '<span class="tag warn">Force close</span>' : '<span class="tag warn">ADL</span>') : `<span class="tag">${r.on_book ? 'Order book' : 'Liquidation'}</span>`) },
       { key: 's', label: 'Position', render: r => sideTag(r.side) },
       { key: 'a', label: 'Trader', render: r => addr(r.address, r.account) },
