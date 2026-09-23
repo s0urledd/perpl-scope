@@ -94,6 +94,12 @@ measured instead of estimated:
 - the cost of a market order of $1K, $10K and $100K per market;
 - an interactive stress test.
 
+These are static price shocks: they show which positions a move would reach,
+not a forecast of the liquidations that would execute, which depend on the
+path of the price, the book at the time and keepers. Every figure on the page
+comes from one contract snapshot and one order-book read (books are re-read
+about every 30 s); the page names both blocks.
+
 The API adds the liquidation map, an estimated auto-deleveraging order, the
 health of every position and concentration per market.
 
