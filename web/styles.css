@@ -218,6 +218,8 @@ table.t { width: 100%; border-collapse: collapse; font-size: 13px; }
 .rank-pill { display: inline-block; min-width: 34px; padding: 1px 6px; border-radius: 3px; font-size: 11.5px; font-weight: 500; text-align: center; color: var(--text-2); background: rgba(255, 255, 255, 0.06); font-variant-numeric: tabular-nums; }
 .rank-pill.top { color: var(--accent); background: var(--accent-soft); }
 tr.inactive td { opacity: 0.5; }
+.sub.tags { display: flex; gap: 4px; margin-top: 3px; }
+.sub.tags .tag { font-size: 10.5px; padding: 1px 5px; cursor: help; }
 .addr { display: inline-flex; align-items: center; gap: 4px; }
 .addr a { font-family: var(--mono); font-size: 12.5px; }
 .ratio { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: rgba(255, 255, 255, 0.06); min-width: 64px; }

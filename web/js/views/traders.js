@@ -19,9 +19,18 @@ export function mount(el, { query, setQuery }) {
       <div class="panel-body flush" id="list">${skeleton(12)}</div>
       <div class="panel-foot"><span id="count"></span><span><button class="btn ghost" data-action="prev">← Prev</button> <button class="btn ghost" data-action="next">Next →</button></span></div></section>`;
   const $ = s => el.querySelector(`#${s}`);
+  // At most two rule-based style tags per trader; each title gives the evidence.
+  const DAYS = { '24h': 1, '7d': 7, '30d': 30 };
+  function styleTags(r) {
+    const out = [], trades = r.trades ?? 0, vol = num(r.volume) ?? 0;
+    if (trades && vol / trades >= 25000) out.push(['Whale', `average trade ${usd(vol / trades)}`]);
+    if (trades >= 100 && (r.maker_share_pct ?? 0) >= 80) out.push(['Maker', `${Math.round(r.maker_share_pct)}% of volume as maker`]);
+    if (DAYS[w] && trades / DAYS[w] >= 5000) out.push(['High frequency', `${int(trades / DAYS[w])} trades a day, one every ${Math.round(86400 * DAYS[w] / trades)} s`]);
+    return out.slice(0, 2).map(([t, why]) => `<span class="tag" title="${esc(why)}">${t}</span>`).join(' ');
+  }
   const COLS = [
     { key: 'rank', label: '#', render: r => `<span class="rank">${r.rank}</span>` },
-    { key: 'addr', label: 'Trader', render: r => addr(r.address, r.account) },
+    { key: 'addr', label: 'Trader', render: r => { const t = styleTags(r); return `${addr(r.address, r.account)}${t ? `<div class="sub tags">${t}</div>` : ''}`; } },
     { key: 'pnl', label: 'Net PnL', n: true, render: r => pnl(r.pnl) },
     { key: 'roi', label: 'PnL / volume', n: true, render: r => r.roi_on_volume_bps === null ? '—' : `<span class="${r.roi_on_volume_bps > 0 ? 'pos' : r.roi_on_volume_bps < 0 ? 'neg' : ''}">${(r.roi_on_volume_bps / 100).toFixed(2)}%</span>` },
     { key: 'volume', label: 'Volume', n: true, render: r => usd(r.volume) },
