@@ -1,7 +1,7 @@
 // ECharts (self-hosted) with the PerplScope theme. Every chart has one value
 // axis, thin marks, a recessive grid and a hover tooltip; colours come from
 // the validated categorical palette or the long/short pair.
-import { usd, compact, dateTime, date, num } from './format.js';
+import { usd, compact, dateTime, date, num, esc } from './format.js';
 
 const T = {
   text: 'rgba(224,225,255,0.70)', faint: 'rgba(255,255,255,0.42)', grid: 'rgba(255,255,255,0.05)', axis: 'rgba(255,255,255,0.10)',
@@ -21,7 +21,8 @@ function init(el) {
   return chart;
 }
 // Exports: the plotted data (time-aligned series, as shown) and the image.
-const csvCell = v => { const t = String(v ?? ''); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+// Text that a spreadsheet would run as a formula is prefixed with a quote.
+const csvCell = v => { let t = String(v ?? ''); if (typeof v === 'string' && /^[=+\-@\t\r]/.test(t) && !Number.isFinite(Number(t))) t = `'${t}`; return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
 export function chartCsv(el) {
   const chart = el?.__chart; if (!chart) return null;
   const o = chart.getOption();
@@ -71,7 +72,7 @@ const niceCeil = v => { const p = 10 ** Math.floor(Math.log10(v)); return [1, 2,
 // Axis money: $1.5M, $900K, $0.
 export const usdAxis = v => { const n = Number(v); if (!n) return '$0'; const a = Math.abs(n); const [k, u] = a >= 1e9 ? [1e9, 'B'] : a >= 1e6 ? [1e6, 'M'] : a >= 1e3 ? [1e3, 'K'] : [1, '']; const x = a / k; return `${n < 0 ? '-' : ''}$${x >= 100 || Number.isInteger(x) ? Math.round(x) : x.toFixed(1).replace(/\.0$/, '')}${u}`; };
 const valueAxis = fmt => ({ type: 'value', splitNumber: 4, axisLabel: { color: T.faint, formatter: fmt, margin: 10 }, splitLine: { lineStyle: { color: T.grid } }, axisLine: { show: false }, axisTick: { show: false } });
-const row = (color, name, value) => `<div style="display:flex;justify-content:space-between;gap:18px;line-height:1.7"><span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${color};margin-right:7px"></span>${name}</span><b style="font-weight:500;font-variant-numeric:tabular-nums">${value}</b></div>`;
+const row = (color, name, value) => `<div style="display:flex;justify-content:space-between;gap:18px;line-height:1.7"><span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${color};margin-right:7px"></span>${esc(name)}</span><b style="font-weight:500;font-variant-numeric:tabular-nums">${value}</b></div>`;
 function tooltip(fmt, bucketSeconds, { total = false } = {}) {
   return params => {
     const list = Array.isArray(params) ? params : [params];
