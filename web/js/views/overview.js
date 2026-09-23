@@ -199,7 +199,7 @@ export function mount(el, { query, setQuery }) {
     $('markets').innerHTML = table({ id: 'markets', columns: marketCols(), rows, sortKey: sort.key, sortDir: sort.dir, rowAttrs: r => `class="link" data-href="#/markets/${r.id}"` });
     $('markets-meta').textContent = `${rows.length} active markets · ${w === 'all' ? 'all-time' : w} activity, live prices and positions`;
     const open = data.markets.filter(m => m.active !== false).length;
-    $('hero-facts').textContent = `Perpetuals exchange on Monad · ${open} live markets${data.current ? ` · ${int(data.current.positions)} open positions` : ''}`;
+    $('hero-facts').textContent = `Perpetuals exchange on Monad · ${open} markets${data.current ? ` · ${int(data.current.positions)} open positions` : ''}`;
   }
 
   function renderTape() {
