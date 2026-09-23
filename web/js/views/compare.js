@@ -2,7 +2,7 @@
 // their cumulative net PnL on one chart (each wallet keeps its colour).
 import { get } from '../api.js';
 import { usd, int, pct, num, esc, short, duration, date } from '../format.js';
-import { pnl, empty, skeleton, ICON, SLOT_HEX, watch } from '../ui.js';
+import { pnl, empty, skeleton, ICON, SLOT_HEX, watch, chartTools } from '../ui.js';
 import { lineChart } from '../charts.js';
 
 const COLORS = [SLOT_HEX[0], SLOT_HEX[1], SLOT_HEX[2], SLOT_HEX[3], SLOT_HEX[4]];
@@ -14,7 +14,7 @@ export function mount(el, { query, navigate }) {
     <div class="page-head"><div><h1>Compare wallets</h1><div class="sub">Up to five wallets side by side. Add from any wallet page or paste addresses.</div></div>
       <form id="add" style="display:flex;gap:8px"><div class="search" style="margin:0;width:360px"><input id="add-input" placeholder="Add address or account ID" autocomplete="off" spellcheck="false"></div><button class="btn primary" type="submit">${ICON.plus} Add</button></form></div>
     <div class="stack"><section class="panel" id="table">${skeleton(10)}</section>
-    <section class="panel"><div class="panel-head"><h2>Cumulative net PnL</h2><div class="legend" id="legend"></div></div><div class="panel-body"><div class="chart" id="chart"></div></div></section></div>`;
+    <section class="panel"><div class="panel-head"><h2>Cumulative net PnL</h2><div class="head-right"><div class="legend" id="legend"></div>${chartTools('chart', 'compare-pnl')}</div></div><div class="panel-body"><div class="chart" id="chart"></div></div></section></div>`;
   const $ = s => el.querySelector(`#${s}`);
   const save = () => { try { sessionStorage.setItem('ps.compare', JSON.stringify(keys)); } catch { /* storage unavailable */ } };
 

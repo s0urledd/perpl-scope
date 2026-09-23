@@ -2,7 +2,7 @@
 // liquidation ladder from live positions, top traders and recent trades.
 import { get, stream } from '../api.js';
 import { usd, int, price, pct, num, esc, timeOnly, dateTime, duration } from '../format.js';
-import { kpi, seg, table, mkt, sideTag, addr, ratio, pnl, pctCell, skeleton, skChart, empty, colorOf } from '../ui.js';
+import { kpi, seg, table, mkt, sideTag, addr, ratio, pnl, pctCell, fundingCell, tradeAction, skeleton, skChart, empty, colorOf, chartTools } from '../ui.js';
 import { candles, signedBars, mirrored } from '../charts.js';
 
 const WINDOWS = [['24h', '24H'], ['7d', '7D'], ['30d', '30D'], ['all', 'All']];
@@ -19,12 +19,12 @@ export function mount(el, { params, query, setQuery }) {
     <div class="stack">
       <div class="kpis" id="kpis"></div>
       <div class="grid g-main">
-        <section class="panel"><div class="panel-head"><h2>Price and volume</h2><span class="meta" id="c-meta"></span></div><div class="panel-body"><div class="chart lg" id="candles">${skChart()}</div></div></section>
+        <section class="panel"><div class="panel-head"><h2>Price and volume</h2><span class="head-right"><span class="meta" id="c-meta"></span>${chartTools('candles', `market-${id}-candles`)}</span></div><div class="panel-body"><div class="chart lg" id="candles">${skChart()}</div></div></section>
         <section class="panel"><div class="panel-head"><h2>Positioning</h2><span class="meta">Live positions</span></div><div id="positioning">${skeleton(8)}</div></section>
       </div>
       <div class="grid g-2">
-        <section class="panel"><div class="panel-head"><h2>Funding rate</h2><span class="meta" id="f-meta"></span></div><div class="panel-body"><div class="chart sm" id="funding">${skChart()}</div></div></section>
-        <section class="panel"><div class="panel-head"><h2>Liquidation ladder</h2><span class="meta">Notional liquidated by an adverse move of the mark</span></div><div class="panel-body"><div class="chart sm" id="ladder">${skChart()}</div></div></section>
+        <section class="panel"><div class="panel-head"><h2>Funding rate</h2><span class="head-right"><span class="meta" id="f-meta"></span>${chartTools('funding', `market-${id}-funding`)}</span></div><div class="panel-body"><div class="chart sm" id="funding">${skChart()}</div></div></section>
+        <section class="panel"><div class="panel-head"><h2>Liquidation ladder</h2><span class="head-right"><span class="meta">Notional liquidated by an adverse move of the mark</span>${chartTools('ladder', `market-${id}-ladder`, { csv: false })}</span></div><div class="panel-body"><div class="chart sm" id="ladder">${skChart()}</div></div></section>
       </div>
       <div class="grid g-2">
         <section class="panel"><div class="panel-head"><h2>Top traders</h2><span class="meta" id="lb-meta"></span></div><div class="panel-body flush" id="lb">${skeleton(6)}</div></section>
@@ -43,7 +43,7 @@ export function mount(el, { params, query, setQuery }) {
     $('kpis').innerHTML = [
       kpi({ label: `Volume ${w}`, value: usd(row.volume), note: `${pct(row.share_pct, { digits: 1 })} of exchange` }),
       kpi({ label: 'Open interest', value: usd(row.open_interest), note: row.oi_cap_pct !== undefined && row.oi_cap_pct !== null ? `${pct(row.oi_cap_pct, { digits: 1 })} of cap` : '' }),
-      kpi({ label: 'Funding 8h', value: row.funding ? `<span class="${row.funding.rate_8h_pct > 0 ? 'pos' : row.funding.rate_8h_pct < 0 ? 'neg' : ''}">${pct(row.funding.rate_8h_pct, { digits: 4, sign: true })}</span>` : '—', note: row.funding ? `${pct(row.funding.apr_pct, { digits: 1, sign: true })} APR · ${row.funding.rate_8h_pct > 0 ? 'longs pay' : row.funding.rate_8h_pct < 0 ? 'shorts pay' : 'flat'}` : '' }),
+      kpi({ label: 'Funding 8h', value: row.funding ? fundingCell(row.funding, { apr: false }) : '—', note: !row.funding ? '' : num(row.funding.rate_8h_pct) === 0 ? 'flat · no payments this interval' : `${pct(row.funding.apr_pct, { digits: 1, sign: true })} APR · ${row.funding.rate_8h_pct > 0 ? 'longs pay' : 'shorts pay'}` }),
       kpi({ label: 'Traders', value: int(row.traders), note: `${int(row.trades)} trades` }),
       kpi({ label: 'Taker buy share', value: pct(row.taker_buy_share_pct, { digits: 1 }), note: `${usd(row.taker_buy)} bought · ${usd(row.taker_sell)} sold` }),
       kpi({ label: 'Liquidated', value: usd(row.liquidated), note: `${int(row.liquidations)} events` })
@@ -106,7 +106,7 @@ export function mount(el, { params, query, setQuery }) {
     tape = rows;
     $('trades').innerHTML = table({ id: 't', compact: true, columns: [
       { key: 't', label: 'Time', render: r => `<span class="muted num">${timeOnly(r.ts)}</span>` },
-      { key: 's', label: 'Side', render: r => `<span class="${r.buy ? 'pos' : 'neg'}">${r.buy ? 'Buy' : 'Sell'}</span>${r.kind === 'liquidation' ? ' <span class="tag bad">liq</span>' : ''}` },
+      { key: 's', label: 'Action', render: tradeAction },
       { key: 'p', label: 'Price', n: true, render: r => price(r.price) },
       { key: 'v', label: 'Notional', n: true, render: r => usd(r.notional) },
       { key: 'a', label: 'Trader', render: r => addr(r.address, r.account, { star: false }) }

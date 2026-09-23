@@ -87,6 +87,16 @@ export function createQueries({ ch, rollups, coverage = null }) {
     return { total: rows.length ? Number(rows[0].total) : 0, rows };
   }
 
+  // Net PnL and volume of every account that traded in a window (rank tables).
+  async function accountScores(from, to) {
+    const s = split(from, to);
+    const parts = [];
+    if (s.rolled.length) parts.push(`SELECT account, ${columns(ACCOUNT)} FROM agg_account_hour FINAL WHERE (${cond('hour', s.rolled)})`);
+    if (s.raw.length) parts.push(`SELECT account, ${raw(ACCOUNT)} FROM ev_account WHERE (${cond('ts', s.raw)}) GROUP BY account`);
+    if (!parts.length) return [];
+    return q(`SELECT account, toFloat64(realized - fees) AS pnl, toFloat64(volume) AS volume FROM (SELECT account, ${merged(ACCOUNT)} FROM (${parts.join(' UNION ALL ')}) GROUP BY account) WHERE trades > 0`);
+  }
+
   // One account's totals per market over a window (wallet page).
   async function accountMarkets(accountId, from, to) {
     const s = split(from, to);
@@ -210,5 +220,5 @@ export function createQueries({ ch, rollups, coverage = null }) {
     return new Map(rows.map(r => [Number(r.account), { address: r.address, created: Number(r.ts) }]));
   }
 
-  return { marketTotals, protocolTotals, traders, accounts, accountMarkets, accountSeries, cumulativeBefore, cumulativeAtBlock, lastPricesBefore, accountEvents, accountEventCount, accountTrades, accountFlows, recent, fundingHistory, fundingSeries, findAccounts, addresses, split };
+  return { marketTotals, protocolTotals, traders, accounts, accountScores, accountMarkets, accountSeries, cumulativeBefore, cumulativeAtBlock, lastPricesBefore, accountEvents, accountEventCount, accountTrades, accountFlows, recent, fundingHistory, fundingSeries, findAccounts, addresses, split };
 }

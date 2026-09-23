@@ -10,7 +10,13 @@ export function compact(v, { digits = 2, sign = false } = {}) {
   for (const [k, u] of units) if (a >= k) return `${s}${(a / k).toFixed(a / k >= 100 ? 1 : digits)}${u}`;
   return `${s}${a.toFixed(a >= 100 ? 0 : a >= 1 ? digits : a === 0 ? 0 : 4)}`;
 }
-export const usd = (v, opts = {}) => { const t = compact(v, opts); return t === '—' ? t : t.startsWith('-') ? `-$${t.slice(1)}` : t.startsWith('+') ? `+$${t.slice(1)}` : `$${t}`; };
+export const usd = (v, opts = {}) => {
+  const n = num(v);
+  // Cents below a dollar, and a floor instead of long fractions.
+  if (n !== null && n !== 0 && Math.abs(n) < 1) { const s = n < 0 ? '-' : opts.sign ? '+' : ''; return Math.abs(n) < 0.005 ? `${s}<$0.01` : `${s}$${Math.abs(n).toFixed(2)}`; }
+  const t = compact(v, opts);
+  return t === '—' ? t : t.startsWith('-') ? `-$${t.slice(1)}` : t.startsWith('+') ? `+$${t.slice(1)}` : `$${t}`;
+};
 export function usdFull(v, digits = 2) {
   const n = num(v);
   if (n === null) return '—';

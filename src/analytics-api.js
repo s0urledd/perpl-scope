@@ -431,6 +431,38 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
     }).then(view => ({ meta: metaOf(), ...view }));
   }
 
+  // Every trading account's net PnL and volume per window, sorted, shared by
+  // all wallet pages and refreshed each minute; a rank is a binary search.
+  const PERIODS = ['24h', '7d', '30d', 'all'];
+  function scores(w) {
+    return cache.get(`scores:${w}`, 60000, async () => {
+      const { from, to } = rangeOf(w);
+      const rows = await queries.accountScores(from, to);
+      const desc = (a, b) => b - a;
+      return { pnl: rows.map(r => Number(r.pnl)).sort(desc), volume: rows.map(r => Number(r.volume)).sort(desc) };
+    });
+  }
+  const rankIn = (sorted, value) => { let lo = 0, hi = sorted.length; while (lo < hi) { const mid = (lo + hi) >> 1; if (sorted[mid] > value) lo = mid + 1; else hi = mid; } return lo + 1; };
+
+  // One account over rolling windows: activity, net PnL, closed trips and
+  // where it ranks among every account that traded in the same window.
+  async function walletPeriods(key) {
+    const acct = await resolve(key);
+    const c = cd();
+    return cache.get(`wallet-periods:${acct.id}`, 30000, async () => {
+      const periods = await Promise.all(PERIODS.map(async w => {
+        const { from, to } = rangeOf(w);
+        const [{ rows }, table] = await Promise.all([queries.accounts(from, to, { account: acct.id, limit: 1 }), scores(w)]);
+        const r = rows[0];
+        const view = { window: w, from, to, coverage_complete: ingest.coverage.spanCovered(from, to - 1), traders: table.pnl.length };
+        if (!r || !Number(r.trades)) return { ...view, trades: 0, volume: '0', net_pnl: '0', realized: '0', fees: '0', liquidations: 0, rank: null };
+        const net = B(r.realized) - B(r.fees);
+        return { ...view, trades: Number(r.trades), volume: dec(r.volume, c), net_pnl: dec(net, c), realized: dec(r.realized, c), fees: dec(r.fees, c), funding: dec(r.funding_paid, c), liquidations: Number(r.liquidations), pnl_per_volume_bps: B(r.volume) > 0n ? Number(net * 100000000n / B(r.volume)) / 10000 : null, rank: { pnl: rankIn(table.pnl, Number(net)), volume: rankIn(table.volume, Number(B(r.volume))), of: table.pnl.length } };
+      }));
+      return { account: { id: acct.id, address: acct.address }, periods };
+    }).then(view => ({ meta: metaOf(), ...view }));
+  }
+
   async function walletTrades(key, query) {
     const acct = await resolve(key);
     const before = /^\d{1,12}:\d{1,9}$/.test(query.get('before') ?? '') ? query.get('before') : null;
@@ -469,5 +501,5 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
     });
   }
 
-  return { protocol, series, liquidations, trades, funding, fundingOverview, flows, leaderboard, search, profile, walletAnalytics, walletTrades, compare, integrity, cache, tradeView, rangeOf };
+  return { protocol, series, liquidations, trades, funding, fundingOverview, flows, leaderboard, search, profile, walletAnalytics, walletPeriods, walletTrades, compare, integrity, cache, tradeView, rangeOf };
 }

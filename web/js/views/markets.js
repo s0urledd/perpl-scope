@@ -2,7 +2,7 @@
 // for every market over the chosen window.
 import { get, stream } from '../api.js';
 import { usd, int, price, pct, num, esc } from '../format.js';
-import { seg, table, mkt, ratio, pctCell, skeleton, assignColors } from '../ui.js';
+import { seg, table, mkt, ratio, pctCell, fundingCell, skeleton, assignColors } from '../ui.js';
 
 const WINDOWS = [['24h', '24H'], ['7d', '7D'], ['30d', '30D'], ['all', 'All']];
 
@@ -21,7 +21,7 @@ export function mount(el, { query, setQuery }) {
     { key: 'trades', label: 'Trades', n: true, sort: r => r.trades ?? 0, render: r => int(r.trades) },
     { key: 'fees', label: 'Fees', n: true, sort: r => num(r.fees) ?? 0, render: r => usd(r.fees) },
     { key: 'open_interest', label: 'Open interest', n: true, sort: r => num(r.open_interest) ?? 0, render: r => `${usd(r.open_interest)}${r.oi_cap_pct !== null && r.oi_cap_pct !== undefined ? `<div class="sub">${pct(r.oi_cap_pct, { digits: 1 })} of cap</div>` : ''}` },
-    { key: 'funding', label: 'Funding 8h', n: true, sort: r => r.funding?.rate_8h_pct ?? 0, render: r => r.funding ? `<span class="${r.funding.rate_8h_pct > 0 ? 'pos' : r.funding.rate_8h_pct < 0 ? 'neg' : 'muted'}">${pct(r.funding.rate_8h_pct, { digits: 4, sign: true })}</span>` : '—' },
+    { key: 'funding', label: 'Funding 8h', n: true, sort: r => r.funding?.rate_8h_pct ?? 0, render: r => fundingCell(r.funding) },
     { key: 'ls', label: 'Long / short', sort: r => r.long_position_share_pct ?? 0, render: r => ratio(r.long_positions, r.short_positions) },
     { key: 'lev', label: 'Avg lev. L / S', n: true, render: r => r.long_leverage || r.short_leverage ? `${r.long_leverage ? r.long_leverage.toFixed(1) + 'x' : '—'} / ${r.short_leverage ? r.short_leverage.toFixed(1) + 'x' : '—'}` : '—' },
     { key: 'max_leverage', label: 'Max lev.', n: true, sort: r => r.max_leverage ?? 0, render: r => (r.max_leverage ? `${r.max_leverage}x` : '—') },

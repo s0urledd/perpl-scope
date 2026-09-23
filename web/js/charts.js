@@ -20,6 +20,24 @@ function init(el) {
   }
   return chart;
 }
+// Exports: the plotted data (time-aligned series, as shown) and the image.
+const csvCell = v => { const t = String(v ?? ''); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+export function chartCsv(el) {
+  const chart = el?.__chart; if (!chart) return null;
+  const o = chart.getOption();
+  const times = o.xAxis?.[0]?.data ?? [];
+  const cols = [];
+  for (const s of o.series ?? []) {
+    const value = d => (d && typeof d === 'object' && !Array.isArray(d) ? d.value : d);
+    if (s.type === 'candlestick') ['open', 'close', 'low', 'high'].forEach((k, j) => cols.push({ name: `${s.name ?? 'price'} ${k}`, at: i => value(s.data?.[i])?.[j] }));
+    else cols.push({ name: s.name ?? `series ${cols.length + 1}`, at: i => { const v = value(s.data?.[i]); return Array.isArray(v) ? v[1] : v; } });
+  }
+  const iso = t => (/^\d+$/.test(String(t)) ? new Date(Number(t) * 1000).toISOString().replace('.000Z', 'Z') : t);
+  const lines = [['time_utc', ...cols.map(c => c.name)], ...times.map((t, i) => [iso(t), ...cols.map(c => { const v = c.at(i); return v === '-' || v === null || v === undefined ? '' : v; })])];
+  return lines.map(r => r.map(csvCell).join(',')).join('\n');
+}
+export const chartPng = el => el?.__chart?.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: '#0e0d10' }) ?? null;
+
 // Shows or hides one series (legend chips outside the canvas drive this).
 export function toggleSeries(el, name) { el?.__chart?.dispatchAction({ type: 'legendToggleSelect', name }); }
 export function disposeAll() { for (const c of registry) { try { observer?.unobserve(c.getDom()); c.dispose(); } catch { /* already gone */ } } registry.clear(); }

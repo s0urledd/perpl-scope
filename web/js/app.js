@@ -2,8 +2,8 @@
 // server-sent event stream and the indexing banner.
 import { get, stream } from './api.js';
 import { esc, short, int, dateTime } from './format.js';
-import { watch, toast, ICON, assignColors } from './ui.js';
-import { disposeAll } from './charts.js';
+import { watch, toast, ICON, assignColors, download } from './ui.js';
+import { disposeAll, chartCsv, chartPng } from './charts.js';
 
 const routes = [
   [/^\/?$/, () => import('./views/overview.js')],
@@ -58,8 +58,15 @@ window.addEventListener('hashchange', () => route(false));
 
 // --- delegated interactions -------------------------------------------------------------
 document.addEventListener('click', async event => {
-  const t = event.target.closest('[data-copy],[data-watch],[data-seg],[data-tab],[data-sort],tr[data-href],[data-action]');
+  const t = event.target.closest('[data-copy],[data-watch],[data-seg],[data-tab],[data-sort],tr[data-href],[data-action],[data-export]');
   if (!t) return;
+  if (t.dataset.export) {
+    const w = parseHash().query.get('window');
+    const node = document.getElementById(t.dataset.chart), file = `perplscope-${t.dataset.name || 'chart'}${w ? `-${w}` : ''}-${new Date().toISOString().slice(0, 10)}`;
+    if (t.dataset.export === 'csv') { const csv = chartCsv(node); if (csv) download(`${file}.csv`, csv); else toast('Nothing to export yet'); }
+    else { const url = chartPng(node); if (url) Object.assign(document.createElement('a'), { href: url, download: `${file}.png` }).click(); else toast('Nothing to export yet'); }
+    return;
+  }
   if (t.dataset.copy) { event.preventDefault(); try { await navigator.clipboard.writeText(t.dataset.copy); toast('Address copied'); } catch { toast('Copy failed'); } return; }
   if (t.dataset.watch) { event.preventDefault(); event.stopPropagation(); const on = watch.toggle(t.dataset.watch); t.classList.toggle('on', on); t.innerHTML = on ? ICON.star : ICON.starOff; toast(on ? 'Added to watchlist' : 'Removed from watchlist'); return; }
   if (t.dataset.seg) { current?.instance?.onSeg?.(t.dataset.seg, t.dataset.v); return; }
@@ -101,9 +108,17 @@ document.addEventListener('keydown', e => { if (e.key === '/' && !['INPUT', 'TEX
 const live = document.getElementById('live'), liveText = document.getElementById('live-text'), banner = document.getElementById('banner');
 let lastBlock = null, lastBlockAt = 0;
 function setLive(state, text) { live.className = `live ${state}`; liveText.textContent = text; }
-stream.on('block', b => { lastBlock = b; lastBlockAt = Date.now(); setLive('ok', `Live · #${int(b.block)}`); });
+// The pill shows the latest finalized block and how old it is.
+function renderLive() {
+  if (!lastBlock) return;
+  const age = lastBlock.ts ? Math.max(0, Math.round(Date.now() / 1000 - Number(lastBlock.ts))) : null;
+  const delayed = Date.now() - lastBlockAt > 15000;
+  setLive(delayed ? 'warn' : 'ok', `${delayed ? 'Delayed' : 'Live'} · #${int(lastBlock.block)}${age === null ? '' : ` · ${age < 60 ? `${age}s` : `${Math.floor(age / 60)}m`}`}`);
+  live.title = age === null ? 'Latest finalized block' : `Latest finalized block, ${age}s old`;
+}
+stream.on('block', b => { lastBlock = b; lastBlockAt = Date.now(); renderLive(); });
 stream.on('status', s => { if (s !== 'open') setLive('warn', 'Reconnecting…'); });
-setInterval(() => { if (lastBlockAt && Date.now() - lastBlockAt > 15000) setLive('warn', `Delayed · #${int(lastBlock?.block)}`); }, 3000);
+setInterval(renderLive, 1000);
 function showBanner(p) {
   if (!p || (!p.running && !(p.pct < 100 && p.total_blocks !== '0'))) { banner.hidden = true; return; }
   const eta = p.eta_s ? (p.eta_s > 3600 ? `${Math.floor(p.eta_s / 3600)}h ${Math.round(p.eta_s % 3600 / 60)}m` : `${Math.max(1, Math.round(p.eta_s / 60))}m`) : '—';

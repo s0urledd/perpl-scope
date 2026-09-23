@@ -3,7 +3,7 @@
 // hold time, best/worst markets), behaviour notes, trades, round trips, flows.
 import { get } from '../api.js';
 import { usd, usdFull, int, price, pct, num, esc, size, duration, date, dateTime, ago, short } from '../format.js';
-import { kpi, tabs, table, mkt, sideTag, pnl, pctCell, skeleton, skChart, empty, watch, ICON, EXPLORER, toast } from '../ui.js';
+import { kpi, tabs, table, mkt, sideTag, pnl, pctCell, skeleton, skChart, empty, watch, ICON, EXPLORER, toast, chartTools } from '../ui.js';
 import { lineChart, signedBars, COLORS } from '../charts.js';
 
 const TABS = [['overview', 'Overview'], ['positions', 'Positions'], ['trades', 'Trade history'], ['trips', 'Round trips'], ['flows', 'Deposits & withdrawals']];
@@ -12,7 +12,7 @@ const KIND = { open: 'Open', increase: 'Increase', decrease: 'Decrease', close: 
 export function mount(el, { params, query, setQuery, navigate }) {
   const key = params[0];
   let tab = TABS.some(([v]) => v === query.get('tab')) ? query.get('tab') : 'overview';
-  let pnlMode = 'cumulative', data = null, an = null, alive = true, trades = [], next = null;
+  let pnlMode = 'cumulative', data = null, an = null, periods = null, alive = true, trades = [], next = null;
   el.innerHTML = `<div class="stack"><section class="panel"><div class="panel-body" style="padding-top:16px">${skeleton(3)}</div></section><div class="kpis k7">${Array.from({ length: 7 }, () => '<div class="kpi"><div class="skeleton sk-line"></div></div>').join('')}</div>${skChart()}</div>`;
   const $ = s => el.querySelector(`#${s}`);
 
@@ -104,8 +104,10 @@ export function mount(el, { params, query, setQuery, navigate }) {
     if (tab === 'overview') {
       body.innerHTML = `
         ${d.positions.length ? `<div class="panel-head"><h2>Open positions</h2><span class="meta">Contract state at block ${esc(d.meta.block ?? '')}</span></div><div class="panel-body flush">${table({ id: 'pos', columns: POS_COLS, rows: d.positions })}</div>` : ''}
+        <div class="panel-head"><h2>By period</h2><span class="meta">Rolling windows · rank among every account that traded in the window</span></div>
+        <div class="panel-body flush" id="periods">${periods ? periodsTable() : skeleton(4)}</div>
         <div class="grid g-main" style="padding:16px;gap:16px">
-          <section class="panel"><div class="panel-head"><h2>Realized PnL</h2><div class="seg sm"><button data-action="pnl-cum" class="${pnlMode === 'cumulative' ? 'on' : ''}">Cumulative</button><button data-action="pnl-daily" class="${pnlMode === 'daily' ? 'on' : ''}">Daily</button></div></div><div class="panel-body"><div class="chart" id="pnl-chart"></div></div></section>
+          <section class="panel"><div class="panel-head"><h2>Realized PnL</h2><div class="head-right">${chartTools('pnl-chart', `wallet-${d.account.id}-pnl`)}<div class="seg sm"><button data-action="pnl-cum" class="${pnlMode === 'cumulative' ? 'on' : ''}">Cumulative</button><button data-action="pnl-daily" class="${pnlMode === 'daily' ? 'on' : ''}">Daily</button></div></div></div><div class="panel-body"><div class="chart" id="pnl-chart"></div></div></section>
           <section class="panel"><div class="panel-head"><h2>Performance</h2><span class="meta">Closed round trips, net of fees</span></div><div id="perf">${an ? perfPanel(an.performance, d.summary) : perfSkeleton()}</div></section>
         </div>
         <div class="grid g-2" style="padding:0 16px 16px;gap:16px">
@@ -177,6 +179,21 @@ export function mount(el, { params, query, setQuery, navigate }) {
     $('more').hidden = !next;
   }
 
+  const PERIOD_LABEL = { '24h': '24 hours', '7d': '7 days', '30d': '30 days', all: 'All time' };
+  const rankCell = (n, of) => (n ? `<span class="rank-pill${n <= 10 ? ' top' : ''}">#${int(n)}</span><span class="faint"> of ${int(of)}</span>` : '<span class="faint">—</span>');
+  function periodsTable() {
+    return table({ id: 'periods', compact: true, columns: [
+      { key: 'w', label: 'Period', render: r => `${PERIOD_LABEL[r.window] ?? esc(r.window)}${r.coverage_complete ? '' : ' <span class="tag warn" title="History for this window is still being indexed">partial</span>'}` },
+      { key: 'v', label: 'Volume', n: true, render: r => (r.trades ? usd(r.volume) : '<span class="faint">—</span>') },
+      { key: 't', label: 'Trades', n: true, render: r => (r.trades ? int(r.trades) : '<span class="faint">0</span>') },
+      { key: 'p', label: 'Net PnL', n: true, render: r => (r.trades ? pnl(r.net_pnl) : '<span class="faint">—</span>') },
+      { key: 'e', label: 'PnL / volume', n: true, render: r => (r.pnl_per_volume_bps === null || r.pnl_per_volume_bps === undefined ? '<span class="faint">—</span>' : `<span class="${r.pnl_per_volume_bps > 0 ? 'pos' : r.pnl_per_volume_bps < 0 ? 'neg' : ''}">${r.pnl_per_volume_bps > 0 ? '+' : ''}${r.pnl_per_volume_bps.toFixed(1)} bps</span>`) },
+      { key: 'rp', label: 'Rank by PnL', n: true, render: r => rankCell(r.rank?.pnl, r.rank?.of) },
+      { key: 'rv', label: 'Rank by volume', n: true, render: r => rankCell(r.rank?.volume, r.rank?.of) }
+    ], rows: periods.periods });
+  }
+  const loadPeriods = () => get(`wallets/${encodeURIComponent(key)}/periods`, { maxAge: 20000 }).then(p => { if (!alive) return; periods = p; const n = $('periods'); if (n) n.innerHTML = periodsTable(); }).catch(() => { const n = $('periods'); if (n && !periods) n.innerHTML = empty('Period totals unavailable'); });
+
   function insightsHtml() {
     return `<div class="insights">${an.insights.length ? an.insights.map(i => `<div class="insight"><span class="tag accent">${esc(i.tag)}</span><span>${esc(i.text)}</span></div>`).join('') : '<span class="faint">Not enough closed trades yet.</span>'}</div>
       <div class="panel-head" style="min-height:32px;padding-top:0"><h2 style="font-size:12.5px;color:var(--text-2);font-weight:500">Activity by weekday and hour (UTC)</h2></div>${heatmap(an.activity ?? [])}`;
@@ -190,10 +207,10 @@ export function mount(el, { params, query, setQuery, navigate }) {
     if (tab === 'trips' || tab === 'overview') renderTab();
   }
   const loadAnalytics = () => get(`wallets/${encodeURIComponent(key)}/analytics`, { maxAge: 20000 }).then(a => { if (!alive) return; an = a; applyAnalytics(); }).catch(() => {});
-  get(`wallets/${encodeURIComponent(key)}`, { maxAge: 3000 }).then(d => { if (!alive) return; data = d; render(); loadAnalytics(); }).catch(error => {
+  get(`wallets/${encodeURIComponent(key)}`, { maxAge: 3000 }).then(d => { if (!alive) return; data = d; render(); loadAnalytics(); loadPeriods(); }).catch(error => {
     el.innerHTML = `<div class="page-head"><div><div class="sub"><a href="#/traders">Traders</a> / Wallet</div><h1 class="mono">${esc(short(key))}</h1></div></div><section class="panel">${empty(error.status === 404 ? 'No Perpl account for this address yet (accounts appear when their creation block is indexed).' : `Could not load wallet (${error.message})`)}</section>`;
   });
-  const timer = setInterval(() => { if (!data || tab === 'trades') return; get(`wallets/${encodeURIComponent(key)}`, { maxAge: 0 }).then(d => { if (!alive) return; data = d; const scroll = window.scrollY; render(); window.scrollTo({ top: scroll }); loadAnalytics(); }).catch(() => {}); }, 20000);
+  const timer = setInterval(() => { if (!data || tab === 'trades') return; get(`wallets/${encodeURIComponent(key)}`, { maxAge: 0 }).then(d => { if (!alive) return; data = d; const scroll = window.scrollY; render(); window.scrollTo({ top: scroll }); loadAnalytics(); loadPeriods(); }).catch(() => {}); }, 20000);
   return {
     onTab(name, v) { if (name !== 'tab') return; tab = v; el.querySelectorAll('[data-tab="tab"]').forEach(b => b.classList.toggle('on', b.dataset.v === v)); setQuery({ tab: v === 'overview' ? null : v }); },
     onAction(a) {

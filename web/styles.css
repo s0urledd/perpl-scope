@@ -134,6 +134,10 @@ button, input, select { font: inherit; color: inherit; }
 .icon-btn:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
 .icon-btn.on { color: var(--warn); }
 .icon-btn svg { width: 14px; height: 14px; }
+.chart-tools { display: inline-flex; gap: 2px; opacity: 0; transition: opacity 0.15s; }
+.panel:hover .chart-tools, .chart-tools:focus-within { opacity: 1; }
+@media (hover: none) { .chart-tools { opacity: 1; } }
+.head-right { display: flex; align-items: flex-start; gap: 10px; }
 
 /* ---------- KPIs (Nado-style, no boxes) ---------- */
 .kpis { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
@@ -193,6 +197,8 @@ table.t { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tag.warn { color: var(--warn); background: rgba(255, 167, 38, 0.1); }
 .tag.bad { color: var(--short); background: var(--short-soft); }
 .tag.good { color: var(--long); background: var(--long-soft); }
+.rank-pill { display: inline-block; min-width: 34px; padding: 1px 6px; border-radius: 3px; font-size: 11.5px; font-weight: 500; text-align: center; color: var(--text-2); background: rgba(255, 255, 255, 0.06); font-variant-numeric: tabular-nums; }
+.rank-pill.top { color: var(--accent); background: var(--accent-soft); }
 .addr { display: inline-flex; align-items: center; gap: 4px; }
 .addr a { font-family: var(--mono); font-size: 12.5px; }
 .ratio { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: rgba(255, 255, 255, 0.06); min-width: 64px; }

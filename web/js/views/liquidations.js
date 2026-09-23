@@ -2,7 +2,7 @@
 // full feed (on-book liquidations and auto-deleveraging), live.
 import { get, stream } from '../api.js';
 import { usd, int, price, esc, dateTime, ago, num, size } from '../format.js';
-import { kpi, seg, table, mkt, sideTag, addr, pnl, skeleton, skChart, empty, ICON, colorOf, hasColor, OTHER_HEX, assignColors } from '../ui.js';
+import { kpi, seg, table, mkt, sideTag, addr, pnl, skeleton, skChart, empty, ICON, colorOf, hasColor, OTHER_HEX, assignColors, chartTools } from '../ui.js';
 import { stackedBars } from '../charts.js';
 
 const WINDOWS = [['24h', '24H'], ['7d', '7D'], ['30d', '30D'], ['all', 'All']];
@@ -14,7 +14,7 @@ export function mount(el, { query, setQuery }) {
   el.innerHTML = `
     <div class="page-head"><div><h1>Liquidations</h1><div class="sub">Forced closes from exchange events: liquidations on the order book and auto-deleveraging.</div></div><div id="win">${seg('window', WINDOWS, w)}</div></div>
     <div class="stack"><div class="kpis k4" id="kpis"></div>
-      <section class="panel"><div class="panel-head"><h2>Liquidated notional</h2><div class="legend" id="legend"></div></div><div class="panel-body"><div class="chart" id="chart">${skChart()}</div></div></section>
+      <section class="panel"><div class="panel-head"><h2>Liquidated notional</h2><div class="head-right"><div class="legend" id="legend"></div>${chartTools('chart', 'liquidations')}</div></div><div class="panel-body"><div class="chart" id="chart">${skChart()}</div></div></section>
       <section class="panel"><div class="panel-head"><h2>Feed</h2><div style="display:flex;gap:10px;align-items:center"><select id="mf" class="btn ghost" aria-label="Market filter"><option value="">All markets</option></select><a class="btn ghost" id="csv">${ICON.download} CSV</a></div></div><div class="panel-body flush" id="feed">${skeleton(10)}</div></section></div>`;
   const $ = s => el.querySelector(`#${s}`);
   async function load() {

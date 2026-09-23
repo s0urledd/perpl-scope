@@ -2,8 +2,8 @@
 // next to the live tape, the markets table, a grid of trend charts and the
 // latest liquidations and flows.
 import { get, stream } from '../api.js';
-import { usd, compact, int, price, pct, num, esc, timeOnly, ago } from '../format.js';
-import { kpi, seg, table, mkt, sideTag, addr, ratio, pctCell, skeleton, skChart, empty, assignColors, colorOf, hasColor, OTHER_HEX, SLOT_HEX } from '../ui.js';
+import { usd, compact, int, price, pct, num, esc, timeOnly, ago, duration } from '../format.js';
+import { kpi, seg, table, mkt, sideTag, addr, ratio, pctCell, fundingCell, tradeAction, chartTools, skeleton, skChart, empty, assignColors, colorOf, hasColor, OTHER_HEX, SLOT_HEX } from '../ui.js';
 import { sparkline, stackedBars, lineChart, signedBars, toggleSeries, COLORS } from '../charts.js';
 
 const WINDOWS = [['24h', '24H'], ['7d', '7D'], ['30d', '30D'], ['all', 'All']];
@@ -18,7 +18,7 @@ export function mount(el, { query, setQuery }) {
   let minSize = localStorage.getItem('ps.minsize') ?? '100';
   let data = null, series = null, alive = true;
   const tape = [], off = [];
-  const panel = (id, title, desc) => `<section class="panel"><div class="panel-head"><div><h2>${title}</h2><div class="desc">${desc}</div></div><div class="head-value" id="${id}-v"></div></div><div class="panel-body"><div class="chart sm" id="${id}">${skChart()}</div></div></section>`;
+  const panel = (id, title, desc) => `<section class="panel"><div class="panel-head"><div><h2>${title}</h2><div class="desc">${desc}</div></div><div class="head-right">${chartTools(id, id)}<div class="head-value" id="${id}-v"></div></div></div><div class="panel-body"><div class="chart sm" id="${id}">${skChart()}</div></div></section>`;
 
   el.innerHTML = `
     <div class="page-head">
@@ -29,7 +29,7 @@ export function mount(el, { query, setQuery }) {
       <div class="kpis" id="kpis">${Array.from({ length: 6 }, () => '<div class="kpi"><div class="skeleton sk-line" style="width:40%"></div><div class="skeleton" style="height:26px;width:70%;margin-top:10px"></div><div class="skeleton" style="height:28px;margin-top:10px"></div></div>').join('')}</div>
       <div class="grid g-main">
         <section class="panel">
-          <div class="panel-head"><div><h2>Trading volume</h2><div class="desc">Maker-fill notional by market</div></div><div id="vol-mode">${segSm('vol', VOL_MODES, volMode)}</div></div>
+          <div class="panel-head"><div><h2>Trading volume</h2><div class="desc">Maker-fill notional by market</div></div><div class="head-right">${chartTools('main-chart', 'volume')}<div id="vol-mode">${segSm('vol', VOL_MODES, volMode)}</div></div></div>
           <div class="panel-head" style="min-height:0;padding-top:0"><div class="legend toggles" id="legend"></div><span class="meta" id="chart-meta"></span></div>
           <div class="panel-body"><div class="chart" id="main-chart">${skChart()}</div></div>
         </section>
@@ -113,11 +113,17 @@ export function mount(el, { query, setQuery }) {
     stackedBars(node, { times: series.times, series: shown, bucketSeconds: b });
     $('legend').innerHTML = list.map(s => `<button class="lg" data-action="toggle" data-name="${esc(s.name)}"><i style="background:${s.color}"></i>${esc(s.name)}</button>`).join('');
   }
+  // Open interest and TVL are running sums from launch, so they wait for the backfill.
+  let backfill = null;
+  function historyNote() {
+    const p = backfill && !backfill.complete && backfill.pct < 100 ? ` Indexing is ${Math.floor(backfill.pct)}% done${backfill.eta_s ? `, about ${duration(backfill.eta_s)} left` : ''}.` : '';
+    return `A running sum over every event since launch, drawn once history indexing completes.${p}`;
+  }
   function headValue(id, value, note = '') { const n = $(`${id}-v`); if (n) n.innerHTML = `<div class="hv">${value}</div>${note ? `<div class="hn">${note}</div>` : ''}`; }
   function renderTrends() {
     const pts = series.points, times = series.times, b = series.meta.bucket_seconds, h = data.headline, c = data.current;
     const cumulative = series.meta.cumulative_complete;
-    const waitHistory = 'Needs every event since launch; appears when history indexing completes.';
+    const waitHistory = historyNote();
     const oi = $('oi'); oi.innerHTML = '';
     headValue('oi', usd(c?.open_interest), 'now');
     if (cumulative) lineChart(oi, { times, series: [{ name: 'Open interest', color: COLORS.accent, data: pts.map(p => num(p.open_interest)) }], bucketSeconds: b }); else oi.innerHTML = empty(waitHistory);
@@ -146,7 +152,7 @@ export function mount(el, { query, setQuery }) {
     { key: 'volume', label: 'Volume', n: true, cls: 'cell-bar', sort: r => num(r.volume), render: r => `${usd(r.volume)}<span class="track"><i style="width:${Math.max(2, Math.min(100, r.share_pct ?? 0))}%"></i></span>` },
     { key: 'share_pct', label: 'Share', n: true, sort: r => r.share_pct ?? 0, render: r => `<span class="muted">${pct(r.share_pct, { digits: 1 })}</span>` },
     { key: 'open_interest', label: 'Open interest', n: true, sort: r => num(r.open_interest) ?? 0, render: r => usd(r.open_interest) },
-    { key: 'funding', label: 'Funding 8h', n: true, sort: r => r.funding?.rate_8h_pct ?? 0, render: r => (r.funding ? `<span class="${r.funding.rate_8h_pct > 0 ? 'pos' : r.funding.rate_8h_pct < 0 ? 'neg' : 'muted'}">${pct(r.funding.rate_8h_pct, { digits: 4, sign: true })}</span><div class="sub">${pct(r.funding.apr_pct, { digits: 1, sign: true })} APR</div>` : '—') },
+    { key: 'funding', label: 'Funding 8h', n: true, sort: r => r.funding?.rate_8h_pct ?? 0, render: r => fundingCell(r.funding) },
     { key: 'ls', label: 'Long / short', sort: r => r.long_position_share_pct ?? 0, render: r => ratio(r.long_positions, r.short_positions) },
     { key: 'taker_buy_share_pct', label: 'Taker buys', n: true, sort: r => r.taker_buy_share_pct ?? 0, render: r => (r.taker_buy_share_pct === null || r.taker_buy_share_pct === undefined ? '—' : pct(r.taker_buy_share_pct, { digits: 1 })) },
     { key: 'traders', label: 'Traders', n: true, sort: r => r.traders ?? 0, render: r => int(r.traders) },
@@ -166,7 +172,7 @@ export function mount(el, { query, setQuery }) {
     $('tape').innerHTML = table({ id: 'tape', compact: true, columns: [
       { key: 't', label: 'Time', render: r => `<span class="muted num">${timeOnly(r.ts)}</span>` },
       { key: 'm', label: 'Market', render: r => mkt(r.market, r.symbol) },
-      { key: 's', label: 'Side', render: r => `<span class="${r.buy ? 'pos' : 'neg'}">${r.buy ? 'Buy' : 'Sell'}</span>${r.kind === 'liquidation' ? ' <span class="tag bad">Liq</span>' : ''}` },
+      { key: 's', label: 'Action', render: tradeAction },
       { key: 'p', label: 'Price', n: true, render: r => price(r.price) },
       { key: 'v', label: 'Value', n: true, render: r => usd(r.notional) }
     ], rows: rows.slice(0, 60), rowAttrs: r => `class="link ${r.fresh ? 'flash' : ''} ${r.proposed ? 'proposed' : ''}" data-href="#/wallet/${esc(r.address || r.account)}" ${r.proposed ? 'title="Proposed block, not final yet"' : ''}` });
@@ -206,6 +212,14 @@ export function mount(el, { query, setQuery }) {
     tape.length = Math.min(tape.length, 400); renderTape();
   }));
   off.push(stream.on('proposed', p => { for (const r of p.trades) if (!tape.some(x => x.tx === r.tx)) tape.unshift({ ...r, proposed: true, fresh: true }); tape.length = Math.min(tape.length, 400); $('tape-meta').textContent = 'Proposed + finalized blocks'; renderTape(); }));
+  off.push(stream.on('backfill', p => {
+    const finished = backfill && !backfill.complete && p.complete;
+    backfill = p;
+    if (!alive || !series) return;
+    if (finished) get(`protocol/series?window=${w}`, { maxAge: 0 }).then(s => { if (!alive) return; series = s; renderTrends(); }).catch(() => {});
+    else if (!series.meta.cumulative_complete) for (const id of ['oi', 'tvl']) { const n = $(id)?.querySelector('.empty-state'); if (n) n.textContent = historyNote(); }
+  }));
+  get('health', { maxAge: 30000 }).then(h => { backfill = h.index?.backfill ?? null; }).catch(() => {});
   off.push(stream.on('liquidations', () => get('liquidations?limit=8', { maxAge: 0 }).then(l => alive && renderLiqs(l)).catch(() => {})));
   off.push(stream.on('protocol', p => { if (w !== '24h' || !data || !alive) return; data = { ...data, headline: p.headline, current: p.current, markets: data.markets.map(m => { const u = p.markets.find(x => x.id === m.id); return u ? { ...m, mark: u.mark ?? m.mark, volume: u.volume, change_pct: u.change_pct, open_interest: u.open_interest ?? m.open_interest, funding: u.funding ?? m.funding } : m; }) }; renderKpis(); renderMarkets(); }));
   const timer = setInterval(() => { get(`protocol/series?window=${w}`, { maxAge: 0 }).then(s => { if (!alive) return; series = s; renderVolume(); renderTrends(); if (w !== '24h') load().catch(() => {}); }).catch(() => {}); }, 60000);

@@ -9,8 +9,11 @@ export const ICON = {
   ext: '<svg viewBox="0 0 16 16"><path d="M9 3h4v4M13 3L7.5 8.5M11.5 9.5V13H3V4.5h3.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   download: '<svg viewBox="0 0 16 16"><path d="M8 2.5v8M4.5 7L8 10.5 11.5 7M3 13h10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   plus: '<svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
-  x: '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>'
+  x: '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
+  image: '<svg viewBox="0 0 16 16"><rect x="2.5" y="3" width="11" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M2.8 11.2l3.4-3.4 2.6 2.6 1.6-1.6 3 3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><circle cx="10.5" cy="6" r="1.1" fill="currentColor"/></svg>'
 };
+// Download buttons for a chart (shown on hover): its data as CSV, its image as PNG.
+export const chartTools = (chartId, name, { csv = true } = {}) => `<span class="chart-tools">${csv ? `<button class="icon-btn" data-export="csv" data-chart="${esc(chartId)}" data-name="${esc(name)}" title="Download CSV" aria-label="Download CSV">${ICON.download}</button>` : ''}<button class="icon-btn" data-export="png" data-chart="${esc(chartId)}" data-name="${esc(name)}" title="Download PNG" aria-label="Download PNG">${ICON.image}</button></span>`;
 export const EXPLORER = 'https://monadvision.com';
 
 // --- market colours: follow the market, never its rank in a given view ----------
@@ -49,6 +52,23 @@ export function ratio(long, short) {
   return `<div class="ratio-wrap"><div class="ratio"><i class="l" style="width:${lp}%"></i><i class="s" style="width:${100 - lp}%"></i></div><div class="lbl"><span>${lp}% L</span><span>${100 - lp}% S</span></div></div>`;
 }
 export const pnl = v => { const n = num(v); return n === null ? '—' : `<span class="${n > 0 ? 'pos' : n < 0 ? 'neg' : ''}">${usd(v, { sign: true })}</span>`; };
+// What the taker did, from the position event behind the fill. Colour
+// follows direction (buying is green); flips name the new side.
+const VERBS = { open: 'Open', increase: 'Add', decrease: 'Reduce', close: 'Close', invert: 'Flip to', deleverage: 'ADL', unwind: 'Unwind' };
+export function tradeAction(r) {
+  const side = r.side === 'long' || r.side === 'short' ? r.side : '';
+  if (r.kind === 'liquidation') return `<span class="tag bad">Liq</span> <span class="muted">${esc(side)}</span>`;
+  const verb = VERBS[r.kind];
+  return `<span class="${r.buy ? 'pos' : 'neg'}" title="${r.buy ? 'Bought' : 'Sold'} as taker">${verb ? `${verb} ${esc(side)}` : r.buy ? 'Buy' : 'Sell'}</span>`;
+}
+
+// Funding per 8h with its APR; a zero rate is shown quietly.
+export function fundingCell(f, { apr = true } = {}) {
+  const rate = num(f?.rate_8h_pct);
+  if (rate === null) return '<span class="faint">—</span>';
+  if (rate === 0) return '<span class="faint">0%</span>';
+  return `<span class="${rate > 0 ? 'pos' : 'neg'}">${pct(rate, { digits: 4, sign: true })}</span>${apr ? `<div class="sub">${pct(f.apr_pct, { digits: 1, sign: true })} APR</div>` : ''}`;
+}
 export const pctCell = (v, sign = true) => { const n = num(v); return n === null ? '<span class="faint">—</span>' : `<span class="${sign ? (n > 0 ? 'pos' : n < 0 ? 'neg' : '') : ''}">${pct(v, { sign })}</span>`; };
 export const skeleton = (rows = 6) => `<div class="panel-body">${Array.from({ length: rows }, (_, i) => `<div class="skeleton sk-line" style="width:${92 - (i % 3) * 14}%"></div>`).join('')}</div>`;
 export const skChart = () => '<div class="panel-body"><div class="skeleton sk-block"></div></div>';
