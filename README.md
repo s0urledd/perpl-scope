@@ -287,28 +287,10 @@ npm start                     # needs MONAD_RPC_URL and a ClickHouse (see the ru
 | `deploy/` | ClickHouse settings, the Monode sidecar image and its event filter |
 | `docs/` | Architecture, methodology, API, runbook, evidence |
 
-## Built during Metropolis
-
-- This repository started on 12 September 2026, inside the build window
-  (1 September to 13 October 2026). The full commit history is kept.
-- Not built here: the Monad mainnet node Plumb reads from, which we operated
-  before the hackathon, and the third-party components listed below. All
-  code in `src/`, `web/`, `scripts/`, `deploy/` and `test/` was written
-  during the hackathon.
-
 ## AI assistance
 
-The Metropolis rules allow AI coding tools and ask entrants to disclose
-their use. We used Claude Code as a coding assistant for parts of the
-implementation, the tests and the documentation, and to review changes.
-Commits it prepared early in the build carry its name as author in the
-history.
-
-The team decided what Plumb measures and how, and did the work outside the
-editor: we run the Monad node, the execution-event sidecar, the server,
-ClickHouse and the domain; we checked the figures against the exchange
-contract and against Perpl's own numbers; and every change was reviewed
-before it was merged.
+We used Claude Code as a coding assistant for parts of the code, tests and
+docs. Design, infrastructure, data validation and review are the team's.
 
 ## Attribution
 
@@ -335,6 +317,6 @@ before it was merged.
 
 ---
 
-Built by [Huginn](https://huginn.tech) for the Monad Metropolis hackathon.
-Unofficial: not affiliated with or endorsed by Perpl or the Monad
+Built by [Huginn](https://huginn.tech) for the Monad Metropolis hackathon,
+from 12 September 2026. Unofficial: not affiliated with or endorsed by Perpl or the Monad
 Foundation. [MIT licensed](LICENSE).
