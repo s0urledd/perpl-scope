@@ -68,8 +68,8 @@ export function mount(el, { query, setQuery }) {
       </div>
       <div class="section-label">Market share</div>
       <div class="grid g-2" id="landscape-grid">
-        <section class="panel"><div class="panel-head"><div><h2>Among all perps</h2><div class="desc">Open interest by venue</div></div><span class="meta" id="ls-meta"></span></div><div class="panel-body flush" id="ls-all">${skeleton(6)}</div></section>
         <section class="panel"><div class="panel-head"><div><h2>Perps on Monad</h2><div class="desc">Open interest by venue</div></div><span class="meta" id="ls-chain-meta"></span></div><div class="panel-body flush" id="ls-chain">${skeleton(4)}</div></section>
+        <section class="panel"><div class="panel-head"><div><h2>Among all perps</h2><div class="desc">Open interest by venue</div></div><span class="meta" id="ls-meta"></span></div><div class="panel-body flush" id="ls-all">${skeleton(6)}</div></section>
       </div>
     </div>`;
   const $ = id => el.querySelector(`#${id}`);
@@ -166,12 +166,15 @@ export function mount(el, { query, setQuery }) {
     const pts = series.points, times = series.times, b = series.meta.bucket_seconds, h = data.headline, c = data.current;
     const cumulative = series.meta.cumulative_complete;
     const waitHistory = historyNote();
+    // Both axes start at zero, so a 1% move looks like one; the change over the
+    // window is written out in the header instead.
+    const moved = field => { const d = seriesChange(field); return d === undefined ? '' : `<span class="${d > 0 ? 'pos' : d < 0 ? 'neg' : 'faint'}">${d > 0 ? '+' : ''}${d.toFixed(Math.abs(d) < 10 ? 1 : 0)}%</span> over ${w}`; };
     const oi = $('oi'); oi.innerHTML = '';
-    headValue('oi', usd(c?.open_interest));
+    headValue('oi', usd(c?.open_interest), moved('open_interest'));
     if (cumulative) lineChart(oi, { times, series: [{ name: 'Open interest', color: COLORS.accent, data: pts.map(p => num(p.open_interest)) }], bucketSeconds: b }); else oi.innerHTML = empty(waitHistory);
     const tvl = $('tvl'); tvl.innerHTML = '';
-    headValue('tvl', usd(c?.tvl));
-    if (cumulative) lineChart(tvl, { times, series: [{ name: 'TVL', color: SLOT_HEX[0], data: pts.map(p => num(p.tvl)) }], bucketSeconds: b, scale: true }); else tvl.innerHTML = empty(waitHistory);
+    headValue('tvl', usd(c?.tvl), moved('tvl'));
+    if (cumulative) lineChart(tvl, { times, series: [{ name: 'TVL', color: SLOT_HEX[0], data: pts.map(p => num(p.tvl)) }], bucketSeconds: b }); else tvl.innerHTML = empty(waitHistory);
     const flows = $('flows'); flows.innerHTML = '';
     headValue('flows', `<span class="${num(h.net_flow.value) >= 0 ? 'pos' : 'neg'}">${usd(h.net_flow.value, { sign: true })}</span>`, `${usd(h.deposits.value)} in · ${usd(h.withdrawals.value)} out`);
     twoSided(flows, { times, bucketSeconds: b, up: { name: 'Deposits', data: pts.map(p => p.deposits) }, down: { name: 'Withdrawals', data: pts.map(p => p.withdrawals) }, net: 'Net deposits' });
@@ -280,7 +283,8 @@ export function mount(el, { query, setQuery }) {
     const src = `<a href="${esc(l.source.url)}" target="_blank" rel="noopener noreferrer">${esc(l.source.name)}</a>, ${ago(Math.round(l.fetched_at / 1000))}`;
     const bar = (v, share) => `${usd(v)}<span class="track"><i style="width:${Math.max(2, Math.min(100, share ?? 0))}%"></i></span>`;
     const name = r => (r.self || r.name === 'Perpl' ? `<span class="mkt"><img class="tk" src="img/venues/perpl.png" alt="" width="16" height="16"><b>${esc(r.name)}</b></span>` : esc(r.name));
-    const top = [...l.top];
+    // The five largest venues give the scale; Perpl's own row follows them.
+    const top = l.top.slice(0, 5);
     if (l.perpl && l.perpl.rank > top.length) top.push({ rank: l.perpl.rank, name: 'Perpl', oi: l.perpl.oi, share_pct: l.perpl.share_pct });
     $('ls-meta').innerHTML = l.perpl ? `Perpl #${int(l.perpl.rank)} of ${int(l.venues)} · ${pct(l.perpl.share_pct, { digits: 2 })} · ${src}` : src;
     $('ls-all').innerHTML = table({ id: 'ls-all', compact: true, columns: [

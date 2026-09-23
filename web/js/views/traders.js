@@ -2,7 +2,7 @@
 // with open positions from the live contract state.
 import { get } from '../api.js';
 import { usd, int, pct, num, esc } from '../format.js';
-import { seg, table, addr, pnl, ratio, kpi, skeleton, mkt, ICON } from '../ui.js';
+import { seg, table, addr, pnl, kpi, skeleton, mkt, logo, assetOf, ICON } from '../ui.js';
 
 const WINDOWS = [['24h', '24H'], ['7d', '7D'], ['30d', '30D'], ['all', 'All']];
 const SORTS = [['pnl', 'Top PnL'], ['loss', 'Top losses'], ['volume', 'Volume'], ['liquidated', 'Liquidated'], ['fees', 'Fees paid'], ['net_flow', 'Net inflow'], ['deposits', 'Deposits'], ['withdrawals', 'Withdrawals']];
@@ -85,20 +85,44 @@ export function mount(el, { query, setQuery }) {
     ].join('');
   }
 
-  // Cohorts: who holds the open interest, by size or by track record.
+  // Cohorts: who holds the open interest, by size or by track record. One card
+  // per cohort: its direction three ways (label, split bar, long/short $), its
+  // share of all open notional, and where it is positioned. Purple marks
+  // identity; green and red only ever mean long and short.
+  const CO_SHADES = ['#6f5cff', '#8f82ff', '#b3aaff', '#d9d4ff'];
+  const stroke = paths => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
+  const CO_ICON = {
+    // Size tiers: one dot, larger for larger accounts.
+    whale: '<i class="co-dot" style="--d:22px"></i>', dolphin: '<i class="co-dot" style="--d:16px"></i>', fish: '<i class="co-dot" style="--d:11px"></i>', shrimp: '<i class="co-dot" style="--d:7px"></i>',
+    top: stroke('<path d="M3 17h18M4 8l4.5 4.5L12 6l3.5 6.5L20 8l-1.5 9h-13z"/>'),
+    winner: stroke('<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>'),
+    loser: stroke('<path d="M3 7l6 6 4-4 8 8"/><path d="M15 17h6v-6"/>'),
+    rekt: stroke('<path d="M12 3a8 8 0 0 0-5 14.2V20h10v-2.8A8 8 0 0 0 12 3z"/><circle cx="9" cy="12" r="1.3"/><circle cx="15" cy="12" r="1.3"/><path d="M10.5 20v-2M13.5 20v-2"/>')
+  };
+  function biasOf(s) {
+    if (s === null || s === undefined) return ['No positions', 'flat', ''];
+    return s >= 65 ? ['Strong long', 'long', '▲'] : s >= 55 ? ['Long', 'long', '▲'] : s <= 35 ? ['Strong short', 'short', '▼'] : s <= 45 ? ['Short', 'short', '▼'] : ['Neutral', 'flat', '◆'];
+  }
   function renderCohorts() {
     if (!cohorts) return;
     const groups = coTab === 'size' ? cohorts.by_size : cohorts.by_pnl;
-    const bias = g => { const s = g.long_share_pct; if (s === null) return '<span class="faint">—</span>'; const [t, c] = s >= 65 ? ['Strong long', 'pos'] : s >= 55 ? ['Long', 'pos'] : s <= 35 ? ['Strong short', 'neg'] : s <= 45 ? ['Short', 'neg'] : ['Neutral', 'muted']; return `<span class="${c}">${t}</span>`; };
-    $('cohorts').innerHTML = table({ id: 'co', columns: [
-      { key: 'c', label: 'Cohort', render: g => `<b>${esc(g.label)}</b><div class="sub">${esc(g.rule)}</div>` },
-      { key: 'a', label: 'Accounts', n: true, render: g => `${int(g.accounts)}<div class="sub"><span class="pos">${int(g.net_long_accounts)} L</span> · <span class="neg">${int(g.net_short_accounts)} S</span></div>` },
-      { key: 'r', label: 'Long / short notional', render: g => ratio(g.long_notional, g.short_notional) },
-      { key: 'n', label: 'Net', n: true, render: g => (g.accounts ? `<span class="${g.net_notional >= 0 ? 'pos' : 'neg'}">${usd(g.net_notional, { sign: true })}</span><div class="sub">of ${usd(g.long_notional + g.short_notional)}</div>` : '—') },
-      { key: 'b', label: 'Bias', render: bias },
-      { key: 'u', label: 'Unrealized PnL', n: true, render: g => (g.accounts ? `${pnl(g.unrealized_pnl)}<div class="sub">${int(g.in_profit)} of ${int(g.accounts)} in profit</div>` : '—') },
-      { key: 'm', label: 'Main markets', render: g => `<span class="muted">${g.markets.slice(0, 3).map(m => `${esc(m.symbol)} ${m.long >= m.short ? '↑' : '↓'}`).join(' · ') || '—'}</span>` }
-    ], rows: groups, rowAttrs: g => `class="link${coSel === g.key ? ' sel' : ''}" data-action="co-pick" data-key="${esc(g.key)}"` });
+    const held = g => g.long_notional + g.short_notional, all = groups.reduce((a, g) => a + held(g), 0) || 1;
+    // Where the open notional sits, cohort by cohort.
+    const strip = `<div class="co-strip"><div class="co-strip-head"><span>Open notional held</span><span class="faint">${usd(all)} long + short</span></div><div class="co-strip-bar">${groups.map((g, i) => (held(g) > 0 ? `<i style="flex:${held(g)};background:${CO_SHADES[i % CO_SHADES.length]}" title="${esc(g.label)}: ${esc(usd(held(g)))} (${pct(held(g) / all * 100, { digits: 1 })})"></i>` : '')).join('')}</div>
+      <div class="co-strip-keys">${groups.map((g, i) => `<span><i style="background:${CO_SHADES[i % CO_SHADES.length]}"></i>${esc(g.label)} <b>${pct(held(g) / all * 100, { digits: 0 })}</b></span>`).join('')}</div></div>`;
+    const card = (g, i) => {
+      const [label, cls, arrow] = biasOf(g.accounts ? g.long_share_pct : null), l = g.long_share_pct ?? 50;
+      const markets = g.markets.slice(0, 3).map(m => `<span class="co-mk ${m.long >= m.short ? 'long' : 'short'}">${logo(m.market, m.symbol, 14)}${esc(assetOf(m.symbol))}${m.long >= m.short ? '↑' : '↓'}</span>`).join('');
+      return `<button type="button" class="co-card${coSel === g.key ? ' sel' : ''}" data-action="co-pick" data-key="${esc(g.key)}" aria-pressed="${coSel === g.key}">
+        <div class="co-top"><span class="co-ic" style="--shade:${CO_SHADES[i % CO_SHADES.length]}">${CO_ICON[g.key] ?? ''}</span><span class="co-id"><b>${esc(g.label)}</b><span>${esc(g.rule)}</span></span><span class="co-pill ${cls}">${arrow} ${label}</span></div>
+        <div class="co-count"><b>${int(g.accounts)}</b> wallets<span class="co-ls"><span class="pos">${int(g.net_long_accounts)} long</span> · <span class="neg">${int(g.net_short_accounts)} short</span></span></div>
+        <div class="co-bar" title="${pct(l, { digits: 1 })} of this cohort's open notional is long"><i style="width:${g.accounts ? l : 0}%"></i></div>
+        <div class="co-ends"><span class="pos">${usd(g.long_notional)} <small>L</small></span><span class="co-share">${pct(l, { digits: 0 })} long</span><span class="neg"><small>S</small> ${usd(g.short_notional)}</span></div>
+        <div class="co-stats"><span>Net<b class="${g.net_notional >= 0 ? 'pos' : 'neg'}">${usd(g.net_notional, { sign: true })}</b></span><span>uPnL<b>${pnl(g.unrealized_pnl)}</b></span><span>In profit<b>${int(g.in_profit)}/${int(g.accounts)}</b></span></div>
+        <div class="co-mks">${markets || '<span class="faint">No open positions</span>'}</div>
+      </button>`;
+    };
+    $('cohorts').innerHTML = `<div class="panel-body">${strip}<div class="co-grid">${groups.map(card).join('')}</div></div>`;
     $('co-desc').textContent = coTab === 'size' ? 'Open positions now, grouped by each account\'s total open notional · click a cohort for its wallets' : `Grouped by net PnL over indexed history${cohorts.meta?.coverage && !cohorts.meta.coverage.complete ? ' (history still indexing)' : ''}${cohorts.unranked ? ` · ${int(cohorts.unranked)} accounts without indexed trades left out` : ''}`;
     const g = groups.find(x => x.key === coSel);
     $('co-detail').innerHTML = g ? `<div class="panel-head" style="min-height:0;padding-top:12px"><h2 style="font-size:12.5px;color:var(--text-2);font-weight:500">${esc(g.label)}: largest wallets</h2><button class="btn ghost" data-action="co-close">Close</button></div>${table({ id: 'co-top', compact: true, emptyText: 'No accounts', columns: [
