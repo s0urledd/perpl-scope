@@ -405,9 +405,9 @@ select.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px
 .co-card.sel { border-color: var(--accent-strong); box-shadow: 0 0 0 1px var(--accent-strong) inset; }
 .co-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .co-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.co-ic { flex: none; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: rgba(111, 92, 255, 0.16); box-shadow: inset 0 0 0 1px rgba(143, 130, 255, 0.3); color: var(--shade, var(--accent)); }
-.co-ic svg { width: 19px; height: 19px; }
-.co-dot { display: block; width: var(--d); height: var(--d); border-radius: 50%; background: var(--shade, var(--accent-strong)); box-shadow: 0 0 12px rgba(111, 92, 255, 0.45); }
+.co-ic { flex: none; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; background: radial-gradient(circle at 30% 25%, rgba(143, 130, 255, 0.34), rgba(111, 92, 255, 0.12) 70%); box-shadow: inset 0 0 0 1px var(--shade, rgba(143, 130, 255, 0.4)); color: #cfc8ff; }
+.co-ic svg { width: 21px; height: 21px; }
+.co-ic svg[viewBox="0 0 512 512"] { width: 25px; height: 25px; }
 .co-id { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .co-id b { font-size: 14px; font-weight: 600; }
 .co-id span { font-size: 11.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

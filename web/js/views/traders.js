@@ -3,6 +3,7 @@
 import { get } from '../api.js';
 import { usd, int, pct, num, esc } from '../format.js';
 import { seg, table, addr, pnl, kpi, skeleton, mkt, logo, assetOf, ICON } from '../ui.js';
+import { SEA_ICONS } from '../cohort-icons.js';
 
 const WINDOWS = [['24h', '24H'], ['7d', '7D'], ['30d', '30D'], ['all', 'All']];
 const SORTS = [['pnl', 'Top PnL'], ['loss', 'Top losses'], ['volume', 'Volume'], ['liquidated', 'Liquidated'], ['fees', 'Fees paid'], ['net_flow', 'Net inflow'], ['deposits', 'Deposits'], ['withdrawals', 'Withdrawals']];
@@ -92,8 +93,7 @@ export function mount(el, { query, setQuery }) {
   const CO_SHADES = ['#6f5cff', '#8f82ff', '#b3aaff', '#d9d4ff'];
   const stroke = paths => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
   const CO_ICON = {
-    // Size tiers: one dot, larger for larger accounts.
-    whale: '<i class="co-dot" style="--d:22px"></i>', dolphin: '<i class="co-dot" style="--d:16px"></i>', fish: '<i class="co-dot" style="--d:11px"></i>', shrimp: '<i class="co-dot" style="--d:7px"></i>',
+    ...SEA_ICONS, // size tiers: whale, dolphin, fish, shrimp
     top: stroke('<path d="M3 17h18M4 8l4.5 4.5L12 6l3.5 6.5L20 8l-1.5 9h-13z"/>'),
     winner: stroke('<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>'),
     loser: stroke('<path d="M3 7l6 6 4-4 8 8"/><path d="M15 17h6v-6"/>'),
