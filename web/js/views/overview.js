@@ -176,16 +176,19 @@ export function mount(el, { query, setQuery }) {
     headValue('flows', `<span class="${num(h.net_flow.value) >= 0 ? 'pos' : 'neg'}">${usd(h.net_flow.value, { sign: true })}</span>`, `${usd(h.deposits.value)} in · ${usd(h.withdrawals.value)} out`);
     twoSided(flows, { times, bucketSeconds: b, up: { name: 'Deposits', data: pts.map(p => p.deposits) }, down: { name: 'Withdrawals', data: pts.map(p => p.withdrawals) }, net: 'Net deposits' });
     const tp = $('tpnl'); tp.innerHTML = '';
-    const totalPnl = pts.reduce((a, p) => a + (num(p.realized_pnl) ?? 0), 0);
-    headValue('tpnl', `<span class="${totalPnl >= 0 ? 'pos' : 'neg'}">${usd(totalPnl, { sign: true })}</span>`, `${windowLabel()} · net of fees ${usd(totalPnl - (num(h.fees.value) ?? 0), { sign: true })}`);
+    // Header figures come from the window's own totals, not from summing the
+    // chart's buckets; 'after fees' is the Traders page's figure for the same window.
+    const totalPnl = num(h.realized_pnl?.value ?? h.realized_pnl) ?? 0;
+    headValue('tpnl', `<span class="${totalPnl >= 0 ? 'pos' : 'neg'}">${usd(totalPnl, { sign: true })}</span>`, windowLabel());
+    get(`traders/summary?window=${w}`, { maxAge: 20000 }).then(t => { if (alive && t) headValue('tpnl', `<span class="${totalPnl >= 0 ? 'pos' : 'neg'}">${usd(totalPnl, { sign: true })}</span>`, `${windowLabel()} · after fees ${usd(t.net_pnl, { sign: true })}`); }).catch(() => {});
     signedBars(tp, { times, values: pts.map(p => num(p.realized_pnl)), bucketSeconds: b, name: 'Trader realized PnL' });
     const tk = $('taker'); tk.innerHTML = '';
-    const buys = pts.reduce((a, p) => a + (num(p.taker_buy) ?? 0), 0), sells = pts.reduce((a, p) => a + (num(p.taker_sell) ?? 0), 0);
+    const buys = data.markets.reduce((a, m) => a + (num(m.taker_buy) ?? 0), 0), sells = data.markets.reduce((a, m) => a + (num(m.taker_sell) ?? 0), 0);
     headValue('taker', buys + sells ? `${pct(buys / (buys + sells) * 100, { digits: 1 })} buys` : '—', `${usd(buys)} bought · ${usd(sells)} sold`);
     twoSided(tk, { times, bucketSeconds: b, up: { name: 'Taker buys', data: pts.map(p => p.taker_buy) }, down: { name: 'Taker sells', data: pts.map(p => p.taker_sell) }, net: 'Net taker buying' });
     const tr = $('traders'); tr.innerHTML = '';
     headValue('traders', int(h.traders.value), `${w === 'all' ? 'all-time' : w} distinct`);
-    stackedBars(tr, { times, series: [{ name: 'Active traders', color: COLORS.accent, data: pts.map(p => p.traders) }], bucketSeconds: b, fmt: v => int(v), yFmt: v => compact(v, { digits: 0 }) });
+    stackedBars(tr, { times, series: [{ name: 'Active traders', color: COLORS.accent, data: pts.map(p => p.traders) }], bucketSeconds: b, fmt: v => int(v), yFmt: v => (Math.abs(v) >= 1000 ? compact(v, { digits: 1 }) : int(v)) });
     const fees = $('fees'); fees.innerHTML = '';
     headValue('fees', usd(h.fees.value), `${usd(h.protocol_fees.value)} protocol · ${usd(h.insurance_fees.value)} insurance`);
     renderFees();
@@ -211,7 +214,7 @@ export function mount(el, { query, setQuery }) {
   function renderMarkets() {
     const rows = data.markets.filter(m => num(m.volume) > 0 || num(m.open_interest) > 0);
     $('markets').innerHTML = table({ id: 'markets', columns: marketCols(), rows, sortKey: sort.key, sortDir: sort.dir, rowAttrs: r => `class="link" data-href="#/markets/${r.id}"` });
-    $('markets-meta').textContent = `${rows.length} active markets · ${w === 'all' ? 'all-time' : w} activity, live prices and positions`;
+    $('markets-meta').textContent = `${rows.filter(r => r.active !== false).length} active markets · ${w === 'all' ? 'all-time' : w} activity, live prices and positions`;
   }
 
   function renderTape() {

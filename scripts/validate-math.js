@@ -132,7 +132,11 @@ for (const l of events.liquidations.filter(x => block - x.block <= stateWindow).
 report.checks.liquidation_classification = classification;
 
 // 5: funding across the latest completed funding event per market.
-const funding = { events: 0, sumGetterAgree: 0, positionsChecked: 0, premiumAgree: 0, samples: [] };
+// The contract keeps premium PnL as lot × (funding sum now − sum at entry),
+// rounded once; one event's own rounded delta can differ from that difference
+// by one collateral unit (1e-6 USD). Exact matches and matches within one unit
+// are both reported; the gate asks for every position within one unit.
+const funding = { events: 0, sumGetterAgree: 0, positionsChecked: 0, premiumAgree: 0, premiumWithinOneUnit: 0, samples: [] };
 const latestByMarket = new Map();
 for (const f of events.funding) if (f.fundingEventBlock <= block) latestByMarket.set(f.perpId, f);
 funding.errors = 0;
@@ -154,6 +158,7 @@ for (const f of latestByMarket.values()) {
     funding.positionsChecked++;
     const expected = m.fundingPremiumDeltaCNS(p.positionType, f.fundingPaymentPNS, p.lotLNS, exp, entry.units);
     const actual = q.premiumPnlCNS - p.premiumPnlCNS;
+    if (actual - expected <= 1n && expected - actual <= 1n) funding.premiumWithinOneUnit++;
     if (actual === expected) funding.premiumAgree++;
     else if (funding.samples.length < 10) funding.samples.push({ perpId: f.perpId, accountId: p.accountId.toString(), side: p.positionType, lot: p.lotLNS.toString(), payment_pns: f.fundingPaymentPNS.toString(), exp: exp.toString(), expected: expected.toString(), actual: actual.toString() });
   }
@@ -161,7 +166,7 @@ for (const f of latestByMarket.values()) {
 report.checks.funding = funding;
 
 const allOi = oi.every(x => x.matches);
-report.status = allOi && pnl.checked > 0 && (pnl.truncAgree === pnl.checked || pnl.floorAgree === pnl.checked) && classification.healthy === 0 && funding.premiumAgree === funding.positionsChecked ? 'PASS' : 'FAIL';
+report.status = allOi && pnl.checked > 0 && (pnl.truncAgree === pnl.checked || pnl.floorAgree === pnl.checked) && classification.healthy === 0 && funding.premiumWithinOneUnit === funding.positionsChecked ? 'PASS' : 'FAIL';
 report.rpc = reader.stats;
 await mkdir('reports', { recursive: true });
 await writeFile('reports/validation-math.json', str(report));

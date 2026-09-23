@@ -46,7 +46,7 @@ export function mount(el, { params, query, setQuery }) {
     row = p.markets.find(m => m.id === id) ?? null;
     if (!row) { el.querySelector('.stack').innerHTML = empty('Market not found'); return; }
     $('title').innerHTML = `<span class="mkt" style="gap:10px">${logo(id, row.symbol, 24)}${esc(row.symbol)}<span class="muted" style="font-size:14px;font-weight:400;margin-left:2px">${esc(row.name && row.name !== row.symbol ? row.name : 'Perpetual')}</span></span>`;
-    $('subtitle').innerHTML = `Mark <b class="num" style="color:var(--text)">${price(row.mark ?? row.close)}</b> · ${pctCell(row.change_pct)} ${w} · max leverage ${row.max_leverage ? `${row.max_leverage}x` : '—'}${row.active === false ? ' · <span class="tag warn" title="Not open for trading; the mark is the last one the contract holds">inactive · last mark</span>' : ''}`;
+    $('subtitle').innerHTML = `Mark <b class="num" style="color:var(--text)">${price(row.mark ?? row.close)}</b> · ${pctCell(row.change_pct)} ${w} · max leverage ${(row.max_leverage ?? risk?.margin?.max_leverage) ? `${row.max_leverage ?? risk.margin.max_leverage}x` : '—'}${row.active === false ? ' · <span class="tag warn" title="Not open for trading; the mark is the last one the contract holds">inactive · last mark</span>' : ''}`;
     $('kpis').innerHTML = [
       kpi({ label: `Volume ${w}`, value: usd(row.volume), note: `${pct(row.share_pct, { digits: 1 })} of exchange` }),
       kpi({ label: 'Open interest', value: usd(row.open_interest), note: row.oi_cap_pct !== undefined && row.oi_cap_pct !== null ? `${pct(row.oi_cap_pct, { digits: 1 })} of cap` : '' }),
@@ -106,6 +106,8 @@ export function mount(el, { params, query, setQuery }) {
   // Order book: asks above, bids below, each level with its cumulative depth
   // from the touch; the bar width is that depth against the deeper side.
   async function loadBook() {
+    // A delisted market has no book to read.
+    if (row?.active === false) { $('book').innerHTML = empty('No order book: this market is not open for trading'); $('book-meta').textContent = ''; return; }
     const b = await get(`markets/${id}/book`, { maxAge: 10000 }).catch(error => ({ error }));
     if (!alive) return;
     const node = $('book');
@@ -190,9 +192,9 @@ export function mount(el, { params, query, setQuery }) {
     const cutoff = Date.now() / 1000 - 7 * 86400;
     const rows = (f.history ?? []).filter(r => r.ts >= cutoff).slice().reverse();
     const node = $('funding'); node.innerHTML = '';
-    $('f-meta').textContent = f.current ? `Last 7 days · now ${num(f.current.rate_per_interval_pct) === 0 ? '0%' : pct(f.current.rate_per_interval_pct, { digits: 4, sign: true })} per ${f.current.interval_blocks ? `${int(f.current.interval_blocks)} blocks (${duration(f.current.interval_seconds)})` : duration(f.current.interval_seconds)} · next in ${duration(f.current.seconds_to_next)}` : 'Last 7 days';
+    $('f-meta').textContent = row?.active === false ? 'Last 7 days · not open for trading' : f.current ? `Last 7 days · now ${num(f.current.rate_per_interval_pct) === 0 ? '0%' : pct(f.current.rate_per_interval_pct, { digits: 4, sign: true })} per ${f.current.interval_blocks ? `${int(f.current.interval_blocks)} blocks (${duration(f.current.interval_seconds)})` : duration(f.current.interval_seconds)} · next in ${duration(f.current.seconds_to_next)}` : 'Last 7 days';
     if (rows.length) signedBars(node, { times: rows.map(r => r.ts), values: rows.map(r => r.rate_pct), bucketSeconds: 3600, dayTicks: true, name: 'Funding rate', fmt: v => pct(v, { digits: 4, sign: true }), yFmt: v => `${Number(v).toFixed(3)}%` });
-    else node.innerHTML = empty('No funding events indexed yet');
+    else node.innerHTML = empty(row?.active === false ? 'No funding: this market is not open for trading' : 'No funding events in the last 7 days');
   }
   async function loadFeeds() {
     const [t, lb] = await Promise.all([get(`trades?market=${id}&limit=60`, { maxAge: 1000 }), get(`leaderboard?window=${w}&market=${id}&limit=10`)]);
@@ -219,10 +221,11 @@ export function mount(el, { params, query, setQuery }) {
   }
   const off = stream.on('trades', rows => { const mine = rows.filter(r => r.market === id); if (!mine.length) return; tape = [...mine.reverse().map(r => ({ ...r, fresh: true })), ...tape].slice(0, 60); renderTrades(tape); tape.forEach(r => { r.fresh = false; }); });
   const timer = setInterval(() => { loadRisk().catch(() => {}); loadBook().catch(() => {}); if (w === '24h') load().catch(() => {}); }, 20000);
-  loadBook().catch(() => {});
-  load().catch(error => { $('kpis').innerHTML = `<div class="empty-state">${esc(error.message)}</div>`; });
+  // The book and funding panels need the market row (active or not) first.
+  const ready = load();
+  ready.then(() => loadBook()).catch(error => { $('kpis').innerHTML = `<div class="empty-state">${esc(error.message)}</div>`; });
   loadRisk().catch(() => { $('positioning').innerHTML = empty('Live positions unavailable'); $('ladder').innerHTML = empty('Unavailable'); });
-  loadFunding().catch(() => { $('funding').innerHTML = empty('Unavailable'); });
+  ready.catch(() => {}).then(() => loadFunding()).catch(() => { $('funding').innerHTML = empty('Unavailable'); });
   loadFeeds().catch(() => {});
   return {
     onSeg(name, v) { if (name === 'window') setQuery({ window: v === '24h' ? null : v }); },

@@ -15,36 +15,49 @@ export function mount(el, { query, setQuery }) {
     <div class="page-head"><div><h1>Liquidations</h1><div class="sub">Forced closes from exchange events: liquidations on the order book and auto-deleveraging.</div></div><div id="win">${seg('window', WINDOWS, w)}</div></div>
     <div class="stack"><div class="kpis k4" id="kpis"></div>
       <section class="panel"><div class="panel-head"><h2>Liquidated notional</h2><div class="head-right"><div class="legend" id="legend"></div>${chartTools('chart', 'liquidations')}</div></div><div class="panel-body"><div class="chart" id="chart">${skChart()}</div></div></section>
-      <section class="panel"><div class="panel-head"><h2>Feed</h2><div style="display:flex;gap:10px;align-items:center"><select id="mf" class="btn ghost" aria-label="Market filter"><option value="">All markets</option></select><a class="btn ghost" id="csv">${ICON.download} CSV</a></div></div><div class="panel-body flush" id="feed">${skeleton(10)}</div></section></div>`;
+      <section class="panel"><div class="panel-head"><h2>Feed</h2><div style="display:flex;gap:10px;align-items:center"><span class="meta" id="feed-meta"></span><select id="mf" class="btn ghost" aria-label="Market filter"><option value="">All markets</option></select><a class="btn ghost" id="csv">${ICON.download} CSV</a></div></div><div class="panel-body flush" id="feed">${skeleton(10)}</div></section></div>`;
   const $ = s => el.querySelector(`#${s}`);
+  // The feed lists the window's events, newest first, up to FEED_LIMIT.
+  const FEED_LIMIT = 500, PAGE = 50;
+  let feed = [], shown = PAGE;
   async function load() {
-    const [p, s, l] = await Promise.all([get(`protocol?window=${w}`), get(`protocol/series?window=${w}`), get(`liquidations?limit=200${market ? `&market=${market}` : ''}`)]);
+    const mq = market ? `&market=${market}` : '';
+    const [p, s, l] = await Promise.all([get(`protocol?window=${w}`), get(`protocol/series?window=${w}${mq}`), get(`liquidations?limit=${FEED_LIMIT}&window=${w}${mq}`)]);
     if (!alive) return;
     markets = p.markets;
     assignColors([...p.markets].sort((a, b) => num(b.volume) - num(a.volume)).map(m => ({ id: m.id, symbol: m.symbol })));
-    const h = p.headline;
-    // Largest inside the selected window (from the latest 200 rows the feed holds).
-    const span = { '24h': 86400, '7d': 7 * 86400, '30d': 30 * 86400 }[w];
-    const inWindow = span ? l.rows.filter(r => Number(r.ts) >= Date.now() / 1000 - span) : l.rows;
-    const largest = inWindow.reduce((a, r) => (num(r.notional) > num(a?.notional ?? 0) ? r : a), null);
+    const h = p.headline, row = market ? p.markets.find(m => String(m.id) === market) ?? null : null;
+    // A market filter narrows the KPIs and the chart too, not only the feed.
+    const liquidated = row ? row.liquidated : h.liquidated.value, count = row ? row.liquidations : h.liquidations.value, volume = row ? row.volume : h.volume.value;
+    const largest = l.largest ?? null; // the largest inside the window, from the server
     $('kpis').innerHTML = [
-      kpi({ label: `Liquidated ${w}`, value: usd(h.liquidated.value), delta: p.meta.previous_complete === false ? undefined : h.liquidated.change_pct, invert: true, note: `${int(h.liquidations.value)} liquidations` }),
-      kpi({ label: 'Share of volume', value: `${num(h.volume.value) ? (num(h.liquidated.value) / num(h.volume.value) * 100).toFixed(2) : '0.00'}%`, note: `of ${usd(h.volume.value)} traded` }),
-      kpi({ label: 'ADL and force closes', value: int(h.deleverages), note: 'positions closed by the protocol', tip: 'PositionDeleveraged events: auto-deleveraging against a bankrupt position, or a force close at the mark price (flagged on the event).' }),
-      kpi({ label: `Largest · ${w === 'all' ? 'recent' : w}`, value: largest ? usd(largest.notional) : '—', note: largest ? `${esc(largest.symbol)} ${esc(largest.side ?? '')} · ${ago(largest.ts)}` : '' })
+      kpi({ label: `Liquidated · ${w}${row ? ` · ${row.symbol}` : ''}`, value: usd(liquidated), delta: row || w === 'all' || p.meta.previous_complete === false ? undefined : h.liquidated.change_pct, invert: true, note: `${int(count)} liquidations` }),
+      kpi({ label: 'Share of volume', value: `${num(volume) ? (num(liquidated) / num(volume) * 100).toFixed(2) : '0.00'}%`, note: `of ${usd(volume)} traded` }),
+      kpi({ label: 'ADL and force closes', value: int(h.deleverages), note: row ? 'all markets' : 'positions closed by the protocol', tip: 'PositionDeleveraged events: auto-deleveraging against a bankrupt position, or a force close at the mark price (flagged on the event).' }),
+      kpi({ label: `Largest · ${w === 'all' ? 'all-time' : w}`, value: largest ? usd(largest.notional) : '—', note: largest ? `${esc(largest.symbol)} ${esc(largest.side ?? '')} · ${ago(largest.ts)}` : 'none in this window' })
     ].join('');
     const node = $('chart'); node.innerHTML = '';
-    const withLiq = mergeByAsset(s.by_market ?? [], ['liquidated']).filter(m => m.liquidated.some(v => num(v) > 0));
-    const top = withLiq.filter(m => hasColor(m.id)), rest = withLiq.filter(m => !hasColor(m.id));
-    const list = top.map(m => ({ name: m.symbol, color: colorOf(m.id), data: m.liquidated.map(num) }));
-    if (rest.length) list.push({ name: 'Other', color: OTHER_HEX, data: s.times.map((_, i) => rest.reduce((a, m) => a + num(m.liquidated[i]), 0)) });
-    $('legend').innerHTML = list.map(x => `<span><i style="background:${x.color}"></i>${esc(x.name)}</span>`).join('') + '<span><i style="background:#fff;height:2px"></i>Cumulative</span>';
+    let list;
+    if (row) list = [{ name: row.symbol, color: colorOf(row.id), data: s.points.map(x => num(x.liquidated)) }].filter(x => x.data.some(v => v > 0));
+    else {
+      const withLiq = mergeByAsset(s.by_market ?? [], ['liquidated']).filter(m => m.liquidated.some(v => num(v) > 0));
+      const top = withLiq.filter(m => hasColor(m.id)), rest = withLiq.filter(m => !hasColor(m.id));
+      list = top.map(m => ({ name: m.symbol, color: colorOf(m.id), data: m.liquidated.map(num) }));
+      if (rest.length) list.push({ name: 'Other', color: OTHER_HEX, data: s.times.map((_, i) => rest.reduce((a, m) => a + num(m.liquidated[i]), 0)) });
+    }
+    $('legend').innerHTML = list.map(x => `<span><i style="background:${x.color}"></i>${esc(x.name)}</span>`).join('') + (list.length ? '<span><i style="background:#fff;height:2px"></i>Cumulative</span>' : '');
     if (list.length) stackedBars(node, { times: s.times, series: list, bucketSeconds: s.meta.bucket_seconds, cumulative: true, zoom: true }); else node.innerHTML = empty('No liquidations in this window');
-    $('mf').innerHTML = `<option value="">All markets</option>${markets.filter(m => m.liquidations || m.id === Number(market)).map(m => `<option value="${m.id}" ${String(m.id) === market ? 'selected' : ''}>${esc(m.symbol)}</option>`).join('')}`;
-    $('csv').href = `/api/v1/liquidations?limit=500&format=csv${market ? `&market=${market}` : ''}`;
+    // The delisted original and its relisting share a name: the old one says so.
+    $('mf').innerHTML = `<option value="">All markets</option>${markets.filter(m => m.liquidations || m.id === Number(market)).map(m => `<option value="${m.id}" ${String(m.id) === market ? 'selected' : ''}>${esc(m.symbol)}${m.active === false ? ' (inactive)' : ''}</option>`).join('')}`;
+    $('csv').href = `/api/v1/liquidations?limit=${FEED_LIMIT}&window=${w}&format=csv${mq}`;
+    const total = num(count) + (row ? 0 : num(h.deleverages) || 0);
+    $('feed-meta').textContent = l.rows.length >= FEED_LIMIT && total > l.rows.length ? `Latest ${int(l.rows.length)} of ${int(total)} · ${w}` : `${int(l.rows.length)} events · ${w === 'all' ? 'all-time' : w}`;
+    shown = PAGE;
     renderFeed(l.rows);
   }
-  function renderFeed(rows) {
+  // Fifty rows at a time; "Show more" adds the next fifty.
+  function renderFeed(rows = feed) {
+    feed = rows;
     $('feed').innerHTML = table({ id: 'liq', columns: [
       { key: 't', label: 'Time (UTC)', render: r => `<span class="muted num">${dateTime(r.ts)}</span>` },
       { key: 'm', label: 'Market', render: r => mktLink(r.market, r.symbol) },
@@ -57,12 +70,13 @@ export function mount(el, { query, setQuery }) {
       { key: 'n', label: 'Notional', n: true, render: r => usd(r.notional) },
       { key: 'pnl', label: 'Realized', n: true, render: r => pnl(r.pnl) },
       { key: 'rem', label: 'Remaining', n: true, render: r => (num(r.remaining) ? size(r.remaining) : '<span class="faint">closed</span>') }
-    ], rows, rowAttrs: r => `class="link ${r.fresh ? 'flash' : ''}" data-href="#/wallet/${esc(r.address || r.account)}"`, emptyText: 'No liquidations indexed in this range' });
+    ], rows: rows.slice(0, shown), rowAttrs: r => `class="link ${r.fresh ? 'flash' : ''}" data-href="#/wallet/${esc(r.address || r.account)}"`, emptyText: 'No liquidations indexed in this range' }) + (rows.length > shown ? `<div class="panel-foot" style="justify-content:center"><button class="btn ghost" data-action="more">Show more · ${int(Math.min(PAGE, rows.length - shown))} of ${int(rows.length - shown)} left</button></div>` : '');
   }
   $('mf').addEventListener('change', e => setQuery({ market: e.target.value || null }));
-  const off = stream.on('liquidations', () => get(`liquidations?limit=200${market ? `&market=${market}` : ''}`, { maxAge: 0 }).then(l => alive && renderFeed(l.rows.map((r, i) => ({ ...r, fresh: i === 0 })))).catch(() => {}));
+  const off = stream.on('liquidations', () => get(`liquidations?limit=${FEED_LIMIT}&window=${w}${market ? `&market=${market}` : ''}`, { maxAge: 0 }).then(l => alive && renderFeed(l.rows.map((r, i) => ({ ...r, fresh: i === 0 })))).catch(() => {}));
   load().catch(error => { $('feed').innerHTML = empty(error.message); });
   return {
+    onAction(a) { if (a === 'more') { shown += PAGE; renderFeed(); } },
     onSeg(name, v) { if (name === 'window') setQuery({ window: v === '7d' ? null : v }); },
     update(q) { w = WINDOWS.some(([v]) => v === q.get('window')) ? q.get('window') : '7d'; market = q.get('market') ?? ''; $('win').innerHTML = seg('window', WINDOWS, w); load().catch(() => {}); },
     destroy() { alive = false; off(); }

@@ -173,7 +173,7 @@ export function mount(el, { params, query, setQuery, navigate }) {
       const a = r ? 0.18 + 0.82 * Math.min(1, Math.abs(v) / max) : 0;
       const bg = !r ? 'rgba(255,255,255,0.04)' : v >= 0 ? `rgba(129,199,132,${a})` : `rgba(246,90,110,${a})`;
       cells.push(`<i style="background:${bg}" title="${esc(dateText)}${r ? ` · ${esc(usd(v, { sign: true }))} · ${int(r.trades)} trades` : ' · no closed trades'}"></i>`);
-      if ((d - start) % 7 === 0) months.push(new Date(d * 86400000).getUTCDate() <= 7 ? esc(dateText.split(' ')[0]) : '');
+      if ((d - start) % 7 === 0) months.push(d === start || new Date(d * 86400000).getUTCDate() <= 7 ? esc(dateText.split(' ')[0]) : '');
     }
     return `<div class="panel-body"><div class="cal-wrap"><div class="cal-days"><span></span>${['Mon', '', 'Wed', '', 'Fri', '', 'Sun'].map(x => `<span>${x}</span>`).join('')}</div><div><div class="cal-months">${months.map(m => `<span>${m}</span>`).join('')}</div><div class="cal">${cells.join('')}</div></div></div>
       <div class="cal-foot"><span class="pos">${int(green)} green days</span> · <span class="neg">${int(red)} red days</span><span class="faint"> · UTC days, colour scaled to the largest day</span></div></div>`;

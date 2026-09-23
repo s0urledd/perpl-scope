@@ -28,7 +28,7 @@ ranges) at block 106780694. Full report: [evidence/validation-math-2026-09-21.js
 | Paged positions vs open-interest counters, 11 markets | all exact |
 | Log scan 106580694–106780694 (200,000 blocks) | 263 watched logs: 33 liquidations, 230 funding events, 0 diagnostics |
 | Liquidation classification at the event's mark, block − 1 | 1 / 1 with retained state: `liquidatable`, health 99.08 % (BTC, account 3939) |
-| Premium change across latest funding event vs SDK formula | 208 / 208 positions (2 markets with retained state) |
+| Premium change across latest funding event vs SDK formula | 208 / 208 positions (2 markets with retained state); re-run 2026-09-23 on the full index: 575 / 575 within one collateral unit (1e-6 USD), 525 exact. The contract rounds lot × (sum now − sum at entry) once, so one event's own rounded delta can differ by one unit. The dashboard reads premium PnL from the contract, so its figures are unaffected. |
 | `getFundingSumAtBlock` vs emitted `fundingSumPNS` | 2 / 2 where the call succeeded |
 
 Public providers prune historical state: 8 of 10 markets' funding-block reads
