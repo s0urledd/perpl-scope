@@ -18,7 +18,8 @@ export function mount(el, { query, setQuery }) {
       <section class="panel"><div class="panel-head"><h2>Feed</h2><div style="display:flex;gap:10px;align-items:center"><span class="meta" id="feed-meta"></span><select id="mf" class="btn ghost" aria-label="Market filter"><option value="">All markets</option></select><a class="btn ghost" id="csv">${ICON.download} CSV</a></div></div><div class="panel-body flush" id="feed">${skeleton(10)}</div></section></div>`;
   const $ = s => el.querySelector(`#${s}`);
   // The feed lists the window's events, newest first, up to FEED_LIMIT.
-  const FEED_LIMIT = 500;
+  const FEED_LIMIT = 500, PAGE = 50;
+  let feed = [], shown = PAGE;
   async function load() {
     const mq = market ? `&market=${market}` : '';
     const [p, s, l] = await Promise.all([get(`protocol?window=${w}`), get(`protocol/series?window=${w}${mq}`), get(`liquidations?limit=${FEED_LIMIT}&window=${w}${mq}`)]);
@@ -51,9 +52,12 @@ export function mount(el, { query, setQuery }) {
     $('csv').href = `/api/v1/liquidations?limit=${FEED_LIMIT}&window=${w}&format=csv${mq}`;
     const total = num(count) + (row ? 0 : num(h.deleverages) || 0);
     $('feed-meta').textContent = l.rows.length >= FEED_LIMIT && total > l.rows.length ? `Latest ${int(l.rows.length)} of ${int(total)} · ${w}` : `${int(l.rows.length)} events · ${w === 'all' ? 'all-time' : w}`;
+    shown = PAGE;
     renderFeed(l.rows);
   }
-  function renderFeed(rows) {
+  // Fifty rows at a time; "Show more" adds the next fifty.
+  function renderFeed(rows = feed) {
+    feed = rows;
     $('feed').innerHTML = table({ id: 'liq', columns: [
       { key: 't', label: 'Time (UTC)', render: r => `<span class="muted num">${dateTime(r.ts)}</span>` },
       { key: 'm', label: 'Market', render: r => mktLink(r.market, r.symbol) },
@@ -66,12 +70,13 @@ export function mount(el, { query, setQuery }) {
       { key: 'n', label: 'Notional', n: true, render: r => usd(r.notional) },
       { key: 'pnl', label: 'Realized', n: true, render: r => pnl(r.pnl) },
       { key: 'rem', label: 'Remaining', n: true, render: r => (num(r.remaining) ? size(r.remaining) : '<span class="faint">closed</span>') }
-    ], rows, rowAttrs: r => `class="link ${r.fresh ? 'flash' : ''}" data-href="#/wallet/${esc(r.address || r.account)}"`, emptyText: 'No liquidations indexed in this range' });
+    ], rows: rows.slice(0, shown), rowAttrs: r => `class="link ${r.fresh ? 'flash' : ''}" data-href="#/wallet/${esc(r.address || r.account)}"`, emptyText: 'No liquidations indexed in this range' }) + (rows.length > shown ? `<div class="panel-foot" style="justify-content:center"><button class="btn ghost" data-action="more">Show more · ${int(Math.min(PAGE, rows.length - shown))} of ${int(rows.length - shown)} left</button></div>` : '');
   }
   $('mf').addEventListener('change', e => setQuery({ market: e.target.value || null }));
   const off = stream.on('liquidations', () => get(`liquidations?limit=${FEED_LIMIT}&window=${w}${market ? `&market=${market}` : ''}`, { maxAge: 0 }).then(l => alive && renderFeed(l.rows.map((r, i) => ({ ...r, fresh: i === 0 })))).catch(() => {}));
   load().catch(error => { $('feed').innerHTML = empty(error.message); });
   return {
+    onAction(a) { if (a === 'more') { shown += PAGE; renderFeed(); } },
     onSeg(name, v) { if (name === 'window') setQuery({ window: v === '7d' ? null : v }); },
     update(q) { w = WINDOWS.some(([v]) => v === q.get('window')) ? q.get('window') : '7d'; market = q.get('market') ?? ''; $('win').innerHTML = seg('window', WINDOWS, w); load().catch(() => {}); },
     destroy() { alive = false; off(); }
