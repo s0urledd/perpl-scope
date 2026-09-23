@@ -41,7 +41,7 @@ export function setQuery(patch) {
 async function route(queryOnly = false) {
   const { path, query } = parseHash();
   const hit = routes.find(([re]) => re.test(path));
-  document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.getAttribute('href') === `#${path.match(/^\/[a-z]*/)?.[0] ?? '/'}` || (path === '/' && a.dataset.nav === 'overview') || (path.startsWith('/wallet') && a.dataset.nav === 'traders') || (path.startsWith('/markets') && a.dataset.nav === 'markets') || (path.startsWith('/watchlist') && a.dataset.nav === 'alerts')));
+  document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.getAttribute('href') === `#${path.match(/^\/[a-z]*/)?.[0] ?? '/'}` || (path === '/' && a.dataset.nav === 'overview') || ((path.startsWith('/wallet') || path.startsWith('/compare')) && a.dataset.nav === 'traders') || (path.startsWith('/markets') && a.dataset.nav === 'markets') || (path.startsWith('/watchlist') && a.dataset.nav === 'alerts')));
   if (!hit) { view.innerHTML = '<div class="empty-state">Page not found. <a href="#/">Back to overview</a></div>'; return; }
   const params = path.match(hit[0]).slice(1);
   const key = `${hit[0]}:${params.join('/')}`;

@@ -73,7 +73,7 @@ trader anywhere.
 - **Behaviour**: rule-based notes (trading style, holding losers longer than
   winners, typical leverage, active hours) and a weekday × hour activity map.
 - **Watchlist** (on the Alerts page, next to the Telegram bot, with a link
-  per wallet that starts watching it there), **compare** up to five wallets, and a **share card** (a PNG
+  per wallet that starts watching it there), **compare** up to five wallets (from a wallet page or the watchlist), and a **share card** (a PNG
   summary drawn in the browser).
 
 ## Liquidations
