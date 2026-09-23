@@ -1,6 +1,6 @@
 # Runbook
 
-PerplScope is meant to run on the host of a Monad node: logs and state come
+Plumb is meant to run on the host of a Monad node: logs and state come
 from that node, and the execution-events sidecar needs the node's shared
 memory. It also runs against any remote RPC. In that case, wake-ups fall back
 to WebSocket heads or polling.
@@ -20,7 +20,8 @@ to WebSocket heads or polling.
   - `eth_call` at explicit block numbers;
   - `eth_getBlockByNumber('finalized')`;
   - Multicall3 at `0xca11bde05977b3631167028862be2a173976ca11`.
-- History older than the node keeps (about 3 days on a full node) comes from
+- History older than the node keeps (the default `LIVE_HISTORY_BLOCKS` of
+  600,000 blocks is about 2 days at 0.30 s blocks) comes from
   archive endpoints, once. `https://rpc1.monad.xyz` and
   `https://rpc2.monad.xyz` return `blockTimestamp` on logs and accept
   1000-block ranges.
@@ -41,7 +42,7 @@ The app is published on `127.0.0.1:8787` only. Put a TLS reverse proxy in
 front of it. Server-sent events (`/api/v1/stream`) must not be buffered:
 
 ```caddy
-perplscope.example.com {
+plumb.example.com {
 	encode gzip
 	reverse_proxy 127.0.0.1:8787 {
 		flush_interval -1
@@ -65,9 +66,10 @@ location / { proxy_pass http://127.0.0.1:8787; }
 
 ## Execution events (optional, fastest)
 
-With the node's execution event ring enabled, new blocks and Perpl trades
-reach the dashboard within milliseconds of execution. Proposed trades appear
-dimmed and are replaced by the finalized ones. On the node host:
+With the node's execution event ring enabled, Perpl trades from proposed
+blocks reach the live tape within milliseconds of execution. They appear
+dimmed and are replaced by the finalized ones, which follow about a second
+later (see [Freshness](architecture.md#freshness)). On the node host:
 
 1. Huge pages and the ring directory:
    ```bash
@@ -92,18 +94,23 @@ dimmed and are replaced by the finalized ones. On the node host:
 The sidecar is [Monode](https://github.com/monad-developers/monode),
 built from a pinned commit (`deploy/monode/Dockerfile`):
 - it runs in restricted mode, forwarding only block lifecycle events and
-  logs of the Perpl exchange (`deploy/monode/restricted_filters.json`);
+  logs of the Perpl exchange (`deploy/monode/restricted_filters.json`), plus
+  Monode's own unfiltered TPS and top-accesses summaries, which Plumb
+  ignores. The filter names the exchange address: if you change
+  `EXCHANGE_ADDRESS`, change it there too;
 - it mounts the ring directory read-only;
 - it is not published outside the compose network.
 
-When execution restarts, the ring file is replaced. Monode's health check
-then fails and Docker restarts it on the new ring.
+When execution restarts, the ring file is replaced. Monode exits by itself
+after 30 s without events, and Docker's restart policy starts it on the new
+ring.
 
 If Monode cannot read the ring (for example after a node upgrade that
-changes the ring format, until the pinned SDK is updated), PerplScope keeps
-working on the next wake-up source: `MONAD_WS_URL` (`newHeads`, monad-rpc
-with `--ws-enabled`) or polling every `LIVE_POLL_MS`. The status page shows
-which one is active.
+changes the ring format, until the pinned SDK is updated), Plumb keeps
+working: with `MONAD_WS_URL` also set (`newHeads`, monad-rpc with
+`--ws-enabled`), WebSocket heads keep waking the ingest; otherwise it polls
+every `LIVE_POLL_MS`. The status page shows which source woke the last
+step.
 
 ## Configuration
 
@@ -119,7 +126,7 @@ which one is active.
 | `LIVE_HISTORY_BLOCKS` | `600000` | How far back the node serves `eth_getLogs` |
 | `LIVE_LOG_RANGE`, `ARCHIVE_LOG_RANGE` | `1000` | Blocks per `eth_getLogs` request |
 | `LIVE_BACKFILL_CONCURRENCY`, `ARCHIVE_CONCURRENCY` | `4` | Parallel backfill requests per source |
-| `LIVE_POLL_MS` | `400` | Poll interval when no push source is connected |
+| `LIVE_POLL_MS` | `400` | Poll interval when no push source wakes the loop |
 | `LIVE_COMMIT_MS` | `1000` | Minimum interval between live commits |
 | `INGEST_BATCH_ROWS`, `INGEST_BATCH_MS` | `150000`, `3000` | Backfill commit batch |
 | `BACKFILL` | `1` | `0` disables the history backfill |
@@ -128,7 +135,7 @@ which one is active.
 | `ROLLUP_MS` | `60000` | Rollup interval |
 | `PORT`, `HOST` | `8787`, `0.0.0.0` | Listen address (use `127.0.0.1` behind a proxy outside Docker) |
 | `RPC_TIMEOUT_MS`, `RPC_MAX_BYTES` | `30000`, 64 MiB | Ingest RPC limits |
-| `POLL_MS`, `VERIFY_BLOCKS`, `STALE_AFTER_MS` | `2000`, `12000`, `45000` | Contract-state collector |
+| `POLL_MS`, `MIN_POLL_MS`, `VERIFY_BLOCKS`, `STALE_AFTER_MS`, `MAX_BLOCK_AGE_MS` | `2000`, `500`, `12000`, `45000`, `60000` | Contract-state collector: poll timer, minimum gap when a commit wakes it, rescan interval, staleness limits (`MAX_BLOCK_AGE_MS=0` disables the block-age check) |
 | `BOOK_LEVELS`, `BOOK_RANGE_BPS`, `BOOK_REFRESH_MS`, `BOOK_DISABLED` | `40`, `1500`, `30000`, `0` | Order-book walk |
 | `CHECKPOINT_PATH` | `data/checkpoint.json` (`/data/…` in Docker) | Collector checkpoint |
 | `REFERENCE_ENABLED` | `0` | `1` compares contract figures with Perpl's public API (never used for metrics) |
@@ -152,18 +159,26 @@ which one is active.
   - rows of an interrupted commit are removed on start;
   - the collector resumes from its checkpoint when that block is still
     canonical.
-- **Upgrades**: `git pull && docker compose up -d --build`. Schema changes
+- **Upgrades**: `git pull && docker compose up -d --build`. Deployments
+  created before the rename to Plumb run under the compose project
+  `perpl-scope`: keep it with `docker compose -p perpl-scope up -d --build`,
+  otherwise Compose creates new, empty `plumb_*` volumes. An index built by a
+  version before this one lacks the funding settled at position increases
+  and the liquidation fees (see the methodology): re-index to include them.
+  Schema changes
   are additive. A change to rollup definitions bumps `ROLLUP_VERSION`, and
   the rollups are recomputed from the stored events.
 - **Re-index from scratch**: `docker compose down`, remove the
-  `perpl-scope_clickhouse-data` volume, then `docker compose up -d`. Nothing
+  `plumb_clickhouse-data` volume, then `docker compose up -d`. The event
+  history is rebuilt from the chain; the 5-minute contract snapshots behind
+  the risk series are not, and restart empty. Nothing
   else is stored, so there is nothing else to back up.
 
 ## Troubleshooting
 
 | Symptom | Cause and fix |
 | --- | --- |
-| Backfill slow, `rate` errors in `index.backfill.last_error` | Archive rate limits: lower `ARCHIVE_CONCURRENCY` or add another archive |
+| Backfill slow, `rate` errors in `index.backfill.failed[].kind` | Archive rate limits: lower `ARCHIVE_CONCURRENCY` or add another archive |
 | `pruned` errors from the node | `LIVE_HISTORY_BLOCKS` exceeds what the node keeps: lower it so older ranges go to archives |
 | Integrity check fails for a market | An event was missed or misread. Check `index.decoder_checks` (unlinked, mismatches) and the status page, and report it with the block range |
 | Collector `stale (head-stalled)` | The node's finalized head stopped moving: check the node |
@@ -182,4 +197,5 @@ npm run check          # syntax of every file
 npm test               # unit tests (fake exchange, no network)
 CLICKHOUSE_URL=http://127.0.0.1:8123 CLICKHOUSE_PASSWORD=dev npm run test:integration
 npm run validate:math  # formula checks against live contract state
+npm run measure:latency -- 90  # how far behind the chain the running app is (90 s sample)
 ```
