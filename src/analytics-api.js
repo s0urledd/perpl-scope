@@ -591,5 +591,5 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
       return { meta: metaOf({ window: 'all', from, to, coverage: coverageOf(from, to) }), block: state.block.number.toString(), ...t };
     });
   }
-  return { addressesOf: addresses, protocol, series, liquidations, trades, funding, fundingOverview, cohorts, traderSummary, flows, leaderboard, search, profile, walletAnalytics, walletPeriods, walletTrades, compare, integrity, cache, tradeView, tradeViews, rangeOf };
+  return { addressesOf: addresses, resolveAccount: resolve, symbolOf: symbol, protocol, series, liquidations, trades, funding, fundingOverview, cohorts, traderSummary, flows, leaderboard, search, profile, walletAnalytics, walletPeriods, walletTrades, compare, integrity, cache, tradeView, tradeViews, rangeOf };
 }

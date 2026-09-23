@@ -51,7 +51,7 @@ same host the client is the last `X-Forwarded-For` entry.
 
 | Route | Returns |
 | --- | --- |
-| `/api/v1/health` | Liveness (200). Collector snapshot and status. `index.live` (last committed block, commits, errors). `index.backfill` (progress, rate, ETA). `index.coverage` intervals, `index.rollups`, `index.decoder_checks`. `feeds` (execution events, WebSocket heads, SSE clients). Memory |
+| `/api/v1/health` | Liveness (200). Collector snapshot and status. `alerts` (bot username, chats, messages sent) when the Telegram bot runs. `index.live` (last committed block, commits, errors). `index.backfill` (progress, rate, ETA). `index.coverage` intervals, `index.rollups`, `index.decoder_checks`. `feeds` (execution events, WebSocket heads, SSE clients). Memory |
 | `/api/v1/integrity` | Event-derived open interest per market and net collateral flow compared with the contract's counters and balance at the collector's block (available once history is complete) |
 | `/api/v1/stream` | Server-sent events: `block`, `trades`, `proposed`, `liquidations`, `protocol`, `backfill` (see `docs/architecture.md`) |
 

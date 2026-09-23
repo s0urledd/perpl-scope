@@ -3,6 +3,7 @@
 import { esc, short, num, usd, pct, deltaHtml } from './format.js';
 
 export const ICON = {
+  bell: '<svg viewBox="0 0 16 16"><path d="M4 11.5V7a4 4 0 0 1 8 0v4.5l1.2 1.2H2.8zM6.5 13.5a1.5 1.5 0 0 0 3 0" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>',
   star: '<svg viewBox="0 0 16 16"><path d="M8 1.8l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6z" fill="currentColor"/></svg>',
   starOff: '<svg viewBox="0 0 16 16"><path d="M8 1.8l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>',
   copy: '<svg viewBox="0 0 16 16"><rect x="5" y="5" width="8.5" height="8.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M3 10.5V3.8C3 3.1 3.6 2.5 4.3 2.5H10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
@@ -15,6 +16,12 @@ export const ICON = {
 // Download buttons for a chart (shown on hover): its data as CSV, its image as PNG.
 export const chartTools = (chartId, name, { csv = true } = {}) => `<span class="chart-tools">${csv ? `<button class="icon-btn" data-export="csv" data-chart="${esc(chartId)}" data-name="${esc(name)}" title="Download CSV" aria-label="Download CSV">${ICON.download}</button>` : ''}<button class="icon-btn" data-export="png" data-chart="${esc(chartId)}" data-name="${esc(name)}" title="Download PNG" aria-label="Download PNG">${ICON.image}</button></span>`;
 export const EXPLORER = 'https://monadvision.com';
+// Telegram alerts bot (from /health, when the server runs one): deep links
+// open a chat that starts watching the wallet.
+let alertsBot = null, botKnown;
+export const alertsBotReady = new Promise(resolve => { botKnown = resolve; });
+export const setAlertsBot = name => { alertsBot = /^\w{5,32}$/.test(name ?? '') ? name : null; botKnown(); };
+export const alertsLink = address => (alertsBot && /^0x[0-9a-fA-F]{40}$/.test(address ?? '') ? `https://t.me/${alertsBot}?start=watch_${address}` : null);
 
 // --- market colours: follow the market, never its rank in a given view ----------
 const SLOTS = ['var(--c1)', 'var(--c2)', 'var(--c3)', 'var(--c4)', 'var(--c5)', 'var(--c6)'];
