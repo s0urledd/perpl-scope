@@ -74,7 +74,7 @@ export function mount(el, { params, query, setQuery, navigate }) {
     return `<div class="stat-grid">
       ${stat('Closed round trips', int(perf.closed_trips))}${stat('Expectancy / trip', pnl(perf.expectancy))}
       ${stat('Largest win', pnl(perf.largest_win))}${stat('Largest loss', pnl(perf.largest_loss))}
-      ${stat('Best streak', `${int(perf.best_streak)} wins`)}${stat('Worst streak', `${int(perf.worst_streak)} losses`)}
+      ${stat('Best streak', `${int(perf.best_streak)} ${perf.best_streak === 1 ? 'win' : 'wins'}`)}${stat('Worst streak', `${int(perf.worst_streak)} ${perf.worst_streak === 1 ? 'loss' : 'losses'}`)}
       ${stat('Median hold', duration(perf.median_hold_seconds))}${stat('Average hold', duration(perf.average_hold_seconds))}
       ${stat('Winners held', duration(perf.median_win_hold_seconds))}${stat('Losers held', duration(perf.median_loss_hold_seconds))}
       ${stat('Long trips', `${int(perf.long.trips)} · ${perf.long.win_rate_pct === null ? '—' : pct(perf.long.win_rate_pct, { digits: 0 })} win`)}${stat('Short trips', `${int(perf.short.trips)} · ${perf.short.win_rate_pct === null ? '—' : pct(perf.short.win_rate_pct, { digits: 0 })} win`)}
@@ -114,7 +114,7 @@ export function mount(el, { params, query, setQuery, navigate }) {
         <div class="grid g-2" style="padding:0 16px 16px;gap:16px">
           <section class="panel"><div class="panel-head"><h2>Behaviour</h2><span class="meta">Rule-based, from this wallet's trades</span></div>
             <div id="insights">${an ? insightsHtml() : perfSkeleton()}</div></section>
-          <section class="panel"><div class="panel-head"><h2>By market</h2><span class="meta">All-time</span></div><div class="panel-body flush">${table({ id: 'mk', compact: true, columns: [
+          <section class="panel"><div class="panel-head"><h2>By market</h2><span class="meta" title="Volume and net PnL cover the whole indexed history; win rate and trips come from the analysed round trips">Volume, PnL all-time · win rate, trips from analysed trips</span></div><div class="panel-body flush">${table({ id: 'mk', compact: true, columns: [
             { key: 'm', label: 'Market', render: r => mktLink(r.market, r.symbol) },
             { key: 'v', label: 'Volume', n: true, render: r => usd(r.volume) },
             { key: 'p', label: 'Net PnL', n: true, render: r => pnl(r.net_pnl) },
@@ -213,7 +213,11 @@ export function mount(el, { params, query, setQuery, navigate }) {
     if (!node.__chart) node.innerHTML = '';
     if (pnlMode === 'cumulative') {
       const last = num(rows.at(-1).cumulative);
-      lineChart(node, { times: rows.map(r => r.t), series: [{ name: 'Cumulative net PnL', color: last >= 0 ? COLORS.long : COLORS.short, data: rows.map(r => num(r.cumulative)) }], bucketSeconds: 86400, fmt: v => usd(v, { sign: true }) });
+      // One point per calendar day (days without closes carry the total), so gaps look like gaps in time.
+      const byDay = new Map(rows.map(r => [Math.floor(r.t / 86400), num(r.cumulative)]));
+      const times = [], vals = []; let carry = null;
+      for (let d = Math.floor(rows[0].t / 86400); d <= Math.floor(rows.at(-1).t / 86400); d++) { if (byDay.has(d)) carry = byDay.get(d); times.push(d * 86400); vals.push(carry); }
+      lineChart(node, { times, series: [{ name: 'Cumulative net PnL', color: last >= 0 ? COLORS.long : COLORS.short, data: vals }], bucketSeconds: 86400, fmt: v => usd(v, { sign: true }) });
     } else signedBars(node, { times: rows.map(r => r.t), values: rows.map(r => num(r.net_pnl)), bucketSeconds: 86400, name: 'Net PnL' });
   }
   async function loadTrades() {
@@ -242,8 +246,14 @@ export function mount(el, { params, query, setQuery, navigate }) {
       { key: 'rv', label: 'Rank by volume', n: true, render: r => rankCell(r.rank?.volume, r.rank?.of) }
     ], rows: periods.periods });
   }
-  const loadPeriods = () => get(`wallets/${encodeURIComponent(key)}/periods`, { maxAge: 20000 }).then(p => { if (!alive) return; periods = p; const n = $('periods'); if (n) n.innerHTML = periodsTable(); }).catch(() => { const n = $('periods'); if (n && !periods) n.innerHTML = empty('Period totals unavailable'); });
+  const loadPeriods = () => get(`wallets/${encodeURIComponent(key)}/periods`, { maxAge: 20000 }).then(p => { if (!alive) return; periods = p; const n = $('periods'); if (n) n.innerHTML = periodsTable(); markPartial(); }).catch(() => { const n = $('periods'); if (n && !periods) n.innerHTML = empty('Period totals unavailable'); });
 
+  // While history is indexing, the header's all-time figures say so.
+  function markPartial() {
+    const all = periods?.periods?.find(x => x.window === 'all');
+    const sub = el.querySelector('.wallet-id .sub:last-child');
+    if (all && all.coverage_complete === false && sub && !sub.querySelector('.tag')) sub.insertAdjacentHTML('beforeend', ' <span class="tag warn" title="Wallet history is still being indexed; all-time totals will grow">partial history</span>');
+  }
   function insightsHtml() {
     return `<div class="insights">${an.insights.length ? an.insights.map(i => `<div class="insight"><span class="tag accent">${esc(i.tag)}</span><span>${esc(i.text)}</span></div>`).join('') : '<span class="faint">Not enough closed trades yet.</span>'}</div>
       <div class="panel-head" style="min-height:32px;padding-top:0"><h2 style="font-size:12.5px;color:var(--text-2);font-weight:500">Activity by weekday and hour (UTC)</h2></div>${heatmap(an.activity ?? [])}`;

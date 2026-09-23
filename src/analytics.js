@@ -130,7 +130,9 @@ export function insights(perf, rows, { symbol = id => `#${id}` } = {}) {
   const out = [];
   if (!perf.closedTrips) return out;
   const pct = x => `${Math.round(x * 100)}%`;
-  const dur = s => (s < 120 ? `${Math.round(s)}s` : s < 7200 ? `${Math.round(s / 60)}m` : s < 172800 ? `${Math.round(s / 3600)}h` : `${Math.round(s / 86400)}d`);
+  // One unit per range, so two holds read alike ("1.7m vs 4m", not "103s vs 4m").
+  const one = x => (x < 10 ? x.toFixed(1).replace(/.0$/, '') : String(Math.round(x)));
+  const dur = s => (s < 60 ? `${Math.round(s)}s` : s < 3600 ? `${one(s / 60)}m` : s < 172800 ? `${one(s / 3600)}h` : `${Math.round(s / 86400)}d`);
   if (perf.long.trips + perf.short.trips >= 5) {
     const share = perf.long.trips / (perf.long.trips + perf.short.trips);
     if (share >= 0.7) out.push({ tag: 'bias', text: `Long bias: ${pct(share)} of round trips are longs.` });

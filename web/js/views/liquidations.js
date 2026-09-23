@@ -23,12 +23,15 @@ export function mount(el, { query, setQuery }) {
     markets = p.markets;
     assignColors([...p.markets].sort((a, b) => num(b.volume) - num(a.volume)).map(m => m.id));
     const h = p.headline;
-    const largest = l.rows.reduce((a, r) => (num(r.notional) > num(a?.notional ?? 0) ? r : a), null);
+    // Largest inside the selected window (from the latest 200 rows the feed holds).
+    const span = { '24h': 86400, '7d': 7 * 86400, '30d': 30 * 86400 }[w];
+    const inWindow = span ? l.rows.filter(r => Number(r.ts) >= Date.now() / 1000 - span) : l.rows;
+    const largest = inWindow.reduce((a, r) => (num(r.notional) > num(a?.notional ?? 0) ? r : a), null);
     $('kpis').innerHTML = [
-      kpi({ label: `Liquidated ${w}`, value: usd(h.liquidated.value), delta: h.liquidated.change_pct, invert: true, note: `${int(h.liquidations.value)} liquidations` }),
+      kpi({ label: `Liquidated ${w}`, value: usd(h.liquidated.value), delta: p.meta.previous_complete === false ? undefined : h.liquidated.change_pct, invert: true, note: `${int(h.liquidations.value)} liquidations` }),
       kpi({ label: 'Share of volume', value: `${num(h.volume.value) ? (num(h.liquidated.value) / num(h.volume.value) * 100).toFixed(2) : '0.00'}%`, note: `of ${usd(h.volume.value)} traded` }),
       kpi({ label: 'ADL and force closes', value: int(h.deleverages), note: 'positions closed by the protocol', tip: 'PositionDeleveraged events: auto-deleveraging against a bankrupt position, or a force close at the mark price (flagged on the event).' }),
-      kpi({ label: 'Largest (recent)', value: largest ? usd(largest.notional) : '—', note: largest ? `${esc(largest.symbol)} ${esc(largest.side ?? '')} · ${ago(largest.ts)}` : '' })
+      kpi({ label: `Largest · ${w === 'all' ? 'recent' : w}`, value: largest ? usd(largest.notional) : '—', note: largest ? `${esc(largest.symbol)} ${esc(largest.side ?? '')} · ${ago(largest.ts)}` : '' })
     ].join('');
     const node = $('chart'); node.innerHTML = '';
     const withLiq = (s.by_market ?? []).filter(m => m.liquidated.some(v => num(v) > 0));

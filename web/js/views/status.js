@@ -34,7 +34,7 @@ export function mount(el) {
     const live = h.index?.live, b = h.index?.backfill, r = h.index?.rollups, feed = h.feeds;
     const lag = live?.finalized && live?.to ? Number(live.finalized) - Number(live.to) : null;
     const trigger = feed?.exec_events?.connected ? 'execution events' : feed?.heads?.connected ? 'WebSocket heads' : 'polling';
-    $('gen').textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    $('gen').textContent = `Updated ${new Date().toISOString().slice(11, 19)} UTC`;
     $('pipeline').innerHTML = [
       `<div class="stage"><h3>${dot(lag !== null && lag < 10 ? 'ok' : 'warn')}Live ingest</h3><div class="v">#${int(live?.to)}</div><div class="d">${lag === null ? '—' : `${lag} blocks behind finalized`} · woken by ${trigger}</div><div class="d">${int(live?.commits)} commits · ${int(live?.rows)} rows</div></div>`,
       `<div class="stage"><h3>${dot(b?.running ? 'warn' : b?.failed?.length ? 'bad' : 'ok')}History</h3><div class="v">${b?.pct === null || b?.pct === undefined ? '100%' : pct(b.pct, { digits: 1 })}</div><div class="d">${b?.running ? `indexing · ${int(b.rate_blocks_per_s)} blocks/s` : 'complete'} · ${int(h.index?.coverage?.length)} coverage range(s)</div><div class="d">since block ${esc(h.index?.coverage?.[0]?.from ?? '—')}</div></div>`,
