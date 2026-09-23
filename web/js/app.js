@@ -106,18 +106,23 @@ document.addEventListener('keydown', e => { if (e.key === '/' && !['INPUT', 'TEX
 
 // --- live status + banner -----------------------------------------------------------------
 const live = document.getElementById('live'), liveText = document.getElementById('live-text'), banner = document.getElementById('banner');
-let lastBlock = null, lastBlockAt = 0;
+let lastBlock = null, lastBlockAt = 0, streamOpen = true;
 function setLive(state, text) { live.className = `live ${state}`; liveText.textContent = text; }
-// The pill shows the latest finalized block and how old it is.
+// The pill shows the latest finalized block and how old it is. A stream that
+// drops and reconnects within a few seconds (a deploy, a proxy hiccup) keeps
+// the pill steady; it warns only when blocks actually stop arriving.
+const RECONNECT_GRACE_MS = 4000, DELAYED_MS = 15000;
 function renderLive() {
   if (!lastBlock) return;
+  const since = Date.now() - lastBlockAt;
+  if (!streamOpen && since > RECONNECT_GRACE_MS) { setLive('warn', 'Reconnecting…'); return; }
   const age = lastBlock.ts ? Math.max(0, Math.round(Date.now() / 1000 - Number(lastBlock.ts))) : null;
-  const delayed = Date.now() - lastBlockAt > 15000;
-  setLive(delayed ? 'warn' : 'ok', `${delayed ? 'Delayed' : 'Live'} · #${int(lastBlock.block)}${age === null ? '' : ` · ${age < 60 ? `${age}s` : `${Math.floor(age / 60)}m`}`}`);
+  const delayed = since > DELAYED_MS;
+  setLive(delayed ? 'warn' : 'ok', `${delayed ? 'Delayed' : 'Block'} · #${int(lastBlock.block)}${age === null ? '' : ` · ${age < 60 ? `${age}s` : `${Math.floor(age / 60)}m`}`}`);
   live.title = age === null ? 'Latest finalized block' : `Latest finalized block, ${age}s old`;
 }
 stream.on('block', b => { lastBlock = b; lastBlockAt = Date.now(); renderLive(); });
-stream.on('status', s => { if (s !== 'open') setLive('warn', 'Reconnecting…'); });
+stream.on('status', s => { streamOpen = s === 'open'; renderLive(); });
 setInterval(renderLive, 1000);
 function showBanner(p) {
   if (!p || (!p.running && !(p.pct < 100 && p.total_blocks !== '0'))) { banner.hidden = true; return; }
@@ -146,7 +151,7 @@ async function poll() {
   try {
     const h = await get('health', { maxAge: 0 });
     showBanner(h.index?.backfill);
-    if (!lastBlockAt && h.index?.live?.to) setLive('ok', `Live · #${int(h.index.live.to)}`);
+    if (!lastBlockAt && h.index?.live?.to) setLive('ok', `Block · #${int(h.index.live.to)}`);
   } catch { setLive('bad', 'Offline'); }
 }
 poll(); setInterval(poll, 30000);
