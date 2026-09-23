@@ -20,7 +20,7 @@ export const EXPLORER = 'https://monadvision.com';
 // open a chat that starts watching the wallet.
 let alertsBot = null, botKnown;
 export const alertsBotReady = new Promise(resolve => { botKnown = resolve; });
-export const setAlertsBot = name => { alertsBot = /^w{5,32}$/.test(name ?? '') ? name : null; botKnown(); };
+export const setAlertsBot = name => { alertsBot = /^\w{5,32}$/.test(name ?? '') ? name : null; botKnown(); };
 export const alertsLink = address => (alertsBot && /^0x[0-9a-fA-F]{40}$/.test(address ?? '') ? `https://t.me/${alertsBot}?start=watch_${address}` : null);
 
 // --- market colours: follow the market, never its rank in a given view ----------
