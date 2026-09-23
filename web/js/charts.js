@@ -14,8 +14,15 @@ const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(entr
 function init(el) {
   if (!el || !window.echarts) return null;
   let chart = el.__chart;
+  // A view that re-renders clears the node (innerHTML = ''), which detaches
+  // the chart's own DOM: drop that instance and draw a fresh one.
+  if (chart && (chart.isDisposed() || !el.contains(chart.__root))) {
+    try { observer?.unobserve(el); chart.dispose(); } catch { /* already gone */ }
+    registry.delete(chart); chart = null; el.__chart = null;
+  }
   if (!chart) {
     chart = window.echarts.init(el, null, { renderer: 'canvas' });
+    chart.__root = el.lastElementChild; // echarts appends its own root
     el.__chart = chart; registry.add(chart); observer?.observe(el);
   }
   return chart;
@@ -144,6 +151,24 @@ export function signedBars(el, { times, values, bucketSeconds, name = 'Value', f
     ...base(), xAxis, yAxis: valueAxis(yFmt),
     tooltip: { ...base().tooltip, formatter: tooltip(fmt, bucketSeconds) },
     series: [{ name, type: 'bar', data: values.map(v => ({ value: v, itemStyle: { color: (num(v) ?? 0) >= 0 ? T.long : T.short, borderRadius: (num(v) ?? 0) >= 0 ? [2, 2, 0, 0] : [0, 0, 2, 2] } })), barMaxWidth: 18 }]
+  }, true);
+}
+
+// Two-sided bars: inflow above zero, outflow below (drawn negative), with the
+// net per period as a line (deposits vs withdrawals, taker buys vs sells).
+export function twoSided(el, { times, up, down, net = 'Net', bucketSeconds, fmt = v => usd(v, { sign: true }), yFmt = usdAxis }) {
+  const chart = init(el);
+  if (!chart) return;
+  const upData = up.data.map(v => num(v) ?? 0), downData = down.data.map(v => -(num(v) ?? 0));
+  chart.setOption({
+    ...base(), xAxis: timeAxis(times, bucketSeconds), yAxis: valueAxis(yFmt),
+    legend: { show: false, data: [up.name, down.name, net] },
+    tooltip: { ...base().tooltip, formatter: tooltip(fmt, bucketSeconds) },
+    series: [
+      { name: up.name, type: 'bar', stack: 's', data: upData, itemStyle: { color: up.color ?? T.long, borderRadius: [2, 2, 0, 0] }, barMaxWidth: 18 },
+      { name: down.name, type: 'bar', stack: 's', data: downData, itemStyle: { color: down.color ?? T.short, borderRadius: [0, 0, 2, 2] }, barMaxWidth: 18 },
+      { name: net, type: 'line', data: upData.map((v, i) => v + downData[i]), symbol: 'none', lineStyle: { color: '#ffffff', width: 1.25, opacity: 0.75 }, itemStyle: { color: '#ffffff' }, z: 5 }
+    ]
   }, true);
 }
 

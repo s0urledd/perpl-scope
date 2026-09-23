@@ -3,8 +3,8 @@
 // latest liquidations and flows.
 import { get, stream } from '../api.js';
 import { usd, compact, int, price, pct, num, esc, timeOnly, ago, duration } from '../format.js';
-import { kpi, seg, table, mkt, sideTag, addr, ratio, pctCell, fundingCell, fundingTip, tradeAction, chartTools, skeleton, skChart, empty, assignColors, colorOf, hasColor, OTHER_HEX, SLOT_HEX } from '../ui.js';
-import { sparkline, stackedBars, lineChart, signedBars, toggleSeries, COLORS } from '../charts.js';
+import { kpi, seg, table, mkt, sideTag, addr, ratio, pctCell, fundingCell, fundingTip, tradeAction, chartTools, skeleton, skChart, empty, assignColors, colorOf, hasColor, logo, OTHER_HEX, SLOT_HEX } from '../ui.js';
+import { sparkline, stackedBars, lineChart, signedBars, twoSided, toggleSeries, COLORS } from '../charts.js';
 
 const WINDOWS = [['24h', '24H'], ['7d', '7D'], ['30d', '30D'], ['all', 'All']];
 const MIN_SIZES = [['0', 'All'], ['100', '≥$100'], ['1000', '≥$1K'], ['10000', '≥$10K']];
@@ -50,10 +50,12 @@ export function mount(el, { query, setQuery }) {
       <div class="grid g-2">
         ${panel('oi', 'Open interest', 'One side, priced at the last trade')}
         ${panel('tvl', 'TVL', 'Collateral in the exchange contract')}
-        ${panel('flows', 'Net deposits', 'Deposits minus withdrawals per period')}
+        ${panel('flows', 'Deposits and withdrawals', 'Deposits up, withdrawals down; line: net per period')}
         ${panel('traders', 'Active traders', 'Distinct accounts trading per period')}
-        ${panel('fees', 'Fees', 'Protocol and insurance-fund shares')}
+        ${panel('fees', 'Fees', 'Gross fees on fills: protocol share (revenue) and insurance fund')}
         ${panel('liq', 'Liquidations', 'Liquidated notional by market')}
+        ${panel('tpnl', 'Trader PnL', 'Realized PnL of all traders per period (price PnL + funding, before fees)')}
+        ${panel('taker', 'Taker flow', 'Aggressive buys up, sells down; line: net per period')}
       </div>
       <div class="section-label">Activity</div>
       <div class="grid g-3">
@@ -68,6 +70,9 @@ export function mount(el, { query, setQuery }) {
       </div>
     </div>`;
   const $ = id => el.querySelector(`#${id}`);
+  // Every figure says which period it covers: the window, or "now" for state.
+  const windowLabel = () => (w === 'all' ? 'all-time' : w);
+  const BUCKET_NAMES = { 3600: 'hourly', 14400: '4-hour', 86400: 'daily', 604800: 'weekly' };
 
   async function load() {
     const [p, s] = await Promise.all([get(`protocol?window=${w}`), get(`protocol/series?window=${w}`)]);
@@ -93,15 +98,17 @@ export function mount(el, { query, setQuery }) {
   function spark(key, values, color = COLORS.accent) { const node = $(key); if (node && values.some(v => v !== null && v !== undefined)) sparkline(node, values, { color }); }
   function renderKpis() {
     const h = data.headline, c = data.current, pts = series.points;
-    const cov = data.meta.coverage;
+    const cov = data.meta.coverage, wl = windowLabel();
+    // A change against a previous window that is still being indexed would mislead: hide it.
+    const ch = v => (data.meta.previous_complete === false ? undefined : v);
     const partial = cov && !cov.complete ? ' <span class="tag warn" title="History for this window is still being indexed">partial</span>' : '';
     $('kpis').innerHTML = [
-      kpi({ label: `Volume · ${w === 'all' ? 'all-time' : w}`, value: usd(h.volume.value), delta: h.volume.change_pct, note: `${int(data.markets.reduce((a, m) => a + (m.fills ?? 0), 0))} trades${partial}`, spark: 'sp-vol', tip: 'Notional of every match, counted once (the maker side). A trade is one match between a maker and a taker.' }),
-      kpi({ label: 'Open interest', value: usd(c?.open_interest), delta: seriesChange('open_interest'), note: c ? `${int(c.positions)} open positions` : '', spark: 'sp-oi', tip: 'Long notional at the mark price; equal to short notional by construction, so each contract counts once. The change compares the window\'s first and last points of the event-derived series.' }),
-      kpi({ label: 'TVL', value: usd(c?.tvl), delta: seriesChange('tvl'), note: `${usd(h.net_flow.value, { sign: true })} net flow`, spark: 'sp-tvl', tip: 'Collateral held by the exchange contract, read from chain state.' }),
-      kpi({ label: 'Fees', value: usd(h.fees.value), delta: h.fees.change_pct, note: `${usd(h.protocol_fees.value)} to protocol`, spark: 'sp-fees', tip: `Fees charged on fills, gross: ${usd(h.insurance_fees.value)} to the insurance fund and ${usd(h.protocol_fees.value)} protocol share, of which ${usd(h.builder_fees)} went to order builders. Rebates and referral shares are paid outside fills and are not deducted.` }),
-      kpi({ label: 'Active traders', value: int(h.traders.value), delta: h.traders.change_pct, note: `${int(h.new_accounts.value)} new accounts`, spark: 'sp-tr' }),
-      kpi({ label: 'Liquidations', value: usd(h.liquidated.value), delta: h.liquidated.change_pct, invert: true, note: `${int(h.liquidations.value)} liquidations`, spark: 'sp-liq' })
+      kpi({ label: `Volume · ${wl}`, value: usd(h.volume.value), delta: ch(h.volume.change_pct), note: `${int(data.markets.reduce((a, m) => a + (m.fills ?? 0), 0))} trades${partial}`, spark: 'sp-vol', tip: 'Notional of every match, counted once (the maker side). A trade is one match between a maker and a taker.' }),
+      kpi({ label: 'Open interest · now', value: usd(c?.open_interest), delta: seriesChange('open_interest'), note: c ? `${int(c.positions)} open positions` : '', spark: 'sp-oi', tip: 'Long notional at the mark price; equal to short notional by construction, so each contract counts once. The change compares the window\'s first and last points of the event-derived series.' }),
+      kpi({ label: 'TVL · now', value: usd(c?.tvl), delta: seriesChange('tvl'), note: `${usd(h.net_flow.value, { sign: true })} net flow · ${wl}`, spark: 'sp-tvl', tip: 'Collateral held by the exchange contract, read from chain state.' }),
+      kpi({ label: `Fees · ${wl}`, value: usd(h.fees.value), delta: ch(h.fees.change_pct), note: `Revenue ${usd(h.protocol_fees.value)}${w === '24h' ? ` · ${usd((num(h.protocol_fees.value) ?? 0) * 365)} annualized` : ''}`, spark: 'sp-fees', tip: `Fees charged on fills, gross: ${usd(h.insurance_fees.value)} to the insurance fund and ${usd(h.protocol_fees.value)} protocol share, of which ${usd(h.builder_fees)} went to order builders. Rebates and referral shares are paid outside fills and are not deducted.` }),
+      kpi({ label: `Active traders · ${wl}`, value: int(h.traders.value), delta: ch(h.traders.change_pct), note: `${int(h.new_accounts.value)} new accounts`, spark: 'sp-tr' }),
+      kpi({ label: `Liquidations · ${wl}`, value: usd(h.liquidated.value), delta: ch(h.liquidated.change_pct), invert: true, note: `${int(h.liquidations.value)} liquidations`, spark: 'sp-liq' })
     ].join('');
     spark('sp-vol', pts.map(p => num(p.volume)));
     spark('sp-oi', pts.map(p => num(p.open_interest)));
@@ -115,18 +122,20 @@ export function mount(el, { query, setQuery }) {
   function byMarket(metric) {
     const all = (series.by_market ?? []).filter(m => m[metric].some(v => num(v) > 0));
     const top = all.filter(m => hasColor(m.id)), rest = all.filter(m => !hasColor(m.id));
-    const list = top.map(m => ({ name: m.symbol, color: colorOf(m.id), data: m[metric].map(num) }));
+    const list = top.map(m => ({ id: m.id, name: m.symbol, color: colorOf(m.id), data: m[metric].map(num) }));
     if (rest.length) list.push({ name: 'Other', color: OTHER_HEX, data: series.times.map((_, i) => rest.reduce((a, m) => a + num(m[metric][i]), 0)) });
     return list;
   }
+  // The swatch keeps the series colour; the logo (when the asset has one) names it.
+  const legendLogo = s => { if (s.id === undefined) return ''; const html = logo(s.id, s.name, 14); return html.startsWith('<img') ? html : ''; };
   function renderVolume() {
     const node = $('main-chart'), b = series.meta.bucket_seconds;
     node.innerHTML = '';
-    $('chart-meta').textContent = `${series.meta.bucket} periods · UTC`;
+    $('chart-meta').textContent = `${w === 'all' ? 'All-time' : `Last ${w}`} · ${BUCKET_NAMES[b] ?? `${series.meta.bucket}`} bars · UTC`;
     const list = byMarket('volume');
     const shown = volMode === 'bars' ? list : list.map(s => { let run = 0; return { ...s, data: s.data.map(v => (run += v || 0)) }; });
     stackedBars(node, { times: series.times, series: shown, bucketSeconds: b });
-    $('legend').innerHTML = list.map(s => `<button class="lg" data-action="toggle" data-name="${esc(s.name)}"><i style="background:${s.color}"></i>${esc(s.name)}</button>`).join('');
+    $('legend').innerHTML = list.map(s => `<button class="lg" data-action="toggle" data-name="${esc(s.name)}"><i style="background:${s.color}"></i>${legendLogo(s)}${esc(s.name)}</button>`).join('');
   }
   // Open interest and TVL are running sums from launch, so they wait for the backfill.
   let backfill = null;
@@ -147,7 +156,15 @@ export function mount(el, { query, setQuery }) {
     if (cumulative) lineChart(tvl, { times, series: [{ name: 'TVL', color: SLOT_HEX[2], data: pts.map(p => num(p.tvl)) }], bucketSeconds: b, scale: true }); else tvl.innerHTML = empty(waitHistory);
     const flows = $('flows'); flows.innerHTML = '';
     headValue('flows', `<span class="${num(h.net_flow.value) >= 0 ? 'pos' : 'neg'}">${usd(h.net_flow.value, { sign: true })}</span>`, `${usd(h.deposits.value)} in · ${usd(h.withdrawals.value)} out`);
-    signedBars(flows, { times, values: pts.map(p => num(p.net_flow)), bucketSeconds: b, name: 'Net deposits' });
+    twoSided(flows, { times, bucketSeconds: b, up: { name: 'Deposits', data: pts.map(p => p.deposits) }, down: { name: 'Withdrawals', data: pts.map(p => p.withdrawals) }, net: 'Net deposits' });
+    const tp = $('tpnl'); tp.innerHTML = '';
+    const totalPnl = pts.reduce((a, p) => a + (num(p.realized_pnl) ?? 0), 0);
+    headValue('tpnl', `<span class="${totalPnl >= 0 ? 'pos' : 'neg'}">${usd(totalPnl, { sign: true })}</span>`, `${windowLabel()} · net of fees ${usd(totalPnl - (num(h.fees.value) ?? 0), { sign: true })}`);
+    signedBars(tp, { times, values: pts.map(p => num(p.realized_pnl)), bucketSeconds: b, name: 'Trader realized PnL' });
+    const tk = $('taker'); tk.innerHTML = '';
+    const buys = pts.reduce((a, p) => a + (num(p.taker_buy) ?? 0), 0), sells = pts.reduce((a, p) => a + (num(p.taker_sell) ?? 0), 0);
+    headValue('taker', buys + sells ? `${pct(buys / (buys + sells) * 100, { digits: 1 })} buys` : '—', `${usd(buys)} bought · ${usd(sells)} sold`);
+    twoSided(tk, { times, bucketSeconds: b, up: { name: 'Taker buys', data: pts.map(p => p.taker_buy) }, down: { name: 'Taker sells', data: pts.map(p => p.taker_sell) }, net: 'Net taker buying' });
     const tr = $('traders'); tr.innerHTML = '';
     headValue('traders', int(h.traders.value), `${w === 'all' ? 'all-time' : w} distinct`);
     stackedBars(tr, { times, series: [{ name: 'Active traders', color: COLORS.accent, data: pts.map(p => p.traders) }], bucketSeconds: b, fmt: v => int(v), yFmt: v => compact(v, { digits: 0 }) });
@@ -185,7 +202,7 @@ export function mount(el, { query, setQuery }) {
     $('tape-count').textContent = rows.length ? `${int(Math.min(rows.length, 60))} shown` : '';
     if (!rows.length) { $('tape').innerHTML = empty(tape.length ? 'No trades of this size yet' : 'Waiting for trades'); return; }
     $('tape').innerHTML = table({ id: 'tape', compact: true, columns: [
-      { key: 't', label: 'Time', render: r => `<span class="muted num">${timeOnly(r.ts)}</span>` },
+      { key: 't', label: 'Time (UTC)', render: r => `<span class="muted num">${timeOnly(r.ts)}</span>` },
       { key: 'm', label: 'Market', render: r => mkt(r.market, r.symbol) },
       { key: 's', label: 'Action', render: tradeAction },
       { key: 'p', label: 'Price', n: true, render: r => price(r.price) },
@@ -227,7 +244,7 @@ export function mount(el, { query, setQuery }) {
     const ws = data.windows;
     const rows = [['24h', '24 hours'], ['7d', '7 days'], ['30d', '30 days'], ['all', 'All-time']].map(([k, label]) => ({ k, label, ...(ws[k] ?? {}) }));
     $('windows').innerHTML = table({ id: 'win', compact: true, columns: [
-      { key: 'label', label: 'Window', render: r => `${r.label}${r.k === w ? ' <span class="tag accent">shown</span>' : ''}` },
+      { key: 'label', label: 'Window', render: r => `${r.label}${r.k === 'all' && backfill && !backfill.complete ? ' <span class="tag warn" title="History is still being indexed">partial</span>' : ''}${r.k === w ? ' <span class="tag accent">shown</span>' : ''}` },
       { key: 'volume', label: 'Volume', n: true, render: r => usd(r.volume) },
       { key: 'fees', label: 'Fees', n: true, render: r => usd(r.fees) },
       { key: 'traders', label: 'Traders', n: true, render: r => int(r.traders) }
@@ -241,7 +258,7 @@ export function mount(el, { query, setQuery }) {
     if (!alive) return;
     const src = `<a href="${esc(l.source.url)}" target="_blank" rel="noopener noreferrer">${esc(l.source.name)}</a>, ${ago(Math.round(l.fetched_at / 1000))}`;
     const bar = (v, share) => `${usd(v)}<span class="track"><i style="width:${Math.max(2, Math.min(100, share ?? 0))}%"></i></span>`;
-    const name = r => (r.self || r.name === 'Perpl' ? `<b>${esc(r.name)}</b> <span class="tag accent">this</span>` : esc(r.name));
+    const name = r => (r.self || r.name === 'Perpl' ? `<span class="mkt"><img class="tk" src="img/venues/perpl.png" alt="" width="16" height="16"><b>${esc(r.name)}</b></span>` : esc(r.name));
     const top = [...l.top];
     if (l.perpl && l.perpl.rank > top.length) top.push({ rank: l.perpl.rank, name: 'Perpl', oi: l.perpl.oi, share_pct: l.perpl.share_pct });
     $('ls-meta').innerHTML = l.perpl ? `Perpl #${int(l.perpl.rank)} of ${int(l.venues)} · ${pct(l.perpl.share_pct, { digits: 2 })} · ${src}` : src;

@@ -81,6 +81,11 @@ button, input, select { font: inherit; color: inherit; }
 .search-results a { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; border-radius: var(--radius-sm); }
 .search-results a:hover, .search-results a.sel { background: var(--accent-soft); color: var(--text); }
 .search-results .empty { padding: 10px; color: var(--text-3); font-size: 13px; }
+.ticker { display: flex; align-items: center; gap: 7px; height: 30px; padding: 0 11px 0 8px; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; font-variant-numeric: tabular-nums; flex: none; }
+.ticker[hidden] { display: none; }
+.ticker .tk { border-radius: 50%; }
+.ticker .tp { color: var(--text); font-weight: 500; }
+.ticker:hover { border-color: var(--line-2); color: inherit; }
 .live { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 11px; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; color: var(--text-2); flex: none; font-variant-numeric: tabular-nums; }
 .live .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); }
 .live.ok .dot { background: var(--long); box-shadow: 0 0 0 0 rgba(129, 199, 132, 0.6); animation: pulse 2s infinite; }
@@ -116,6 +121,7 @@ button, input, select { font: inherit; color: inherit; }
   .search { min-width: 0; }
   .search kbd { display: none; }
   .live span:last-child { display: none; }
+  .ticker { display: none; }
 }
 @media (max-width: 420px) { .brand-name { display: none; } }
 
@@ -203,6 +209,7 @@ table.t { width: 100%; border-collapse: collapse; font-size: 13px; }
 .rank { color: var(--text-3); width: 36px; font-variant-numeric: tabular-nums; }
 .cell-bar { position: relative; }
 tr.hl td { background: rgba(162, 164, 255, 0.07); }
+.t tbody tr.sel td { background: var(--accent-soft); }
 .cell-bar .track { position: absolute; right: 12px; bottom: 6px; width: 64px; height: 2px; background: rgba(255, 255, 255, 0.07); border-radius: 1px; overflow: hidden; }
 .cell-bar .track > i { position: absolute; right: 0; top: 0; bottom: 0; background: var(--accent); opacity: 0.8; }
 
@@ -251,6 +258,13 @@ tr.inactive td { opacity: 0.5; }
 .insight { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; color: var(--text-2); line-height: 1.5; }
 .insight .tag { flex: none; margin-top: 1px; min-width: 72px; justify-content: center; }
 .heat { display: grid; grid-template-columns: 28px repeat(24, minmax(0, 1fr)); gap: 2px; font-size: 10px; color: var(--text-3); }
+.cal-wrap { display: flex; gap: 6px; overflow-x: auto; }
+.cal-days { display: grid; grid-template-rows: 14px repeat(7, 16px); gap: 3px; font-size: 10px; color: var(--text-3); line-height: 16px; }
+.cal { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 16px); grid-auto-columns: 16px; gap: 3px; }
+.cal i { display: block; width: 16px; height: 16px; border-radius: 3px; }
+.cal-months { display: grid; grid-auto-flow: column; grid-auto-columns: 16px; gap: 3px; font-size: 10px; color: var(--text-3); height: 14px; margin-bottom: 3px; }
+.cal-months span { white-space: nowrap; overflow: visible; }
+.cal-foot { margin-top: 10px; font-size: 12px; }
 .heat i { display: block; height: 14px; border-radius: 2px; background: rgba(162, 164, 255, 0.06); }
 .empty-state { padding: 36px 16px; text-align: center; color: var(--text-3); font-size: 13px; }
 .skeleton { background: linear-gradient(90deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.04)); background-size: 200% 100%; animation: shimmer 1.3s infinite; border-radius: 4px; }
@@ -290,6 +304,8 @@ tr.inactive td { opacity: 0.5; }
 /* panels whose body scrolls inside the row height set by a sibling */
 .panel.fill { display: flex; flex-direction: column; }
 .panel.fill > .scroll { flex: 1 1 0; min-height: 0; overflow: auto; }
+/* Stacked single column: the panel has no row height to fill, so give the list its own. */
+@media (max-width: 1100px) { .panel.fill > .scroll { flex: none; max-height: 460px; } }
 .seg.sm button { padding: 3px 8px; font-size: 11.5px; }
 
 /* section labels with a rule (HyperScreener-style grouping) */
@@ -303,5 +319,6 @@ tr.inactive td { opacity: 0.5; }
 .legend .lg { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: transparent; color: var(--text-2); border-radius: 999px; padding: 2px 9px 2px 7px; font-size: 11.5px; cursor: pointer; }
 .legend .lg:hover { border-color: var(--line-2); color: var(--text); }
 .legend .lg i { width: 8px; height: 8px; border-radius: 2px; }
+.legend .lg .tk { border-radius: 50%; margin-left: -1px; }
 .legend .lg.off { opacity: 0.4; }
 .legend .lg.off i { background: transparent !important; box-shadow: inset 0 0 0 1px var(--text-3); }

@@ -2,21 +2,24 @@
 // with open positions from the live contract state.
 import { get } from '../api.js';
 import { usd, int, pct, num, esc } from '../format.js';
-import { seg, table, addr, pnl, skeleton, mkt, ICON } from '../ui.js';
+import { seg, table, addr, pnl, ratio, skeleton, mkt, ICON } from '../ui.js';
 
 const WINDOWS = [['24h', '24H'], ['7d', '7D'], ['30d', '30D'], ['all', 'All']];
 const SORTS = [['pnl', 'Top PnL'], ['loss', 'Top losses'], ['volume', 'Volume'], ['liquidated', 'Liquidated'], ['fees', 'Fees paid'], ['net_flow', 'Net inflow'], ['deposits', 'Deposits'], ['withdrawals', 'Withdrawals']];
 const FLOW_SORTS = new Set(['net_flow', 'deposits', 'withdrawals']);
+const CO_TABS = [['size', 'By size'], ['pnl', 'By track record']];
 
 export function mount(el, { query, setQuery }) {
   let w = WINDOWS.some(([v]) => v === query.get('window')) ? query.get('window') : '7d';
   let by = SORTS.some(([v]) => v === query.get('by')) ? query.get('by') : 'pnl';
-  let page = 0, alive = true, data = null;
+  let page = 0, alive = true, data = null, cohorts = null, coTab = 'size', coSel = null;
   const LIMIT = 50;
   el.innerHTML = `
-    <div class="page-head"><div><h1>Traders</h1><div class="sub">Accounts that traded in the window, ranked from indexed events (flow rankings: accounts that deposited or withdrew). Net PnL = realized PnL (price PnL + funding) − fees.</div></div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;max-width:100%;min-width:0"><div id="by" style="max-width:100%;min-width:0">${seg('by', SORTS, by)}</div><div id="win">${seg('window', WINDOWS, w)}</div></div></div>
+    <div class="page-head"><div><h1>Traders</h1><div class="sub">Accounts that traded in the window, ranked from indexed events (flow rankings: accounts that deposited or withdrew). Net PnL = realized PnL (price PnL + funding) − fees.</div></div></div>
+    <section class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h2>Positioning by cohort</h2><div class="desc" id="co-desc">Open positions now, grouped by account · click a cohort for its largest wallets</div></div><div id="co-tabs">${seg('co', CO_TABS, coTab)}</div></div>
+      <div class="panel-body flush" id="cohorts">${skeleton(4)}</div><div id="co-detail"></div></section>
     <section class="panel"><div class="panel-head"><h2 id="title">Leaderboard</h2><div style="display:flex;gap:10px;align-items:center"><span class="meta" id="meta"></span><a class="btn ghost" id="csv">${ICON.download} CSV</a></div></div>
+      <div class="panel-head" style="min-height:0;padding-top:0;flex-wrap:wrap;gap:10px"><div id="by" style="max-width:100%;min-width:0">${seg('by', SORTS, by)}</div><div id="win">${seg('window', WINDOWS, w)}</div></div>
       <div class="panel-body flush" id="list">${skeleton(12)}</div>
       <div class="panel-foot"><span id="count"></span><span><button class="btn ghost" data-action="prev">← Prev</button> <button class="btn ghost" data-action="next">Next →</button></span></div></section>`;
   const $ = s => el.querySelector(`#${s}`);
@@ -57,12 +60,40 @@ export function mount(el, { query, setQuery }) {
     $('count').textContent = `${int(data.total)} accounts · showing ${page * LIMIT + 1}–${page * LIMIT + data.rows.length}`;
     $('csv').href = `/api/v1/leaderboard?window=${w}&by=${by}&limit=200&format=csv`;
   }
+  // Cohorts: who holds the open interest, by size or by track record.
+  function renderCohorts() {
+    if (!cohorts) return;
+    const groups = coTab === 'size' ? cohorts.by_size : cohorts.by_pnl;
+    const bias = g => { const s = g.long_share_pct; if (s === null) return '<span class="faint">—</span>'; const [t, c] = s >= 65 ? ['Strong long', 'pos'] : s >= 55 ? ['Long', 'pos'] : s <= 35 ? ['Strong short', 'neg'] : s <= 45 ? ['Short', 'neg'] : ['Neutral', 'muted']; return `<span class="${c}">${t}</span>`; };
+    $('cohorts').innerHTML = table({ id: 'co', columns: [
+      { key: 'c', label: 'Cohort', render: g => `<b>${esc(g.label)}</b><div class="sub">${esc(g.rule)}</div>` },
+      { key: 'a', label: 'Accounts', n: true, render: g => `${int(g.accounts)}<div class="sub"><span class="pos">${int(g.net_long_accounts)} L</span> · <span class="neg">${int(g.net_short_accounts)} S</span></div>` },
+      { key: 'r', label: 'Long / short notional', render: g => ratio(g.long_notional, g.short_notional) },
+      { key: 'n', label: 'Net', n: true, render: g => (g.accounts ? `<span class="${g.net_notional >= 0 ? 'pos' : 'neg'}">${usd(g.net_notional, { sign: true })}</span><div class="sub">of ${usd(g.long_notional + g.short_notional)}</div>` : '—') },
+      { key: 'b', label: 'Bias', render: bias },
+      { key: 'u', label: 'Unrealized PnL', n: true, render: g => (g.accounts ? `${pnl(g.unrealized_pnl)}<div class="sub">${int(g.in_profit)} of ${int(g.accounts)} in profit</div>` : '—') },
+      { key: 'm', label: 'Main markets', render: g => `<span class="muted">${g.markets.slice(0, 3).map(m => `${esc(m.symbol)} ${m.long >= m.short ? '↑' : '↓'}`).join(' · ') || '—'}</span>` }
+    ], rows: groups, rowAttrs: g => `class="link${coSel === g.key ? ' sel' : ''}" data-action="co-pick" data-key="${esc(g.key)}"` });
+    $('co-desc').textContent = coTab === 'size' ? 'Open positions now, grouped by each account\'s total open notional · click a cohort for its wallets' : `Grouped by net PnL over indexed history${cohorts.meta?.coverage && !cohorts.meta.coverage.complete ? ' (history still indexing)' : ''}${cohorts.unranked ? ` · ${int(cohorts.unranked)} accounts without indexed trades left out` : ''}`;
+    const g = groups.find(x => x.key === coSel);
+    $('co-detail').innerHTML = g ? `<div class="panel-head" style="min-height:0;padding-top:12px"><h2 style="font-size:12.5px;color:var(--text-2);font-weight:500">${esc(g.label)}: largest wallets</h2><button class="btn ghost" data-action="co-close">Close</button></div>${table({ id: 'co-top', compact: true, emptyText: 'No accounts', columns: [
+      { key: 'a', label: 'Wallet', render: a => addr(a.address, a.account) },
+      { key: 'n', label: 'Open notional', n: true, render: a => usd(a.notional) },
+      { key: 'd', label: 'Net direction', n: true, render: a => `<span class="${a.net >= 0 ? 'pos' : 'neg'}">${usd(a.net, { sign: true })}</span>` },
+      { key: 'u', label: 'uPnL', n: true, render: a => pnl(a.upnl) },
+      { key: 'p', label: 'Net PnL (history)', n: true, render: a => (a.pnl === null ? '<span class="faint">—</span>' : pnl(a.pnl)) }
+    ], rows: g.top, rowAttrs: a => `class="link" data-href="#/wallet/${esc(a.address || a.account)}"` })}` : '';
+  }
+  const loadCohorts = () => get('cohorts', { maxAge: 5000 }).then(c => { if (!alive) return; cohorts = c; renderCohorts(); }).catch(() => { if (!cohorts) $('cohorts').innerHTML = '<div class="empty-state">Live positions unavailable</div>'; });
+  loadCohorts();
+  const coTimer = setInterval(loadCohorts, 10000);
+
   load().catch(error => { $('list').innerHTML = `<div class="empty-state">${esc(error.message)}</div>`; });
   return {
-    onSeg(name, v) { if (name === 'window') setQuery({ window: v === '7d' ? null : v }); if (name === 'by') setQuery({ by: v === 'pnl' ? null : v }); },
-    onAction(a) { if (a === 'next' && data && (page + 1) * LIMIT < data.total) { page++; load().catch(() => {}); } if (a === 'prev' && page > 0) { page--; load().catch(() => {}); } },
+    onSeg(name, v) { if (name === 'co') { coTab = v; coSel = null; $('co-tabs').innerHTML = seg('co', CO_TABS, coTab); renderCohorts(); return; } if (name === 'window') setQuery({ window: v === '7d' ? null : v }); if (name === 'by') setQuery({ by: v === 'pnl' ? null : v }); },
+    onAction(a, t) { if (a === 'co-pick') { coSel = coSel === t.dataset.key ? null : t.dataset.key; renderCohorts(); return; } if (a === 'co-close') { coSel = null; renderCohorts(); return; } if (a === 'next' && data && (page + 1) * LIMIT < data.total) { page++; load().catch(() => {}); } if (a === 'prev' && page > 0) { page--; load().catch(() => {}); } },
     update(q) { w = WINDOWS.some(([v]) => v === q.get('window')) ? q.get('window') : '7d'; by = SORTS.some(([v]) => v === q.get('by')) ? q.get('by') : 'pnl'; page = 0; $('win').innerHTML = seg('window', WINDOWS, w); $('by').innerHTML = seg('by', SORTS, by); load().catch(() => {}); },
-    destroy() { alive = false; }
+    destroy() { alive = false; clearInterval(coTimer); }
   };
 }
 export { mkt };

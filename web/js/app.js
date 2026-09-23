@@ -1,8 +1,8 @@
 // Shell: hash router, header (search, live status), event delegation, the
 // server-sent event stream and the indexing banner.
 import { get, stream } from './api.js';
-import { esc, short, int, dateTime } from './format.js';
-import { watch, toast, ICON, assignColors, download } from './ui.js';
+import { esc, short, int, dateTime, price } from './format.js';
+import { watch, toast, ICON, assignColors, download, logo } from './ui.js';
 import { disposeAll, chartCsv, chartPng } from './charts.js';
 
 const routes = [
@@ -126,6 +126,22 @@ function showBanner(p) {
   banner.innerHTML = `<div class="banner-inner"><b>Indexing Perpl history</b><div class="bar"><i style="width:${Math.min(100, p.pct ?? 0)}%"></i></div><span class="num">${(p.pct ?? 0).toFixed(1)}% · ETA ${eta}</span><span class="faint">Recent windows are complete; longer windows fill in as blocks are indexed.</span></div>`;
 }
 stream.on('backfill', showBanner);
+
+// MON price in the header: the mark of Perpl's MON market (chain state, not an
+// external feed), refreshed by every protocol push.
+const ticker = document.getElementById('ticker');
+function renderTicker(markets) {
+  const m = markets?.find(x => String(x.symbol).toUpperCase() === 'MON');
+  const p = m?.mark ?? m?.close;
+  if (!m || p === null || p === undefined) return;
+  const ch = Number(m.change_pct);
+  ticker.hidden = false;
+  ticker.href = `#/markets/${m.id}`;
+  ticker.title = 'MON mark price on Perpl · change over 24 hours';
+  ticker.innerHTML = `${logo(m.id, 'MON', 16)}<span class="tp">$${esc(price(p))}</span>${Number.isFinite(ch) ? `<span class="${ch > 0 ? 'pos' : ch < 0 ? 'neg' : 'faint'}">${ch > 0 ? '+' : ''}${ch.toFixed(2)}%</span>` : ''}`;
+}
+stream.on('protocol', p => renderTicker(p.markets));
+get('protocol?window=24h', { maxAge: 5000 }).then(p => renderTicker(p.markets)).catch(() => {});
 async function poll() {
   try {
     const h = await get('health', { maxAge: 0 });
