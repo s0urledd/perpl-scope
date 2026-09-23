@@ -225,11 +225,11 @@ export function mount(el, { query, setQuery }) {
   // starting to its finalization; a dimmed row's tooltip gives its own stage.
   const finalMs = [];
   const secs = ms => `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1)} s`;
-  const stageTitle = r => (r.votedMs !== undefined ? `Proposed block, voted ${secs(r.votedMs)} after it started; final soon` : 'Proposed block, not final yet');
+  const stageTitle = r => (r.votedMs !== undefined ? `Proposed block, voted ${secs(r.votedMs)} after it started executing; final soon` : 'Proposed block, not final yet');
   function renderSpeed() {
     if (!finalMs.length) return;
     const sorted = [...finalMs].sort((a, b) => a - b), mid = sorted[Math.floor(sorted.length / 2)];
-    $('tape-meta').innerHTML = `Proposed → final <b class="num" title="Median time from a block starting to its finalization, over the last ${sorted.length} blocks with Perpl trades">${secs(mid)}</b> · UTC`;
+    $('tape-meta').innerHTML = `Proposed → final <b class="num" title="Median time from a proposed block starting to execute to its finalization, as seen from the Monad node Plumb reads; last ${sorted.length} blocks with Perpl trades">${secs(mid)}</b> · UTC`;
   }
   function renderTape() {
     const min = Number(minSize);
