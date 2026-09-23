@@ -85,8 +85,8 @@ export function mount(el, { params, query, setQuery }) {
     const cutoff = Date.now() / 1000 - 7 * 86400;
     const rows = (f.history ?? []).filter(r => r.ts >= cutoff).slice().reverse();
     const node = $('funding'); node.innerHTML = '';
-    $('f-meta').textContent = f.current ? `Now ${pct(f.current.rate_per_interval_pct, { digits: 4, sign: true })} per ${duration(f.current.interval_seconds)} · next in ${duration(f.current.seconds_to_next)}` : '';
-    if (rows.length) signedBars(node, { times: rows.map(r => r.ts), values: rows.map(r => r.rate_pct), bucketSeconds: 3600, name: 'Funding rate', fmt: v => pct(v, { digits: 4, sign: true }), yFmt: v => `${Number(v).toFixed(3)}%` });
+    $('f-meta').textContent = f.current ? `Now ${num(f.current.rate_per_interval_pct) === 0 ? '0%' : pct(f.current.rate_per_interval_pct, { digits: 4, sign: true })} per ${duration(f.current.interval_seconds)} · next in ${duration(f.current.seconds_to_next)}` : '';
+    if (rows.length) signedBars(node, { times: rows.map(r => r.ts), values: rows.map(r => r.rate_pct), bucketSeconds: 3600, dayTicks: true, name: 'Funding rate', fmt: v => pct(v, { digits: 4, sign: true }), yFmt: v => `${Number(v).toFixed(3)}%` });
     else node.innerHTML = empty('No funding events indexed yet');
   }
   async function loadFeeds() {

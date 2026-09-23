@@ -66,6 +66,8 @@ const timeAxis = (times, bucketSeconds) => ({
   axisLine: { lineStyle: { color: T.axis } }, axisTick: { show: false },
   axisLabel: { color: T.faint, hideOverlap: true, formatter: v => timeLabel(v, bucketSeconds), margin: 10 }
 });
+// 1, 2, 2.5 or 5 times a power of ten, at or above v.
+const niceCeil = v => { const p = 10 ** Math.floor(Math.log10(v)); return [1, 2, 2.5, 5, 10].map(k => k * p).find(x => x >= v); };
 // Axis money: $1.5M, $900K, $0.
 export const usdAxis = v => { const n = Number(v); if (!n) return '$0'; const a = Math.abs(n); const [k, u] = a >= 1e9 ? [1e9, 'B'] : a >= 1e6 ? [1e6, 'M'] : a >= 1e3 ? [1e3, 'K'] : [1, '']; const x = a / k; return `${n < 0 ? '-' : ''}$${x >= 100 || Number.isInteger(x) ? Math.round(x) : x.toFixed(1).replace(/\.0$/, '')}${u}`; };
 const valueAxis = fmt => ({ type: 'value', splitNumber: 4, axisLabel: { color: T.faint, formatter: fmt, margin: 10 }, splitLine: { lineStyle: { color: T.grid } }, axisLine: { show: false }, axisTick: { show: false } });
@@ -115,11 +117,17 @@ export function lineChart(el, { times, series, bucketSeconds, fmt = v => usd(v),
 }
 
 // Positive values green, negative red (net flows, daily PnL).
-export function signedBars(el, { times, values, bucketSeconds, name = 'Value', fmt = v => usd(v, { sign: true }), yFmt = usdAxis }) {
+// dayTicks: irregular event times (funding) get one date label per UTC day.
+export function signedBars(el, { times, values, bucketSeconds, name = 'Value', fmt = v => usd(v, { sign: true }), yFmt = usdAxis, dayTicks = false }) {
   const chart = init(el);
   if (!chart) return;
+  const xAxis = timeAxis(times, bucketSeconds);
+  if (dayTicks) {
+    const day = t => Math.floor(Number(t) / 86400);
+    xAxis.axisLabel = { ...xAxis.axisLabel, interval: 0, hideOverlap: false, formatter: (v, i) => (i === 0 || day(times[i - 1]) !== day(v) ? timeLabel(day(v) * 86400, 86400) : '') };
+  }
   chart.setOption({
-    ...base(), xAxis: timeAxis(times, bucketSeconds), yAxis: valueAxis(yFmt),
+    ...base(), xAxis, yAxis: valueAxis(yFmt),
     tooltip: { ...base().tooltip, formatter: tooltip(fmt, bucketSeconds) },
     series: [{ name, type: 'bar', data: values.map(v => ({ value: v, itemStyle: { color: (num(v) ?? 0) >= 0 ? T.long : T.short, borderRadius: (num(v) ?? 0) >= 0 ? [2, 2, 0, 0] : [0, 0, 2, 2] } })), barMaxWidth: 18 }]
   }, true);
@@ -178,10 +186,13 @@ export function hbars(el, { labels, values, colors, fmt = v => usd(v) }) {
 export function mirrored(el, { labels, long, short, fmt = v => usd(v) }) {
   const chart = init(el);
   if (!chart) return;
+  const peak = Math.max(0, ...long.map(v => num(v) ?? 0), ...short.map(v => num(v) ?? 0));
+  const edge = peak > 0 ? niceCeil(peak * 1.05) : 1;
   chart.setOption({
-    ...base(), grid: { left: 8, right: 12, top: 26, bottom: 6, containLabel: true },
+    ...base(), grid: { left: 8, right: 28, top: 26, bottom: 6, containLabel: true },
     legend: { top: 0, right: 0, itemWidth: 8, itemHeight: 8, textStyle: { color: T.text }, data: ['Longs liquidated (price down)', 'Shorts liquidated (price up)'] },
-    xAxis: { type: 'value', axisLabel: { color: T.faint, formatter: v => usdAxis(Math.abs(v)) }, splitLine: { lineStyle: { color: T.grid } } },
+    // Symmetric around zero so both sides read on the same scale.
+    xAxis: { type: 'value', min: -edge, max: edge, axisLabel: { color: T.faint, hideOverlap: true, formatter: v => usdAxis(Math.abs(v)) }, splitLine: { lineStyle: { color: T.grid } } },
     yAxis: { type: 'category', data: labels, inverse: true, axisTick: { show: false }, axisLine: { lineStyle: { color: T.axis } }, axisLabel: { color: T.text } },
     tooltip: { ...base().tooltip, trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: ps => `<div style="color:${T.faint};margin-bottom:4px">Price moves ${ps[0].axisValue}</div>` + ps.map(p => row(p.color, p.seriesName, fmt(Math.abs(p.value)))).join('') },
     series: [
