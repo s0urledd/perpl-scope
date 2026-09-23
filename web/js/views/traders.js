@@ -14,7 +14,7 @@ export function mount(el, { query, setQuery }) {
   const LIMIT = 50;
   el.innerHTML = `
     <div class="page-head"><div><h1>Traders</h1><div class="sub">Every Perpl account ranked from indexed trades. Net PnL = realized PnL + funding − fees.</div></div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap"><div id="by">${seg('by', SORTS, by)}</div><div id="win">${seg('window', WINDOWS, w)}</div></div></div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;max-width:100%;min-width:0"><div id="by" style="max-width:100%;min-width:0">${seg('by', SORTS, by)}</div><div id="win">${seg('window', WINDOWS, w)}</div></div></div>
     <section class="panel"><div class="panel-head"><h2 id="title">Leaderboard</h2><div style="display:flex;gap:10px;align-items:center"><span class="meta" id="meta"></span><a class="btn ghost" id="csv">${ICON.download} CSV</a></div></div>
       <div class="panel-body flush" id="list">${skeleton(12)}</div>
       <div class="panel-foot"><span id="count"></span><span><button class="btn ghost" data-action="prev">← Prev</button> <button class="btn ghost" data-action="next">Next →</button></span></div></section>`;
