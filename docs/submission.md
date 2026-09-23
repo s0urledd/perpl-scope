@@ -75,7 +75,7 @@ Judging criteria:
   change and a warning before liquidation at levels the user picks; see its
   positions and distance to liquidation on demand; large liquidations,
   large trades and funding flips. One tap from any wallet page.
-- **Self-hosted on a Monad node:**
+- **Straight from Monad:**
   - execution events via Monode: proposed-block trades on the tape within
     milliseconds, finalized data about a second after the block;
   - no dependency on Perpl's API or any third-party indexer.
