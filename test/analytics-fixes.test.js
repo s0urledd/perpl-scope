@@ -200,7 +200,8 @@ test('leaderboard SQL: population per sort, competition rank, stable pages', asy
   for (const [sort, key] of Object.entries(keys)) {
     await queries.accounts(0, 3600, { sort, limit: 10, offset: 20 });
     const sql = seen.pop();
-    const population = ['deposits', 'withdrawals', 'net_flow'].includes(sort) ? 'trades > 0 OR deposits > 0 OR withdrawals > 0' : 'trades > 0';
+    // Flow rankings hold only the accounts with that flow, so zero-flow traders do not tie at the bottom.
+    const population = { deposits: 'deposits > 0', withdrawals: 'withdrawals > 0', net_flow: 'deposits > 0 OR withdrawals > 0' }[sort] ?? 'trades > 0';
     assert.ok(sql.includes(`) WHERE ${population} ORDER BY`), sort);
     assert.match(sql, new RegExp(`count\\(\\) OVER \\(\\) AS total, rank\\(\\) OVER \\(ORDER BY ${key} DESC\\) AS rank FROM`), sort);
     assert.match(sql, new RegExp(`ORDER BY ${key} DESC, account LIMIT 10 OFFSET 20$`), sort);

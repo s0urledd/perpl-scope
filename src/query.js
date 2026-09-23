@@ -73,10 +73,10 @@ export function createQueries({ ch, rollups, coverage = null }) {
   }
 
   const SORTS = { pnl: 'realized - fees', realized: 'realized', loss: '-(realized - fees)', volume: 'volume', fees: 'fees', trades: 'trades', liquidated: 'liquidated', deposits: 'deposits', withdrawals: 'withdrawals', net_flow: 'deposits - withdrawals' };
-  // Trade sorts rank the accounts that traded in the window, flow sorts also
-  // those that only moved collateral. A rank is 1 + the number of accounts
+  // Trade sorts rank the accounts that traded in the window, flow sorts the
+  // accounts with that flow, whether or not they traded. A rank is 1 + the number of accounts
   // strictly ahead (ties share it), as on wallet pages.
-  const TRADED = 'trades > 0', FLOW_SORTS = new Set(['deposits', 'withdrawals', 'net_flow']);
+  const TRADED = 'trades > 0', FLOW_FILTER = { deposits: 'deposits > 0', withdrawals: 'withdrawals > 0', net_flow: 'deposits > 0 OR withdrawals > 0' };
   async function accounts(from, to, { sort = 'pnl', limit = 50, offset = 0, market = null, account = null } = {}) {
     if (!Object.hasOwn(SORTS, sort)) throw Object.assign(new Error('INVALID_SORT'), { status: 400 });
     const s = split(from, to);
@@ -87,7 +87,7 @@ export function createQueries({ ch, rollups, coverage = null }) {
     if (s.raw.length) parts.push(`SELECT account, market, ${raw(ACCOUNT)} FROM ev_account WHERE (${cond('ts', s.raw)})${where} GROUP BY account, market`);
     if (!parts.length) return { total: 0, rows: [] };
     const inner = `SELECT account, ${merged(ACCOUNT)}, groupUniqArrayIf(market, trades > 0 AND market != 0) AS markets FROM (${parts.join(' UNION ALL ')}) GROUP BY account`;
-    const rows = await q(`SELECT *, count() OVER () AS total, rank() OVER (ORDER BY ${SORTS[sort]} DESC) AS rank FROM (${inner}) WHERE ${FLOW_SORTS.has(sort) ? `${TRADED} OR deposits > 0 OR withdrawals > 0` : TRADED} ORDER BY ${SORTS[sort]} DESC, account LIMIT ${int(limit)} OFFSET ${int(offset)}`);
+    const rows = await q(`SELECT *, count() OVER () AS total, rank() OVER (ORDER BY ${SORTS[sort]} DESC) AS rank FROM (${inner}) WHERE ${FLOW_FILTER[sort] ?? TRADED} ORDER BY ${SORTS[sort]} DESC, account LIMIT ${int(limit)} OFFSET ${int(offset)}`);
     return { total: rows.length ? Number(rows[0].total) : 0, rows };
   }
 

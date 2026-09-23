@@ -32,7 +32,7 @@ same host the client is the last `X-Forwarded-For` entry.
 | `/api/v1/liquidations` | `limit` ≤ 500, `market`, `format=csv` | Latest liquidations and deleverages, and `last_24h` totals |
 | `/api/v1/funding` | `window` (default `7d`) | Per market: current rate per interval, 8 h and APR equivalents, interval length, positions and open interest; `series` of funding rates over the window |
 | `/api/v1/flows` | `window` | Top ten depositors and withdrawers in the window and the 30 latest transfers. Window totals are in `/protocol` (`deposits`, `withdrawals`, `net_flow`) |
-| `/api/v1/leaderboard` | `window`, `by` = `pnl`, `loss`, `volume`, `realized`, `fees`, `trades`, `liquidated`, `deposits`, `withdrawals`, `net_flow`; `market`, `limit` ≤ 200, `offset`, `format=csv` | Accounts that traded in the window (for `deposits`, `withdrawals`, `net_flow`: accounts with a deposit or withdrawal), ranked; ties share a rank. Net PnL (realized − fees), realized, fees, volume, maker share, trades, PnL per volume, liquidations, flows, markets traded, open positions and unrealized PnL now; `total` accounts |
+| `/api/v1/leaderboard` | `window`, `by` = `pnl`, `loss`, `volume`, `realized`, `fees`, `trades`, `liquidated`, `deposits`, `withdrawals`, `net_flow`; `market`, `limit` ≤ 200, `offset`, `format=csv` | Accounts that traded in the window (for `deposits`, `withdrawals`: accounts with that flow; `net_flow`: with either), ranked; ties share a rank. Net PnL (realized − fees), realized, fees, volume, maker share, trades, PnL per volume, liquidations, flows, markets traded, open positions and unrealized PnL now; `total` accounts |
 | `/api/v1/search` | `q`: address, address prefix or account ID | Up to eight matching accounts |
 
 ## Wallets
