@@ -30,7 +30,7 @@ export function mount(el, { query, setQuery }) {
         <div><h1>Perpl <span class="hero-muted">Analytics</span></h1>
           <div class="sub">Real-time protocol, wallet and risk analytics for Perpl on Monad.</div></div>
       </div>
-      <div class="hero-actions"><a class="btn ghost" href="https://app.perpl.xyz" target="_blank" rel="noopener noreferrer">Trade on Perpl ${ICON.ext}</a><div id="win">${seg('window', WINDOWS, w)}</div></div>
+      <div class="hero-actions"><a class="btn primary" href="https://app.perpl.xyz" target="_blank" rel="noopener noreferrer">Trade on Perpl ${ICON.ext}</a><div id="win">${seg('window', WINDOWS, w)}</div></div>
     </div>
     <div class="stack">
       <div class="kpis" id="kpis">${Array.from({ length: 6 }, () => '<div class="kpi"><div class="skeleton sk-line" style="width:40%"></div><div class="skeleton" style="height:26px;width:70%;margin-top:10px"></div><div class="skeleton" style="height:28px;margin-top:10px"></div></div>').join('')}</div>
@@ -153,10 +153,10 @@ export function mount(el, { query, setQuery }) {
     const cumulative = series.meta.cumulative_complete;
     const waitHistory = historyNote();
     const oi = $('oi'); oi.innerHTML = '';
-    headValue('oi', usd(c?.open_interest), 'now');
+    headValue('oi', usd(c?.open_interest));
     if (cumulative) lineChart(oi, { times, series: [{ name: 'Open interest', color: COLORS.accent, data: pts.map(p => num(p.open_interest)) }], bucketSeconds: b }); else oi.innerHTML = empty(waitHistory);
     const tvl = $('tvl'); tvl.innerHTML = '';
-    headValue('tvl', usd(c?.tvl), 'now');
+    headValue('tvl', usd(c?.tvl));
     if (cumulative) lineChart(tvl, { times, series: [{ name: 'TVL', color: SLOT_HEX[2], data: pts.map(p => num(p.tvl)) }], bucketSeconds: b, scale: true }); else tvl.innerHTML = empty(waitHistory);
     const flows = $('flows'); flows.innerHTML = '';
     headValue('flows', `<span class="${num(h.net_flow.value) >= 0 ? 'pos' : 'neg'}">${usd(h.net_flow.value, { sign: true })}</span>`, `${usd(h.deposits.value)} in · ${usd(h.withdrawals.value)} out`);
@@ -182,7 +182,7 @@ export function mount(el, { query, setQuery }) {
   }
 
   const marketCols = () => [
-    { key: 'symbol', label: 'Market', sort: r => r.symbol, render: r => mkt(r.id, r.symbol) },
+    { key: 'symbol', label: 'Market', sort: r => r.symbol, render: r => `${mkt(r.id, r.symbol)}${r.active === false ? ' <span class="tag" title="Not open for trading">inactive</span>' : ''}` },
     { key: 'mark', label: 'Price', n: true, sort: r => num(r.mark ?? r.close), render: r => price(r.mark ?? r.close) },
     { key: 'change_pct', label: w === 'all' ? 'Change' : `${w} change`, n: true, sort: r => num(r.change_pct) ?? -1e9, render: r => pctCell(r.change_pct) },
     { key: 'volume', label: 'Volume', n: true, cls: 'cell-bar', sort: r => num(r.volume), render: r => `${usd(r.volume)}<span class="track"><i style="width:${Math.max(2, Math.min(100, r.share_pct ?? 0))}%"></i></span>` },

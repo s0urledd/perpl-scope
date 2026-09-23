@@ -288,6 +288,13 @@ export function createApi({ collector, analytics = null, sse = null, statusOf = 
   }
 
   const risk = true;
+  // Positions carry the account's address when the index (or the contract) knows it.
+  async function withAddresses(rows) {
+    if (!analytics?.addressesOf || !rows?.length) return rows;
+    const map = await analytics.addressesOf([...new Set(rows.map(r => Number(r.account_id)))]).catch(() => new Map());
+    for (const r of rows) r.address = map.get(Number(r.account_id))?.address ?? null;
+    return rows;
+  }
   const A = name => { if (!analytics) throw Object.assign(new Error('ANALYTICS_UNAVAILABLE'), { status: 503 }); return analytics[name]; };
   const routes = [
     ['GET', /^\/api\/v1\/health$/, () => ({ ok: true, version, snapshot: snapshot(), collector: { polls: state.stats.polls, errors: state.stats.errors, last_error: errorCode(state.stats.lastError), last_poll_ms: state.stats.lastPollMs, uptime_ms: now() - state.stats.startedAt, rpc_requests: collector.reader.stats.requests }, ...statusOf(), memory: { rss_mb: Math.round(process.memoryUsage().rss / 1048576), heap_mb: Math.round(process.memoryUsage().heapUsed / 1048576) } })],
@@ -310,9 +317,9 @@ export function createApi({ collector, analytics = null, sse = null, statusOf = 
     // Risk (contract snapshot).
     ['GET', /^\/api\/v1\/overview$/, () => ({ snapshot: snapshot(), ...overview() }), risk],
     ['GET', /^\/api\/v1\/markets$/, () => ({ snapshot: snapshot(), markets: computeMetrics(state).markets.map(marketSummary) }), risk],
-    ['GET', /^\/api\/v1\/markets\/(\d+)$/, (match, query) => ({ snapshot: snapshot(), market: marketDetail(entryFor(match[1]), query) }), risk],
+    ['GET', /^\/api\/v1\/markets\/(\d+)$/, async (match, query) => { const market = marketDetail(entryFor(match[1]), query); await withAddresses(market.top_positions); return { snapshot: snapshot(), market }; }, risk],
     ['GET', /^\/api\/v1\/markets\/(\d+)\/positions$/, (match, query) => { const csv = query.get('format') === 'csv'; const body = { snapshot: snapshot(), ...positionsList(entryFor(match[1]), query, csv ? { defaultLimit: 5000, maxLimit: 5000 } : {}) }; return csv ? { csv: toCsv(body.positions, POSITION_COLUMNS), filename: `plumb-${safeName(body.symbol)}-positions-${body.snapshot.block}.csv` } : body; }, risk],
-    ['GET', /^\/api\/v1\/markets\/(\d+)\/stress$/, (match, query) => ({ snapshot: snapshot(), ...stressView(entryFor(match[1]), query) }), risk],
+    ['GET', /^\/api\/v1\/markets\/(\d+)\/stress$/, async (match, query) => { const view = stressView(entryFor(match[1]), query); await withAddresses(view.positions_hit); return { snapshot: snapshot(), ...view }; }, risk],
     ['GET', /^\/api\/v1\/markets\/(\d+)\/book$/, match => ({ snapshot: snapshot(), ...bookView(entryFor(match[1])) }), risk],
     ['GET', /^\/api\/v1\/markets\/(\d+)\/ladder$/, match => { const e = entryFor(match[1]); return { snapshot: snapshot(), market_id: e.market.id, symbol: e.market.symbol, ladder: ladderView(e.metrics.ladder, e.market), liquidation_map: mapView(e.metrics.map) }; }, risk],
     ['GET', /^\/api\/v1\/markets\/(\d+)\/funding$/, async (match, query) => { const e = entryFor(match[1]); const history = analytics ? await analytics.funding(e.market.id, query) : null; return { snapshot: snapshot(), market_id: e.market.id, symbol: e.market.symbol, current: fundingView(e.market), history: history?.rows ?? state.history.funding.filter(f => f.perpId === e.market.id).slice(-48).map(f => fundingEntry(f, e.market)) }; }, risk],

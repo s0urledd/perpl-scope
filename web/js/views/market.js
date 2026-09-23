@@ -52,7 +52,8 @@ export function mount(el, { params, query, setQuery }) {
     const pts = s.points.filter(x => x.close !== null);
     $('c-meta').textContent = `${s.meta.bucket} candles from fills · UTC`;
     const node = $('candles'); node.innerHTML = '';
-    if (!pts.length) node.innerHTML = empty('No trades in this window');
+    // No volume in the window (an inactive market carries its last close): say so instead of a flat line.
+    if (!pts.length || !s.points.some(x => num(x.volume) > 0)) node.innerHTML = empty(row.active === false ? 'This market is not open for trading' : 'No trades in this window');
     else {
       let prev = null;
       const ohlc = s.points.map(x => { const c = num(x.close), o = num(x.open) ?? prev ?? c, h = num(x.high) ?? Math.max(o, c), l = num(x.low) ?? Math.min(o, c); prev = c; return c === null ? '-' : [o, c, l, h]; });
@@ -77,7 +78,7 @@ export function mount(el, { params, query, setQuery }) {
     renderPositions(risk.top_positions ?? []);
     const ladder = risk.ladder ?? [];
     const lnode = $('ladder'); lnode.innerHTML = '';
-    if (ladder.length) mirrored(lnode, { labels: ladder.map(x => `${x.shock_pct}%`), long: ladder.map(x => num(x.long.notional)), short: ladder.map(x => num(x.short.notional)) });
+    if (ladder.length && (L.count + S.count) > 0) mirrored(lnode, { labels: ladder.map(x => `${x.shock_pct}%`), long: ladder.map(x => num(x.long.notional)), short: ladder.map(x => num(x.short.notional)) });
     else lnode.innerHTML = empty('No open positions');
   }
   // The largest open positions by notional; each row opens the wallet.
@@ -85,7 +86,7 @@ export function mount(el, { params, query, setQuery }) {
     const shown = rows.slice(0, 15);
     $('pos-meta').textContent = rows.length ? `Top ${shown.length} by notional` : '';
     $('positions').innerHTML = table({ id: 'pos', compact: true, emptyText: 'No open positions', columns: [
-      { key: 'a', label: 'Account', render: r => addr(null, r.account_id) },
+      { key: 'a', label: 'Account', render: r => addr(r.address, r.account_id) },
       { key: 's', label: 'Side', render: r => sideTag(r.side) },
       { key: 'n', label: 'Notional', n: true, render: r => usd(r.notional) },
       { key: 'e', label: 'Entry', n: true, render: r => price(r.entry_price) },
@@ -93,7 +94,7 @@ export function mount(el, { params, query, setQuery }) {
       { key: 'u', label: 'uPnL', n: true, render: r => pnl(r.pnl) },
       { key: 'q', label: 'Liq. price', n: true, render: r => price(r.liquidation_price) },
       { key: 'd', label: 'To liq.', n: true, render: r => (r.liquidation_distance_pct === null ? '—' : `<span class="${r.liquidation_distance_pct < 5 ? 'neg' : r.liquidation_distance_pct < 15 ? 'warn-text' : 'muted'}">${pct(r.liquidation_distance_pct, { digits: 1 })}</span>`) }
-    ], rows: shown, rowAttrs: r => `class="link" data-href="#/wallet/${esc(r.account_id)}"` });
+    ], rows: shown, rowAttrs: r => `class="link" data-href="#/wallet/${esc(r.address || r.account_id)}"` });
   }
   // What a market order costs against the on-chain book, from the mid.
   function costTable(L) {

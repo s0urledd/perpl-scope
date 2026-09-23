@@ -145,7 +145,10 @@ export function signedBars(el, { times, values, bucketSeconds, name = 'Value', f
   const xAxis = timeAxis(times, bucketSeconds);
   if (dayTicks) {
     const day = t => Math.floor(Number(t) / 86400);
-    xAxis.axisLabel = { ...xAxis.axisLabel, interval: 0, hideOverlap: false, formatter: (v, i) => (i === 0 || day(times[i - 1]) !== day(v) ? timeLabel(day(v) * 86400, 86400) : '') };
+    // The first point is labelled only when the next day starts far enough away not to collide with it.
+    const firstBreak = times.findIndex((t, i) => i > 0 && day(times[i - 1]) !== day(t));
+    const labelFirst = firstBreak === -1 || firstBreak >= times.length / 14;
+    xAxis.axisLabel = { ...xAxis.axisLabel, interval: 0, hideOverlap: false, formatter: (v, i) => ((i === 0 && labelFirst) || (i > 0 && day(times[i - 1]) !== day(v)) ? timeLabel(day(v) * 86400, 86400) : '') };
   }
   chart.setOption({
     ...base(), xAxis, yAxis: valueAxis(yFmt),
