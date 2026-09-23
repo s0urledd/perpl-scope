@@ -42,10 +42,12 @@ export const hasColor = id => colorMap[id] !== undefined;
 const LOGOS = { BTC: 'btc.svg', ETH: 'eth.svg', SOL: 'sol.svg', MON: 'mon.svg', HYPE: 'hype.png', ZEC: 'zec.svg', LIT: 'lit.png', VVV: 'vvv.png', TAO: 'tao.png', PUMP: 'pump.png' };
 // 'SOL_v2' and 'BTC Perp' are the same assets as 'SOL' and 'BTC'.
 const assetOf = symbol => String(symbol ?? '').replace(/(\s+perp|[_-]v\d+)$/i, '').trim().toUpperCase();
-// A market without a logo keeps its colour swatch.
+// A newly listed market has no logo file yet: it gets its first letter on its
+// colour, at the logo's size, until one is added.
 export const logo = (id, symbol, size = 16) => {
   const file = LOGOS[assetOf(symbol)];
-  return file ? `<img class="tk" src="img/markets/${file}" alt="" width="${size}" height="${size}">` : `<i class="sw" style="background:${colorOf(id)}"></i>`;
+  if (file) return `<img class="tk" src="img/markets/${file}" alt="" width="${size}" height="${size}">`;
+  return `<i class="tk tk-letter" style="width:${size}px;height:${size}px;font-size:${Math.round(size * 0.55)}px;background:${colorOf(id)}">${esc(assetOf(symbol).slice(0, 1) || '?')}</i>`;
 };
 
 // --- components ---------------------------------------------------------------------
