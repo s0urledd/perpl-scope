@@ -51,13 +51,17 @@ const statusOf = () => ({
 api = createApi({ collector, analytics, sse, statusOf, reference, version: pkg.version, onError: (error, path) => log('error', `${path}: ${error.message}`) });
 
 // --- real-time -----------------------------------------------------------------
-let lastPush = 0, pushTimer = null, lastRollup = 0;
+let lastPush = 0, pushTimer = null, lastRollup = 0, pushing = false;
+// One headline computation at a time: while one runs, commits only schedule
+// the next, so a slow ClickHouse never piles queries up.
 async function pushHeadline() {
-  pushTimer = null; lastPush = Date.now();
+  pushTimer = null;
+  if (pushing) { pushTimer = setTimeout(pushHeadline, 2000); return; }
+  pushing = true; lastPush = Date.now();
   try {
     const p = await analytics.protocol(new URLSearchParams('window=24h'), { fresh: true }); // never the cached previous push
     sse.send('protocol', { meta: p.meta, headline: p.headline, current: p.current, markets: p.markets.map(x => ({ id: x.id, symbol: x.symbol, mark: x.mark ?? null, close: x.close, change_pct: x.change_pct, volume: x.volume, open_interest: x.open_interest ?? null, funding: x.funding ?? null })) });
-  } catch (error) { log('warn', `headline push failed: ${error.message}`); }
+  } catch (error) { log('warn', `headline push failed: ${error.message}`); } finally { pushing = false; }
 }
 ingest.on(event => {
   if (event.type === 'commit') {
