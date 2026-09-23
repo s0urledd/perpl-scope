@@ -43,7 +43,9 @@ export function deltaHtml(change, invert = false) {
   if (n === null) return '<span class="delta flat">—</span>';
   const good = invert ? n < 0 : n > 0, bad = invert ? n > 0 : n < 0;
   const cls = good ? 'up' : bad ? 'down' : 'flat';
-  return `<span class="delta ${cls}">${n > 0 ? '▲' : n < 0 ? '▼' : ''} ${Math.abs(n).toFixed(Math.abs(n) >= 100 ? 0 : 1)}%</span>`;
+  // Past +1000 % (from a near-empty previous window) a multiple reads better: "×113".
+  const text = n >= 1000 ? `×${Math.round(1 + n / 100)}` : `${Math.abs(n).toFixed(Math.abs(n) >= 100 ? 0 : 1)}%`;
+  return `<span class="delta ${cls}" title="${n.toFixed(1)}% on the previous period">${n > 0 ? '▲' : n < 0 ? '▼' : ''} ${text}</span>`;
 }
 export function ago(ts) {
   if (!ts) return '—';

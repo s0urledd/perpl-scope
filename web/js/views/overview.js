@@ -98,7 +98,7 @@ export function mount(el, { query, setQuery }) {
 
   // Change over the window from the running-sum series (null until history is complete).
   function seriesChange(field) {
-    if (!series?.meta?.cumulative_complete) return undefined;
+    if (w === 'all' || !series?.meta?.cumulative_complete) return undefined; // from launch the change is meaningless
     const vals = series.points.map(p => num(p[field])).filter(v => v !== null);
     if (vals.length < 2 || !vals[0]) return undefined;
     return Math.round((vals.at(-1) - vals[0]) / vals[0] * 10000) / 100;
@@ -108,7 +108,8 @@ export function mount(el, { query, setQuery }) {
     const h = data.headline, c = data.current, pts = series.points;
     const cov = data.meta.coverage, wl = windowLabel();
     // A change against a previous window that is still being indexed would mislead: hide it.
-    const ch = v => (data.meta.previous_complete === false ? undefined : v);
+    // All-time has no previous period, so no change is shown (not a "—").
+    const ch = v => (w === 'all' || data.meta.previous_complete === false ? undefined : v);
     const partial = cov && !cov.complete ? ' <span class="tag warn" title="History for this window is still being indexed">partial</span>' : '';
     $('kpis').innerHTML = [
       kpi({ label: `Volume · ${wl}`, value: usd(h.volume.value), delta: ch(h.volume.change_pct), note: `${int(data.markets.reduce((a, m) => a + (m.fills ?? 0), 0))} trades${partial}`, spark: 'sp-vol', tip: 'Notional of every match, counted once (the maker side). A trade is one match between a maker and a taker.' }),
@@ -170,7 +171,7 @@ export function mount(el, { query, setQuery }) {
     if (cumulative) lineChart(oi, { times, series: [{ name: 'Open interest', color: COLORS.accent, data: pts.map(p => num(p.open_interest)) }], bucketSeconds: b }); else oi.innerHTML = empty(waitHistory);
     const tvl = $('tvl'); tvl.innerHTML = '';
     headValue('tvl', usd(c?.tvl));
-    if (cumulative) lineChart(tvl, { times, series: [{ name: 'TVL', color: SLOT_HEX[2], data: pts.map(p => num(p.tvl)) }], bucketSeconds: b, scale: true }); else tvl.innerHTML = empty(waitHistory);
+    if (cumulative) lineChart(tvl, { times, series: [{ name: 'TVL', color: SLOT_HEX[0], data: pts.map(p => num(p.tvl)) }], bucketSeconds: b, scale: true }); else tvl.innerHTML = empty(waitHistory);
     const flows = $('flows'); flows.innerHTML = '';
     headValue('flows', `<span class="${num(h.net_flow.value) >= 0 ? 'pos' : 'neg'}">${usd(h.net_flow.value, { sign: true })}</span>`, `${usd(h.deposits.value)} in · ${usd(h.withdrawals.value)} out`);
     twoSided(flows, { times, bucketSeconds: b, up: { name: 'Deposits', data: pts.map(p => p.deposits) }, down: { name: 'Withdrawals', data: pts.map(p => p.withdrawals) }, net: 'Net deposits' });

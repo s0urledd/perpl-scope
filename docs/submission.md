@@ -111,9 +111,9 @@ Judging criteria:
 - [x] Deploy on the Huginn RPC host with `docker compose` behind TLS
       (https://plumb.huginn.tech).
 - [x] Enable the execution event ring and the `exec-events` profile.
-- [ ] Wait for the backfill to complete, then confirm on the status page
+- [x] Wait for the backfill to complete, then confirm on the status page
       that the integrity check passes.
-- [ ] Refresh the screenshots in `docs/images/` from the deployment.
+- [x] Refresh the screenshots in `docs/images/` from the deployment.
 - [ ] Record the demo (at most 3 minutes) while the dashboard is live, so
       the block number advances; link it in the README.
 - [x] Make the repository public.
