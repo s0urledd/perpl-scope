@@ -23,6 +23,25 @@ test('execution events: logs are grouped per proposed block, re-ordered, and fin
   assert.deepEqual(finalized, [7]);
 });
 
+test('execution events: blocks that carried exchange logs report voted and finalized, timed from their start', () => {
+  const stages = [];
+  let t = 1000;
+  const feed = createExecEvents({ url: 'ws://unused', exchange: EXCHANGE, onStage: s => stages.push(s), WebSocketImpl: null, now: () => t });
+  const log = makeLog('CollateralDeposit', { accountId: 5n, amountCNS: 10n, balanceCNS: 10n }, { block: 8, tx: 1, logIndex: 0 });
+  const start = (n, id) => feed.handleEvent({ event_name: 'BlockStart', block_number: n, payload: { type: 'BlockStart', block_number: n, block_id: id, timestamp: 1790000008 } });
+  start(8, '0xAA');
+  feed.handleEvent({ event_name: 'TxnLog', block_number: 8, txn_idx: 1, payload: { type: 'TxnLog', txn_index: 1, log_index: 0, address: EXCHANGE, topics: '0x' + log.topics.map(x => x.slice(2)).join(''), data: log.data } });
+  feed.handleEvent({ event_name: 'BlockEnd', block_number: 8, payload: { type: 'BlockEnd' } });
+  start(9, '0xbb'); // no exchange logs: no stages reported
+  feed.handleEvent({ event_name: 'BlockEnd', block_number: 9, payload: { type: 'BlockEnd' } });
+  t = 1420; feed.handleEvent({ event_name: 'BlockQC', payload: { type: 'BlockQC', block_id: '0xaa', block_number: 8, round: 1 } });
+  feed.handleEvent({ event_name: 'BlockQC', payload: { type: 'BlockQC', block_id: '0xaa', block_number: 8, round: 1 } }); // repeated: once
+  feed.handleEvent({ event_name: 'BlockQC', payload: { type: 'BlockQC', block_id: '0xbb', block_number: 9, round: 2 } });
+  t = 1810; feed.handleEvent({ event_name: 'BlockFinalized', payload: { type: 'BlockFinalized', block_id: '0xaa', block_number: 8 } });
+  feed.handleEvent({ event_name: 'BlockFinalized', payload: { type: 'BlockFinalized', block_id: '0xbb', block_number: 9 } });
+  assert.deepEqual(stages.map(s => [s.block, s.stage, s.ms]), [[8, 'voted', 420], [8, 'finalized', 810]]);
+});
+
 test('server-sent events reach every open client in order', () => {
   const sse = createSse({ heartbeatMs: 60000 });
   const writes = [];

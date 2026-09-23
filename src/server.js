@@ -93,7 +93,7 @@ ingest.on(event => {
   } else if (event.type === 'backfill') sse.send('backfill', event.progress);
 });
 if (config.monodeUrl) {
-  feeds.execEvents = createExecEvents({ url: config.monodeUrl, exchange: config.exchange, log, onFinalized: n => ingest.notifyFinalized(n, 'exec-events'), onProposed: ({ block, ts, logs }) => { const rows = speculativeTrades(logs, ingest); if (rows.length) analytics.tradeViews(rows).then(views => sse.send('proposed', { block, ts, trades: views.map(v => ({ ...v, log_index: null })) })).catch(() => {}); } }); // a proposed block has no final log index
+  feeds.execEvents = createExecEvents({ url: config.monodeUrl, exchange: config.exchange, log, onFinalized: n => ingest.notifyFinalized(n, 'exec-events'), onProposed: ({ block, blockId, ts, logs }) => { const rows = speculativeTrades(logs, ingest); if (rows.length) analytics.tradeViews(rows).then(views => sse.send('proposed', { block, block_id: blockId, ts, trades: views.map(v => ({ ...v, log_index: null })) })).catch(() => {}); }, onStage: s => sse.send('stage', { block: s.block, block_id: s.blockId, stage: s.stage, ms: s.ms }) }); // a proposed block has no final log index
   feeds.execEvents.start();
 }
 // Also with Monode: if it stops, WebSocket heads keep waking the ingest.

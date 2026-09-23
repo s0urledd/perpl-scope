@@ -196,6 +196,7 @@ The server pushes server-sent events on `/api/v1/stream`:
 | `block` | each commit | finalized block number and timestamp |
 | `trades` | each commit with trades | taker-side trades of the new blocks |
 | `proposed` | Monode `BlockEnd` | trades decoded from a proposed block; shown dimmed, never stored |
+| `stage` | Monode `BlockQC`, `BlockFinalized` | for a block that carried proposed trades: `voted` or `finalized`, with the milliseconds since the block started executing |
 | `liquidations` | each commit with liquidations | signal to refresh |
 | `protocol` | at most every 2 s | 24 h headline and per-market figures |
 | `backfill` | while indexing history | progress, rate and ETA |

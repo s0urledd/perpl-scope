@@ -10,7 +10,10 @@
 //    simply polls.
 // 3. Speculative tape: with the sidecar, exchange logs are visible when their
 //    block is proposed, about a second before finalization. They are pushed
-//    marked "proposed" and never written to storage.
+//    marked "proposed" and never written to storage. Blocks that carried
+//    exchange logs then report their consensus stages as they happen: voted
+//    (a quorum certificate, BlockQC) and finalized, each with the time since
+//    the block started executing here.
 import { rowsFromLogs } from './decode.js';
 
 export function createSse({ log = () => {}, heartbeatMs = 15000, maxClients = 500 } = {}) {
@@ -40,9 +43,11 @@ export function createSse({ log = () => {}, heartbeatMs = 15000, maxClients = 50
 // log's topics arrive as one concatenated hex string. A block number can be
 // proposed more than once; losing proposals are dropped without an event,
 // which is why nothing seen here is ever stored.
-export function createExecEvents({ url, exchange, onFinalized = () => {}, onProposed = () => {}, onStatus = () => {}, log = () => {}, WebSocketImpl = globalThis.WebSocket }) {
+export function createExecEvents({ url, exchange, onFinalized = () => {}, onProposed = () => {}, onStage = () => {}, onStatus = () => {}, log = () => {}, WebSocketImpl = globalThis.WebSocket, now = () => Date.now() }) {
   const target = exchange.toLowerCase();
-  const pending = new Map(); // block_number -> { blockId, ts, logs: [] }
+  const pending = new Map(); // block_number -> { blockId, ts, startedAt, logs: [] }
+  // Blocks whose proposed trades were pushed: block_id -> { block, startedAt, voted }.
+  const shown = new Map();
   const status = { connected: false, lastEventAt: null, finalized: null, proposed: null, tps: null, reconnects: 0, lastError: null };
   let ws = null, stopped = false, retry = 1000;
 
@@ -50,7 +55,7 @@ export function createExecEvents({ url, exchange, onFinalized = () => {}, onProp
     const p = e.payload ?? {};
     status.lastEventAt = Date.now();
     switch (e.event_name) {
-      case 'BlockStart': pending.set(Number(p.block_number), { blockId: p.block_id, ts: Number(p.timestamp), logs: [] }); status.proposed = Number(p.block_number); break;
+      case 'BlockStart': pending.set(Number(p.block_number), { blockId: p.block_id, ts: Number(p.timestamp), startedAt: now(), logs: [] }); status.proposed = Number(p.block_number); break;
       case 'TxnLog': {
         if (String(p.address).toLowerCase() !== target || e.block_number === undefined) break;
         const b = pending.get(Number(e.block_number));
@@ -69,13 +74,22 @@ export function createExecEvents({ url, exchange, onFinalized = () => {}, onProp
           b.logs.sort((x, y) => x.transactionIndex - y.transactionIndex || x.txLogIndex - y.txLogIndex);
           b.logs.forEach((l, i) => { l.logIndex = i; });
           onProposed({ block: Number(e.block_number), blockId: b.blockId, ts: b.ts, logs: b.logs });
+          shown.set(String(b.blockId).toLowerCase(), { block: Number(e.block_number), startedAt: b.startedAt, voted: false });
+          if (shown.size > 500) shown.delete(shown.keys().next().value);
         }
+        break;
+      }
+      case 'BlockQC': {
+        const s = shown.get(String(p.block_id).toLowerCase());
+        if (s && !s.voted) { s.voted = true; onStage({ block: s.block, blockId: p.block_id, stage: 'voted', ms: now() - s.startedAt }); }
         break;
       }
       case 'BlockFinalized': {
         const n = Number(p.block_number);
         status.finalized = n;
         for (const k of pending.keys()) if (k <= n) pending.delete(k);
+        const s = shown.get(String(p.block_id).toLowerCase());
+        if (s) { shown.delete(String(p.block_id).toLowerCase()); onStage({ block: s.block, blockId: p.block_id, stage: 'finalized', ms: now() - s.startedAt }); }
         onFinalized(n);
         break;
       }

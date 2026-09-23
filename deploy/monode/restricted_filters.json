@@ -2,6 +2,7 @@
   { "event_name": "BlockStart" },
   { "event_name": "BlockEnd" },
   { "event_name": "BlockReject" },
+  { "event_name": "BlockQC" },
   { "event_name": "BlockFinalized" },
   {
     "event_name": "TxnLog",
