@@ -27,8 +27,7 @@ export function mount(el, { query, setQuery }) {
     <div class="page-head hero">
       <div class="hero-id">
         <div><h1><img class="hero-logo" src="img/venues/perpl.png" alt="" width="26" height="26">Perpl <span class="hero-muted">Analytics</span></h1>
-          <div class="sub">Live analytics for Perpl on Monad: markets, traders, liquidation risk and alerts, from every onchain trade.</div>
-          <div class="hero-proof"><a href="#/" data-action="to-tape">${ICON.bolt} Trades live before their block is final</a><a href="#/status">${ICON.check} Open interest and TVL match the contract</a><a href="#/alerts">${ICON.bell} Liquidation alerts in Telegram</a></div></div>
+          <div class="sub">Live analytics for Perpl on Monad: markets, traders, liquidation risk and alerts, from every onchain trade.</div></div>
       </div>
       <div class="hero-actions"><a class="btn primary" href="https://app.perpl.xyz" target="_blank" rel="noopener noreferrer">Trade on Perpl ${ICON.ext}</a><div id="win">${seg('window', WINDOWS, w)}</div></div>
     </div>
@@ -65,7 +64,7 @@ export function mount(el, { query, setQuery }) {
       <div class="grid g-3">
         <section class="panel"><div class="panel-head"><h2>Latest liquidations</h2><a class="meta" href="#/liquidations">View all →</a></div><div class="panel-body flush" id="liqs">${skeleton(5)}</div></section>
         <section class="panel"><div class="panel-head"><h2>Deposits and withdrawals</h2><div id="flowview">${segSm('flowv', FLOW_VIEWS, flowView)}</div></div><div class="panel-body flush" id="flowlist">${skeleton(5)}</div></section>
-        <section class="panel"><div class="panel-head"><h2>Across windows</h2><span class="meta">Exchange totals</span></div><div class="panel-body flush" id="windows">${skeleton(5)}</div></section>
+        <section class="panel fill"><div class="panel-head"><h2>Across windows</h2><span class="meta">Exchange totals</span></div><div class="panel-body flush fill-table" id="windows">${skeleton(5)}</div></section>
       </div>
       <div class="section-label">Market share</div>
       <div class="grid g-2" id="landscape-grid">
@@ -230,7 +229,7 @@ export function mount(el, { query, setQuery }) {
   function renderSpeed() {
     if (!finalMs.length) return;
     const sorted = [...finalMs].sort((a, b) => a - b), mid = sorted[Math.floor(sorted.length / 2)];
-    $('tape-meta').innerHTML = `<span class="speed-pill">${ICON.cube} Proposed → final <b class="num" title="Median time from a proposed block starting to execute to its finalization, as seen from the Monad node Plumb reads; last ${sorted.length} blocks with Perpl trades">${secs(mid)}</b></span> · UTC`;
+    $('tape-meta').innerHTML = `<span class="speed-pill">${ICON.cube} Proposed → final <b class="num" title="Median time from a proposed block starting to execute to its finalization, as seen from the Monad node Plumb reads; last ${sorted.length} blocks with Perpl trades">${secs(mid)}</b></span><span>UTC</span>`;
   }
   function renderTape() {
     const min = Number(minSize);
@@ -356,7 +355,7 @@ export function mount(el, { query, setQuery }) {
       if (name === 'bucket') { bucket = v; renderBucket(); get(seriesPath()).then(s => { if (!alive) return; series = s; renderVolume(); renderTrends(); renderKpis(); }).catch(() => {}); return; }
       if (name === 'feesv') { feeView = v; $('fees-mode').innerHTML = segSm('feesv', FEE_VIEWS, feeView); renderFees(); }
     },
-    onAction(a, t, event) { if (a === 'to-tape') { event?.preventDefault(); $('tape')?.closest('section')?.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; } if (a === 'toggle') { t.classList.toggle('off'); toggleSeries($('main-chart'), t.dataset.name); } },
+    onAction(a, t) { if (a === 'toggle') { t.classList.toggle('off'); toggleSeries($('main-chart'), t.dataset.name); } },
     onSort(id, key) { if (id !== 'markets') return; sort = { key, dir: sort.key === key && sort.dir === 'desc' ? 'asc' : 'desc' }; renderMarkets(); },
     update(q) { const nw = WINDOWS.some(([v]) => v === q.get('window')) ? q.get('window') : '24h'; if (nw === w) return; w = nw; bucket = null; $('win').innerHTML = seg('window', WINDOWS, w); load().catch(() => {}); get(`flows?window=${w}`).then(f => alive && renderFlows(f)).catch(() => {}); },
     destroy() { alive = false; clearInterval(timer); off.forEach(f => f()); }
