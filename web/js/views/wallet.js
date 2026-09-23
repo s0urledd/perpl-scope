@@ -26,6 +26,7 @@ export function mount(el, { params, query, setQuery, navigate }) {
           <button class="btn ghost" data-copy="${esc(a.address)}">${ICON.copy} Copy</button>
           <a class="btn ghost" href="${EXPLORER}/address/${esc(a.address)}" target="_blank" rel="noopener noreferrer">${ICON.ext} Explorer</a>
           <button class="btn ghost" data-action="compare">${ICON.plus} Compare</button>
+          <button class="btn ghost" data-action="share" title="Download a summary card (PNG)">${ICON.image} Share</button>
           <button class="btn ${starred ? '' : 'primary'}" data-action="watch">${starred ? ICON.star + ' Watching' : ICON.starOff + ' Watch'}</button>
         </div></div>`;
   }
@@ -107,7 +108,7 @@ export function mount(el, { params, query, setQuery, navigate }) {
         <div class="panel-head"><h2>By period</h2><span class="meta">Rolling windows · rank among every account that traded in the window</span></div>
         <div class="panel-body flush" id="periods">${periods ? periodsTable() : skeleton(4)}</div>
         <div class="grid g-main" style="padding:16px;gap:16px">
-          <section class="panel"><div class="panel-head"><h2>Net PnL (after fees)</h2><div class="head-right">${chartTools('pnl-chart', `wallet-${d.account.id}-pnl`)}<div class="seg sm"><button data-action="pnl-cum" class="${pnlMode === 'cumulative' ? 'on' : ''}">Cumulative</button><button data-action="pnl-daily" class="${pnlMode === 'daily' ? 'on' : ''}">Daily</button></div></div></div><div class="panel-body"><div class="chart" id="pnl-chart"></div></div></section>
+          <section class="panel"><div class="panel-head"><h2>Net PnL (after fees)</h2><div class="head-right">${chartTools('pnl-chart', `wallet-${d.account.id}-pnl`)}<div class="seg sm"><button data-action="pnl-cum" class="${pnlMode === 'cumulative' ? 'on' : ''}">Cumulative</button><button data-action="pnl-daily" class="${pnlMode === 'daily' ? 'on' : ''}">Daily</button><button data-action="pnl-cal" class="${pnlMode === 'calendar' ? 'on' : ''}">Calendar</button></div></div></div><div class="panel-body"><div class="chart" id="pnl-chart"></div></div></section>
           <section class="panel"><div class="panel-head"><h2>Performance</h2><span class="meta">Closed round trips, net of fees</span></div><div id="perf">${an ? perfPanel(an.performance, d.summary) : perfSkeleton()}</div></section>
         </div>
         <div class="grid g-2" style="padding:0 16px 16px;gap:16px">
@@ -156,11 +157,60 @@ export function mount(el, { params, query, setQuery, navigate }) {
       ], rows: d.flows, emptyText: 'No deposits or withdrawals indexed' });
     }
   }
+  // Daily net PnL as a calendar (weeks × weekdays, UTC), green and red by
+  // size relative to the largest day; the last 26 weeks with activity.
+  function pnlCalendar(rows) {
+    const byDay = new Map(rows.map(r => [Math.floor(r.t / 86400), r]));
+    const lastDay = Math.floor(rows.at(-1).t / 86400), weeks = 26;
+    const end = lastDay + (6 - ((lastDay + 3) % 7)); // Sunday closing the last week (day 0 was a Thursday)
+    const start = Math.max(end - weeks * 7 + 1, Math.floor(rows[0].t / 86400) - ((Math.floor(rows[0].t / 86400) + 3) % 7));
+    const max = Math.max(1, ...rows.filter(r => Math.floor(r.t / 86400) >= start).map(r => Math.abs(num(r.net_pnl) ?? 0)));
+    const cells = [], months = [];
+    let green = 0, red = 0;
+    for (let d = start; d <= end; d++) {
+      const r = byDay.get(d), v = num(r?.net_pnl) ?? 0, dateText = date(d * 86400);
+      if (r && v > 0) green++; else if (r && v < 0) red++;
+      const a = r ? 0.18 + 0.82 * Math.min(1, Math.abs(v) / max) : 0;
+      const bg = !r ? 'rgba(255,255,255,0.04)' : v >= 0 ? `rgba(129,199,132,${a})` : `rgba(246,90,110,${a})`;
+      cells.push(`<i style="background:${bg}" title="${esc(dateText)}${r ? ` · ${esc(usd(v, { sign: true }))} · ${int(r.trades)} trades` : ' · no closed trades'}"></i>`);
+      if ((d - start) % 7 === 0) months.push(new Date(d * 86400000).getUTCDate() <= 7 ? esc(dateText.split(' ')[0]) : '');
+    }
+    return `<div class="panel-body"><div class="cal-months">${months.map(m => `<span>${m}</span>`).join('')}</div><div class="cal">${cells.join('')}</div>
+      <div class="cal-foot"><span class="pos">${int(green)} green days</span> · <span class="neg">${int(red)} red days</span><span class="faint"> · UTC days, colour scaled to the largest day</span></div></div>`;
+  }
+  // A 1200×630 summary card drawn on a canvas (nothing leaves the browser).
+  function shareCard() {
+    const d = data, perf = an?.performance, s = d.summary;
+    const c = Object.assign(document.createElement('canvas'), { width: 1200, height: 630 }), g = c.getContext('2d');
+    const font = (w, px) => `${w} ${px}px Geist, ui-sans-serif, system-ui, sans-serif`;
+    const grad = g.createRadialGradient(600, -120, 40, 600, -120, 900); grad.addColorStop(0, '#1d1540'); grad.addColorStop(1, '#000000');
+    g.fillStyle = grad; g.fillRect(0, 0, 1200, 630);
+    g.strokeStyle = 'rgba(255,255,255,0.08)'; g.strokeRect(24.5, 24.5, 1151, 581);
+    g.fillStyle = '#a2a4ff'; g.font = font(600, 30); g.fillText('Plumb', 64, 92);
+    g.fillStyle = 'rgba(224,225,255,0.7)'; g.font = font(400, 22); g.fillText('Perpl trader profile · Monad', 170, 92);
+    g.fillStyle = '#ffffff'; g.font = `500 26px 'Geist Mono', ui-monospace, monospace`; g.fillText(d.account.address, 64, 160);
+    const net = num(s.net_pnl) ?? 0;
+    g.fillStyle = 'rgba(224,225,255,0.7)'; g.font = font(400, 22); g.fillText('Net PnL, all time (after fees)', 64, 240);
+    g.fillStyle = net >= 0 ? '#81c784' : '#f65a6e'; g.font = font(600, 84); g.fillText(usd(net, { sign: true }), 64, 330);
+    const stats = [
+      ['Volume', usd(s.volume)], ['Trades', int(s.trades)],
+      ['Win rate', perf?.win_rate_pct === null || perf?.win_rate_pct === undefined ? '—' : pct(perf.win_rate_pct, { digits: 1 })],
+      ['Profit factor', perf?.profit_factor === null || perf?.profit_factor === undefined ? '—' : perf.profit_factor.toFixed(2)],
+      ['Max drawdown', perf ? usd(perf.max_drawdown) : '—'], ['Best market', perf?.best_market?.symbol ?? '—']
+    ];
+    stats.forEach(([k, v], i) => { const x = 64 + (i % 3) * 360, y = 420 + Math.floor(i / 3) * 90; g.fillStyle = 'rgba(224,225,255,0.6)'; g.font = font(400, 20); g.fillText(k, x, y); g.fillStyle = '#ffffff'; g.font = font(500, 34); g.fillText(String(v), x, y + 42); });
+    g.fillStyle = 'rgba(255,255,255,0.42)'; g.font = font(400, 18);
+    g.fillText(`${location.host} · from Monad chain data · ${new Date().toISOString().slice(0, 10)}`, 64, 590);
+    const a = Object.assign(document.createElement('a'), { href: c.toDataURL('image/png'), download: `plumb-${d.account.address.slice(0, 10)}.png` });
+    document.body.append(a); a.click(); a.remove();
+  }
   function drawPnl() {
     const node = $('pnl-chart');
     if (!node) return;
     const rows = data.pnl_daily ?? [];
     if (!rows.length) { node.innerHTML = empty('No realized PnL yet'); return; }
+    if (pnlMode === 'calendar') { node.__chart?.dispose(); node.__chart = null; node.innerHTML = pnlCalendar(rows); return; }
+    if (!node.__chart) node.innerHTML = '';
     if (pnlMode === 'cumulative') {
       const last = num(rows.at(-1).cumulative);
       lineChart(node, { times: rows.map(r => r.t), series: [{ name: 'Cumulative net PnL', color: last >= 0 ? COLORS.long : COLORS.short, data: rows.map(r => num(r.cumulative)) }], bucketSeconds: 86400, fmt: v => usd(v, { sign: true }) });
@@ -220,8 +270,9 @@ export function mount(el, { params, query, setQuery, navigate }) {
   return {
     onTab(name, v) { if (name !== 'tab') return; tab = v; el.querySelectorAll('[data-tab="tab"]').forEach(b => b.classList.toggle('on', b.dataset.v === v)); setQuery({ tab: v === 'overview' ? null : v }); },
     onAction(a) {
-      if (a === 'pnl-cum' || a === 'pnl-daily') { pnlMode = a === 'pnl-cum' ? 'cumulative' : 'daily'; el.querySelectorAll('[data-action^="pnl-"]').forEach(b => b.classList.toggle('on', b.dataset.action === a)); drawPnl(); }
+      if (a === 'pnl-cum' || a === 'pnl-daily' || a === 'pnl-cal') { pnlMode = { 'pnl-cum': 'cumulative', 'pnl-daily': 'daily', 'pnl-cal': 'calendar' }[a]; el.querySelectorAll('[data-action^="pnl-"]').forEach(b => b.classList.toggle('on', b.dataset.action === a)); drawPnl(); }
       if (a === 'more') loadTrades().catch(() => {});
+      if (a === 'share' && data) { if (!an) toast('Analytics still loading; card uses totals only'); shareCard(); }
       if (a === 'watch' && data) { const on = watch.toggle(data.account.address, `#${data.account.id}`); toast(on ? 'Added to watchlist' : 'Removed from watchlist'); render(); }
       if (a === 'compare' && data) { let list = []; try { list = JSON.parse(sessionStorage.getItem('ps.compare') || '[]'); } catch { list = []; } if (!list.includes(data.account.address)) list.push(data.account.address); list = list.slice(-5); try { sessionStorage.setItem('ps.compare', JSON.stringify(list)); } catch { /* storage unavailable */ } navigate('/compare', { w: list.join(',') }); }
     },

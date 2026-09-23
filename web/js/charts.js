@@ -147,6 +147,24 @@ export function signedBars(el, { times, values, bucketSeconds, name = 'Value', f
   }, true);
 }
 
+// Two-sided bars: inflow above zero, outflow below (drawn negative), with the
+// net per period as a line (deposits vs withdrawals, taker buys vs sells).
+export function twoSided(el, { times, up, down, net = 'Net', bucketSeconds, fmt = v => usd(v, { sign: true }), yFmt = usdAxis }) {
+  const chart = init(el);
+  if (!chart) return;
+  const upData = up.data.map(v => num(v) ?? 0), downData = down.data.map(v => -(num(v) ?? 0));
+  chart.setOption({
+    ...base(), xAxis: timeAxis(times, bucketSeconds), yAxis: valueAxis(yFmt),
+    legend: { show: false, data: [up.name, down.name, net] },
+    tooltip: { ...base().tooltip, formatter: tooltip(fmt, bucketSeconds) },
+    series: [
+      { name: up.name, type: 'bar', stack: 's', data: upData, itemStyle: { color: up.color ?? T.long, borderRadius: [2, 2, 0, 0] }, barMaxWidth: 18 },
+      { name: down.name, type: 'bar', stack: 's', data: downData, itemStyle: { color: down.color ?? T.short, borderRadius: [0, 0, 2, 2] }, barMaxWidth: 18 },
+      { name: net, type: 'line', data: upData.map((v, i) => v + downData[i]), symbol: 'none', lineStyle: { color: '#ffffff', width: 1.25, opacity: 0.75 }, itemStyle: { color: '#ffffff' }, z: 5 }
+    ]
+  }, true);
+}
+
 // Rows (markets) × time buckets on a diverging scale centred on zero: two
 // hues and a grey midpoint; values beyond ±clamp take the end colours.
 export const DIVERGING = { neg: '#0098de', mid: '#2c2b33', pos: '#d36c00' };

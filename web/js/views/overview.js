@@ -4,7 +4,7 @@
 import { get, stream } from '../api.js';
 import { usd, compact, int, price, pct, num, esc, timeOnly, ago, duration } from '../format.js';
 import { kpi, seg, table, mkt, sideTag, addr, ratio, pctCell, fundingCell, fundingTip, tradeAction, chartTools, skeleton, skChart, empty, assignColors, colorOf, hasColor, logo, OTHER_HEX, SLOT_HEX } from '../ui.js';
-import { sparkline, stackedBars, lineChart, signedBars, toggleSeries, COLORS } from '../charts.js';
+import { sparkline, stackedBars, lineChart, signedBars, twoSided, toggleSeries, COLORS } from '../charts.js';
 
 const WINDOWS = [['24h', '24H'], ['7d', '7D'], ['30d', '30D'], ['all', 'All']];
 const MIN_SIZES = [['0', 'All'], ['100', '≥$100'], ['1000', '≥$1K'], ['10000', '≥$10K']];
@@ -50,10 +50,12 @@ export function mount(el, { query, setQuery }) {
       <div class="grid g-2">
         ${panel('oi', 'Open interest', 'One side, priced at the last trade')}
         ${panel('tvl', 'TVL', 'Collateral in the exchange contract')}
-        ${panel('flows', 'Net deposits', 'Deposits minus withdrawals per period')}
+        ${panel('flows', 'Deposits and withdrawals', 'Deposits up, withdrawals down; line: net per period')}
         ${panel('traders', 'Active traders', 'Distinct accounts trading per period')}
-        ${panel('fees', 'Fees', 'Protocol and insurance-fund shares')}
+        ${panel('fees', 'Fees', 'Gross fees on fills: protocol share (revenue) and insurance fund')}
         ${panel('liq', 'Liquidations', 'Liquidated notional by market')}
+        ${panel('tpnl', 'Trader PnL', 'Realized PnL of all traders per period (price PnL + funding, before fees)')}
+        ${panel('taker', 'Taker flow', 'Aggressive buys up, sells down; line: net per period')}
       </div>
       <div class="section-label">Activity</div>
       <div class="grid g-3">
@@ -102,7 +104,7 @@ export function mount(el, { query, setQuery }) {
       kpi({ label: `Volume · ${wl}`, value: usd(h.volume.value), delta: h.volume.change_pct, note: `${int(data.markets.reduce((a, m) => a + (m.fills ?? 0), 0))} trades${partial}`, spark: 'sp-vol', tip: 'Notional of every match, counted once (the maker side). A trade is one match between a maker and a taker.' }),
       kpi({ label: 'Open interest · now', value: usd(c?.open_interest), delta: seriesChange('open_interest'), note: c ? `${int(c.positions)} open positions` : '', spark: 'sp-oi', tip: 'Long notional at the mark price; equal to short notional by construction, so each contract counts once. The change compares the window\'s first and last points of the event-derived series.' }),
       kpi({ label: 'TVL · now', value: usd(c?.tvl), delta: seriesChange('tvl'), note: `${usd(h.net_flow.value, { sign: true })} net flow · ${wl}`, spark: 'sp-tvl', tip: 'Collateral held by the exchange contract, read from chain state.' }),
-      kpi({ label: `Fees · ${wl}`, value: usd(h.fees.value), delta: h.fees.change_pct, note: `${usd(h.protocol_fees.value)} to protocol`, spark: 'sp-fees', tip: `Fees charged on fills, gross: ${usd(h.insurance_fees.value)} to the insurance fund and ${usd(h.protocol_fees.value)} protocol share, of which ${usd(h.builder_fees)} went to order builders. Rebates and referral shares are paid outside fills and are not deducted.` }),
+      kpi({ label: `Fees · ${wl}`, value: usd(h.fees.value), delta: h.fees.change_pct, note: `Revenue ${usd(h.protocol_fees.value)}${w === '24h' ? ` · ${usd((num(h.protocol_fees.value) ?? 0) * 365)} annualized` : ''}`, spark: 'sp-fees', tip: `Fees charged on fills, gross: ${usd(h.insurance_fees.value)} to the insurance fund and ${usd(h.protocol_fees.value)} protocol share, of which ${usd(h.builder_fees)} went to order builders. Rebates and referral shares are paid outside fills and are not deducted.` }),
       kpi({ label: `Active traders · ${wl}`, value: int(h.traders.value), delta: h.traders.change_pct, note: `${int(h.new_accounts.value)} new accounts`, spark: 'sp-tr' }),
       kpi({ label: `Liquidations · ${wl}`, value: usd(h.liquidated.value), delta: h.liquidated.change_pct, invert: true, note: `${int(h.liquidations.value)} liquidations`, spark: 'sp-liq' })
     ].join('');
@@ -152,7 +154,15 @@ export function mount(el, { query, setQuery }) {
     if (cumulative) lineChart(tvl, { times, series: [{ name: 'TVL', color: SLOT_HEX[2], data: pts.map(p => num(p.tvl)) }], bucketSeconds: b, scale: true }); else tvl.innerHTML = empty(waitHistory);
     const flows = $('flows'); flows.innerHTML = '';
     headValue('flows', `<span class="${num(h.net_flow.value) >= 0 ? 'pos' : 'neg'}">${usd(h.net_flow.value, { sign: true })}</span>`, `${usd(h.deposits.value)} in · ${usd(h.withdrawals.value)} out`);
-    signedBars(flows, { times, values: pts.map(p => num(p.net_flow)), bucketSeconds: b, name: 'Net deposits' });
+    twoSided(flows, { times, bucketSeconds: b, up: { name: 'Deposits', data: pts.map(p => p.deposits) }, down: { name: 'Withdrawals', data: pts.map(p => p.withdrawals) }, net: 'Net deposits' });
+    const tp = $('tpnl'); tp.innerHTML = '';
+    const totalPnl = pts.reduce((a, p) => a + (num(p.realized_pnl) ?? 0), 0);
+    headValue('tpnl', `<span class="${totalPnl >= 0 ? 'pos' : 'neg'}">${usd(totalPnl, { sign: true })}</span>`, `${windowLabel()} · net of fees ${usd(totalPnl - (num(h.fees.value) ?? 0), { sign: true })}`);
+    signedBars(tp, { times, values: pts.map(p => num(p.realized_pnl)), bucketSeconds: b, name: 'Trader realized PnL' });
+    const tk = $('taker'); tk.innerHTML = '';
+    const buys = pts.reduce((a, p) => a + (num(p.taker_buy) ?? 0), 0), sells = pts.reduce((a, p) => a + (num(p.taker_sell) ?? 0), 0);
+    headValue('taker', buys + sells ? `${pct(buys / (buys + sells) * 100, { digits: 1 })} buys` : '—', `${usd(buys)} bought · ${usd(sells)} sold`);
+    twoSided(tk, { times, bucketSeconds: b, up: { name: 'Taker buys', data: pts.map(p => p.taker_buy) }, down: { name: 'Taker sells', data: pts.map(p => p.taker_sell) }, net: 'Net taker buying' });
     const tr = $('traders'); tr.innerHTML = '';
     headValue('traders', int(h.traders.value), `${w === 'all' ? 'all-time' : w} distinct`);
     stackedBars(tr, { times, series: [{ name: 'Active traders', color: COLORS.accent, data: pts.map(p => p.traders) }], bucketSeconds: b, fmt: v => int(v), yFmt: v => compact(v, { digits: 0 }) });
