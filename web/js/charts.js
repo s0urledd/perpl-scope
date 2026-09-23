@@ -80,7 +80,15 @@ const niceCeil = v => { const p = 10 ** Math.floor(Math.log10(v)); return [1, 2,
 export const usdAxis = v => { const n = Number(v); if (!n) return '$0'; const a = Math.abs(n); const [k, u] = a >= 1e9 ? [1e9, 'B'] : a >= 1e6 ? [1e6, 'M'] : a >= 1e3 ? [1e3, 'K'] : [1, '']; const x = a / k; return `${n < 0 ? '-' : ''}$${x >= 100 || Number.isInteger(x) ? Math.round(x) : x.toFixed(1).replace(/\.0$/, '')}${u}`; };
 const valueAxis = fmt => ({ type: 'value', splitNumber: 4, axisLabel: { color: T.faint, formatter: fmt, margin: 10 }, splitLine: { lineStyle: { color: T.grid } }, axisLine: { show: false }, axisTick: { show: false } });
 const row = (color, name, value) => `<div style="display:flex;justify-content:space-between;gap:18px;line-height:1.7"><span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${color};margin-right:7px"></span>${esc(name)}</span><b style="font-weight:500;font-variant-numeric:tabular-nums">${value}</b></div>`;
-function tooltip(fmt, bucketSeconds, { total = false, exclude = null } = {}) {
+// The last bucket while its period is still running: its bar is drawn faded
+// and its tooltip says so, so a half-filled hour does not read as a drop.
+function partialAt(times, bucketSeconds) {
+  const last = Number(times?.at?.(-1));
+  return Number.isFinite(last) && bucketSeconds > 0 && last + bucketSeconds > Date.now() / 1000 ? times.length - 1 : -1;
+}
+const PARTIAL_OPACITY = 0.4;
+const fade = (data, at) => (at < 0 ? data : data.map((d, i) => (i !== at ? d : d && typeof d === 'object' && !Array.isArray(d) ? { ...d, itemStyle: { ...d.itemStyle, opacity: PARTIAL_OPACITY } } : { value: d, itemStyle: { opacity: PARTIAL_OPACITY } })));
+function tooltip(fmt, bucketSeconds, { total = false, exclude = null, partial = -1 } = {}) {
   return params => {
     const all = Array.isArray(params) ? params : [params];
     // A running-total line is shown on its own row, outside the per-period sum.
@@ -88,7 +96,8 @@ function tooltip(fmt, bucketSeconds, { total = false, exclude = null } = {}) {
     const list = exclude ? all.filter(p => p.seriesName !== exclude) : all;
     if (!list.length) return '';
     const t = list[0].axisValue;
-    const head = `<div style="color:${T.faint};margin-bottom:4px">${bucketSeconds >= 86400 ? date(t) : dateTime(t) + ' UTC'}</div>`;
+    const running = partial >= 0 && list[0].dataIndex === partial ? ' · in progress' : '';
+    const head = `<div style="color:${T.faint};margin-bottom:4px">${bucketSeconds >= 86400 ? date(t) : dateTime(t) + ' UTC'}${running}</div>`;
     const rows = list.filter(p => p.value !== null && p.value !== undefined && p.value !== 0 && p.value !== '-').sort((a, b) => Math.abs(b.value) - Math.abs(a.value)).slice(0, 10);
     const sum = list.reduce((a, p) => a + (num(p.value) ?? 0), 0);
     const foot = [total && list.length > 1 ? row('transparent', 'Total', fmt(sum)) : '', extra && extra.value !== null && extra.value !== undefined ? row('#ffffff', extra.seriesName, fmt(extra.value)) : ''].join('');
@@ -123,16 +132,17 @@ export function stackedBars(el, { times, series, bucketSeconds, fmt = v => usd(v
   if (!chart) return;
   let run = 0;
   const total = cumulative ? times.map((_, i) => (run += series.reduce((a, s) => a + (num(s.data[i]) || 0), 0))) : null;
+  const partial = partialAt(times, bucketSeconds);
   chart.setOption({
     ...base(),
     grid: { ...base().grid, right: cumulative ? 8 : 12, bottom: zoom ? 30 : 6 },
     xAxis: timeAxis(times, bucketSeconds),
     yAxis: cumulative ? [valueAxis(yFmt), { ...valueAxis(yFmt), splitLine: { show: false } }] : valueAxis(yFmt),
     legend: { show: false, data: [...series.map(s => s.name), ...(cumulative ? [CUMULATIVE] : [])] },
-    tooltip: { ...base().tooltip, formatter: tooltip(fmt, bucketSeconds, { total: true, exclude: CUMULATIVE }) },
+    tooltip: { ...base().tooltip, formatter: tooltip(fmt, bucketSeconds, { total: true, exclude: CUMULATIVE, partial }) },
     dataZoom: zoom ? zoomOptions() : undefined,
     series: [
-      ...series.map((s, i) => ({ name: s.name, type: 'bar', stack: 'a', data: s.data, itemStyle: { color: s.color, borderRadius: i === series.length - 1 ? [2, 2, 0, 0] : 0, borderColor: '#0e0d10', borderWidth: series.length > 1 ? 0.5 : 0 }, barMaxWidth: 22, emphasis: { focus: 'series' } })),
+      ...series.map((s, i) => ({ name: s.name, type: 'bar', stack: 'a', data: fade(s.data, partial), itemStyle: { color: s.color, borderRadius: i === series.length - 1 ? [2, 2, 0, 0] : 0, borderColor: '#0e0d10', borderWidth: series.length > 1 ? 0.5 : 0 }, barMaxWidth: 22, emphasis: { focus: 'series' } })),
       ...(cumulative ? [{ name: CUMULATIVE, type: 'line', yAxisIndex: 1, data: total, symbol: 'none', smooth: 0.2, lineStyle: { color: 'rgba(255,255,255,0.75)', width: 1.5 }, itemStyle: { color: '#ffffff' }, z: 5 }] : [])
     ]
   }, true);
@@ -174,10 +184,11 @@ export function signedBars(el, { times, values, bucketSeconds, name = 'Value', f
     const labelFirst = firstBreak === -1 || firstBreak >= times.length / 14;
     xAxis.axisLabel = { ...xAxis.axisLabel, interval: 0, hideOverlap: true, formatter: (v, i) => ((i === 0 && labelFirst) || (i > 0 && day(times[i - 1]) !== day(v)) ? timeLabel(day(v) * 86400, 86400) : '') };
   }
+  const partial = dayTicks ? -1 : partialAt(times, bucketSeconds); // funding events are points in time, not periods
   chart.setOption({
     ...base(), xAxis, yAxis: valueAxis(yFmt),
-    tooltip: { ...base().tooltip, formatter: tooltip(fmt, bucketSeconds) },
-    series: [{ name, type: 'bar', data: values.map(v => ({ value: v, itemStyle: { color: (num(v) ?? 0) >= 0 ? T.long : T.short, borderRadius: (num(v) ?? 0) >= 0 ? [2, 2, 0, 0] : [0, 0, 2, 2] } })), barMaxWidth: 18 }]
+    tooltip: { ...base().tooltip, formatter: tooltip(fmt, bucketSeconds, { partial }) },
+    series: [{ name, type: 'bar', data: fade(values.map(v => ({ value: v, itemStyle: { color: (num(v) ?? 0) >= 0 ? T.long : T.short, borderRadius: (num(v) ?? 0) >= 0 ? [2, 2, 0, 0] : [0, 0, 2, 2] } })), partial), barMaxWidth: 18 }]
   }, true);
 }
 
@@ -187,13 +198,14 @@ export function twoSided(el, { times, up, down, net = 'Net', bucketSeconds, fmt 
   const chart = init(el);
   if (!chart) return;
   const upData = up.data.map(v => num(v) ?? 0), downData = down.data.map(v => -(num(v) ?? 0));
+  const partial = partialAt(times, bucketSeconds);
   chart.setOption({
     ...base(), xAxis: timeAxis(times, bucketSeconds), yAxis: valueAxis(yFmt),
     legend: { show: false, data: [up.name, down.name, net] },
-    tooltip: { ...base().tooltip, formatter: tooltip(fmt, bucketSeconds) },
+    tooltip: { ...base().tooltip, formatter: tooltip(fmt, bucketSeconds, { partial }) },
     series: [
-      { name: up.name, type: 'bar', stack: 's', data: upData, itemStyle: { color: up.color ?? T.long, borderRadius: [2, 2, 0, 0] }, barMaxWidth: 18 },
-      { name: down.name, type: 'bar', stack: 's', data: downData, itemStyle: { color: down.color ?? T.short, borderRadius: [0, 0, 2, 2] }, barMaxWidth: 18 },
+      { name: up.name, type: 'bar', stack: 's', data: fade(upData, partial), itemStyle: { color: up.color ?? T.long, borderRadius: [2, 2, 0, 0] }, barMaxWidth: 18 },
+      { name: down.name, type: 'bar', stack: 's', data: fade(downData, partial), itemStyle: { color: down.color ?? T.short, borderRadius: [0, 0, 2, 2] }, barMaxWidth: 18 },
       { name: net, type: 'line', data: upData.map((v, i) => v + downData[i]), symbol: 'none', lineStyle: { color: '#ffffff', width: 1.25, opacity: 0.75 }, itemStyle: { color: '#ffffff' }, z: 5 }
     ]
   }, true);

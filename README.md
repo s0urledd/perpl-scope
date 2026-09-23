@@ -1,9 +1,12 @@
 # Plumb
 
-**Onchain analytics, risk data and a public API for Perpl on Monad.**
+**Real-time analytics, risk data and alerts for Perpl on Monad.**
 
 Plumb tracks every trade, position and liquidation on
-[Perpl](https://perpl.xyz), the onchain perpetuals exchange on Monad. It is
+[Perpl](https://perpl.xyz), the onchain perpetuals exchange on Monad, as it
+happens: a trade shows on the live tape as soon as its block is proposed,
+before it is final, and the finalized figures follow about a second later.
+Monad's speed and Perpl's fully onchain order book make that possible. It is
 built from raw exchange events and contract state, indexed directly from
 Monad, with no third-party indexer or Perpl API in the data path.
 
