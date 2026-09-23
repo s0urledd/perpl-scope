@@ -34,7 +34,7 @@ export function mount(el, { query, setQuery }) {
     { key: 'insurance', label: 'Insurance', n: true, sort: r => num(r.insurance) ?? 0, render: r => usd(r.insurance) }
   ];
   function render() { if (data) el.querySelector('#list').innerHTML = table({ id: 'm', columns: COLS, rows: data.markets, sortKey: sort.key, sortDir: sort.dir, rowAttrs: r => `class="link${!num(r.volume) && !num(r.open_interest) ? ' inactive' : ''}" data-href="#/markets/${r.id}"` }); }
-  async function load() { data = await get(`protocol?window=${w}`); if (!alive) return; assignColors([...data.markets].sort((a, b) => num(b.volume) - num(a.volume)).map(m => m.id)); render(); }
+  async function load() { data = await get(`protocol?window=${w}`); if (!alive) return; assignColors([...data.markets].sort((a, b) => num(b.volume) - num(a.volume)).map(m => ({ id: m.id, symbol: m.symbol }))); render(); }
   // Funding across markets and time: APR per bucket, orange when longs pay.
   async function loadFunding() {
     const f = await get(`funding?window=${w}`, { maxAge: 30000 });

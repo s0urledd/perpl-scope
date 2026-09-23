@@ -21,7 +21,7 @@ export function mount(el, { query, setQuery }) {
     const [p, s, l] = await Promise.all([get(`protocol?window=${w}`), get(`protocol/series?window=${w}`), get(`liquidations?limit=200${market ? `&market=${market}` : ''}`)]);
     if (!alive) return;
     markets = p.markets;
-    assignColors([...p.markets].sort((a, b) => num(b.volume) - num(a.volume)).map(m => m.id));
+    assignColors([...p.markets].sort((a, b) => num(b.volume) - num(a.volume)).map(m => ({ id: m.id, symbol: m.symbol })));
     const h = p.headline;
     // Largest inside the selected window (from the latest 200 rows the feed holds).
     const span = { '24h': 86400, '7d': 7 * 86400, '30d': 30 * 86400 }[w];
