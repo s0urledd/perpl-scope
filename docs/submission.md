@@ -1,12 +1,21 @@
 # Submission: Monad Metropolis hackathon
 
-- **Target:** the Perpl sponsor bounty "Best Analytics / Risk Tool" (track 01,
-  Onchain Finance & Trading). No other bounty is targeted.
+- **Entry:** one project (the rules allow one per participant, §2.5) in
+  track 01, Onchain Finance & Trading, entered for both Perpl sponsor
+  bounties:
+  - "Best Analytics / Risk Tool": the dashboard and API (this document);
+  - "Best use of Perpl's API": the trading bot, built in this repository.
 - **Submissions:** open 2 October 2026 and close 14 October 2026, 06:59
-  GMT+3.
-- **Required:** a working product with a public URL, a demo, a short
-  write-up and a link to the code, built during the hackathon window. This
+  GMT+3 (13 October, 11:59 PM ET).
+- **Required (rules §4.1, §9):** a public repository with source, README,
+  open source licence, attribution and a commit history covering the build
+  window; a demo video of at most 3 minutes; how the project uses Monad, with
+  contract addresses or transaction hashes; architecture, stack and setup
+  documentation; and disclosure of AI coding tools in the README. This
   repository started on 12 September 2026.
+- **Sponsor bounty scoring (§5.2):** adherence to the bounty requirements
+  40 %, technical implementation 30 %, Monad integration 20 %, innovation
+  10 %.
 
 ## The brief, point by point
 
@@ -26,7 +35,7 @@ Judging criteria:
 | Per-market breakdown, long / short skew | Markets table and market pages. Perpl's long and short open interest are equal by construction, so skew is shown as the share of positions per side, average leverage per side and taker buy share |
 | Liquidations | Liquidations page, liquidations chart by market, latest liquidations on the overview, liquidation ladder per market |
 | Funding | Funding per 8 h and APR in every market row; a markets × time funding map on the Markets page; funding history and the next funding block on each market page |
-| Market share (optional) | Not built: no neutral on-chain source for other venues (DefiLlama's API became paid) |
+| Market share (optional) | Overview "Market share": Perpl's open interest among perp venues and within Monad, from DefiLlama's open-interest overview (its volume overview became paid), labelled as external and kept out of Plumb's own figures (`/api/v1/landscape`) |
 
 ### Wallet view
 
@@ -99,17 +108,20 @@ Judging criteria:
 
 ## Checklist
 
-- [ ] Deploy on the Huginn RPC host with `docker compose` and put the
-      dashboard behind TLS (`docs/runbook.md`).
-- [ ] Enable the execution event ring and the `exec-events` profile.
+- [x] Deploy on the Huginn RPC host with `docker compose` behind TLS
+      (https://plumb.huginn.tech).
+- [x] Enable the execution event ring and the `exec-events` profile.
 - [ ] Wait for the backfill to complete, then confirm on the status page
       that the integrity check passes.
 - [ ] Refresh the screenshots in `docs/images/` from the deployment.
-- [ ] Record the demo while the dashboard is live, so the block number
-      advances.
-- [x] Make the repository public (also restores free CI minutes).
-- [ ] Link the repository in the project profile.
-- [ ] Write-up: the README's opening and "Why the numbers hold".
+- [ ] Record the demo (at most 3 minutes) while the dashboard is live, so
+      the block number advances; link it in the README.
+- [x] Make the repository public.
+- [x] Link the repository in the project profile.
+- [x] Licence file, attribution and AI disclosure in the README.
+- [ ] Trading bot: live on mainnet, with its transactions listed in the
+      README and on the Bot page.
+- [ ] Project profile: name "Plumb", one-line description and description.
 
 ## Claims and their evidence
 
@@ -127,6 +139,6 @@ Judging criteria:
 
 Claims to avoid:
 - exact prediction of liquidation execution prices;
-- market share against other venues;
+- market share figures as Plumb's own measurement (they are DefiLlama's);
 - anything about accounts or periods the status page shows as not yet
   indexed.
