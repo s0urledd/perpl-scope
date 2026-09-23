@@ -89,10 +89,12 @@ curl -s 'https://plumb.huginn.tech/api/v1/protocol?window=7d' | jq .headline.vol
 curl -s 'https://plumb.huginn.tech/api/v1/leaderboard?window=30d&by=pnl&limit=10'
 curl -s  https://plumb.huginn.tech/api/v1/cohorts | jq '.by_size[] | {label, long_share_pct}'
 curl -N  https://plumb.huginn.tech/api/v1/stream
+# a wallet's positions and how far each is from liquidation
+curl -s  https://plumb.huginn.tech/api/v1/wallets/1 | jq '.positions[] | {symbol, side, notional, liquidation_distance_pct}'
 ```
 
 Amounts are exact decimal strings, and every response carries the block it
-was computed at. Reference: [docs/api.md](docs/api.md).
+was computed at, so scripts and bots can use the data as it is. Reference: [docs/api.md](docs/api.md).
 
 ## Architecture
 
@@ -140,13 +142,15 @@ npm ci && npm run check && npm test   # unit tests, no network needed
 
 ## Roadmap
 
-- **Trading bot**: a bot that trades on Perpl through its API, using Plumb's
-  data for its signals and risk limits. In progress: [docs/bot.md](docs/bot.md).
+- **Trading bot** (planned): trading on Perpl through its API, with Plumb's
+  data for signals and risk limits. Notes: [docs/bot.md](docs/bot.md).
+- **More alerts**: webhooks alongside Telegram, and alerts on a market's
+  liquidation ladder.
 
 ## Monad Metropolis
 
 Entered in track 01, Onchain Finance & Trading, for Perpl's "Best Analytics /
-Risk Tool" and "Best use of Perpl's API" bounties. Checklist and demo notes:
+Risk Tool" bounty. Checklist and demo notes:
 [docs/submission.md](docs/submission.md).
 
 ## Credits
