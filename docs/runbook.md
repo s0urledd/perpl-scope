@@ -9,10 +9,9 @@ to WebSocket heads or polling.
 
 - Docker Engine with Compose v2, on the node's host if execution events are
   wanted.
-- Disk: about 5 GB for ClickHouse with the full history since the exchange
-  launched (block 54,773,010, 11 February 2026), growing with trading
-  activity. Rollups and snapshots add
-  tens of megabytes.
+- Disk: 3.4 GB for ClickHouse with the full history since the exchange
+  launched (block 54,773,010, 11 February 2026; 67 million events by
+  September 2026), growing with trading activity.
 - Memory: ClickHouse is capped at 8 GB and the app at 3 GB by default
   (`CLICKHOUSE_MEMORY`, `APP_MEMORY`); neither needs that much at today's
   volume.

@@ -112,9 +112,9 @@ on-chain are checked against this classification on every validation run.
 | Resting depth | on-chain | Walked level by level; walk cost 40 requests for 11 markets in 2.4 s on the public RPC. Depth past a walk that hit its level cap is a lower bound (`complete: false`, shown as "≥") |
 | Liquidity cover, stress test | derived | Deterministic functions of validated inputs |
 | ADL queue | approximation | Ranking rule from the Perpl documentation; venue ordering is off-chain |
-| Trade price, size and fee from linked fills | validated | 154,264 / 154,264 position events linked over 400,000 blocks, no size mismatch; fee split equals the fill fee on every building fill |
+| Trade price, size and fee from linked fills | validated | Full history: 33,557,868 / 33,557,868 position events linked, and fee split equal to the fill fee on 18,630,950 / 18,630,950 building fills (2026-09-23) |
 | Volume | validated | 24 h maker-fill volume within 0.001 % (2026-09-21) and 0.035 % (2026-09-23) of Perpl's venue figure |
-| Open interest from events | validated | Event deltas equal the contract's counters for all 11 markets (400,000 blocks); rechecked from launch by `/api/v1/integrity` |
+| Open interest and TVL from events | validated | Summed from launch, both equal the contract at the same block: all 11 markets exact, TVL to the micro-dollar (2026-09-23, `docs/evidence/integrity-2026-09-23.json`) |
 
 Not modelled: individual resting orders (only aggregate depth per price
 level), cross-margin (the venue is isolated-margin), funding accrued between
@@ -134,10 +134,10 @@ traded at (`PositionIncreased.pricePNS` is the blended entry price) and
 `PositionClosed` carries no size. Every position event is immediately
 followed in its transaction by the fill that settled it: a maker fill for the
 same account and market, or the aggressor's taker fill. The decoder links
-them and takes price, size and fee from the fill. On 400,000 live blocks,
-154,264 of 154,264 position events linked, with no size mismatch. A
-liquidation executed on the book reports its taker fill before
-`PositionLiquidated`, and is linked the same way. `PositionInverted` carries
+them and takes price, size and fee from the fill. Over the full history, all
+33,557,868 position events linked. A liquidation executed on the book reports
+its taker fill before `PositionLiquidated` and is linked the same way; all
+3,341 liquidations to date executed on the book. `PositionInverted` carries
 the new side.
 
 | Metric | Definition |
@@ -157,12 +157,23 @@ the new side.
 | Window comparison | A window is `[head − length, head]`. `prev` is the preceding window of the same length; `change_pct` = (value − prev) ÷ prev. All-time starts at the first indexed block. |
 | Coverage | Every windowed response states whether indexed history covers the whole window. A partial window is labelled, never silently short. |
 
-**Integrity.** Summing every event since launch must reproduce the contract:
-per market, the event-derived open interest equals `longOpenInterestLNS` and
-`shortOpenInterestLNS`, and the net flow equals the exchange's collateral
-balance at the same block. `GET /api/v1/integrity` and the status page run
-this check. On 400,000 blocks of live data the event-derived open-interest
-deltas equalled the contract's counters for all 11 markets.
+**Integrity.** Summing every event since launch must reproduce the
+contract:
+- per market, the event-derived open interest must equal
+  `longOpenInterestLNS` and `shortOpenInterestLNS`;
+- the net flow must equal the exchange's collateral balance at the same
+  block.
+
+`GET /api/v1/integrity` and the status page run this check. On 2026-09-23 at
+block 107,279,223, over 67,168,371 events from block 54,773,010 onwards:
+- open interest matched the contract exactly for all 11 markets on both
+  sides;
+- the net flow matched the balance to the micro-dollar ($3,942,293.243869);
+- no position event was left unlinked (0 of 33,557,868);
+- no fee split differed from its fill (0 of 18,630,950);
+- the table held no duplicate rows.
+
+Evidence: `docs/evidence/integrity-2026-09-23.json`.
 
 ### Funding
 

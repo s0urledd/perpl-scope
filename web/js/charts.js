@@ -107,9 +107,22 @@ export function stackedBars(el, { times, series, bucketSeconds, fmt = v => usd(v
   }, true);
 }
 
-export function lineChart(el, { times, series, bucketSeconds, fmt = v => usd(v), yFmt = usdAxis, area = true, scale = false }) {
+// Axis money with enough decimals to tell ticks apart on a narrow range.
+function usdAxisFor(lo, hi) {
+  const top = Math.max(Math.abs(lo), Math.abs(hi));
+  const [k, u] = top >= 1e9 ? [1e9, 'B'] : top >= 1e6 ? [1e6, 'M'] : top >= 1e3 ? [1e3, 'K'] : [1, ''];
+  const step = (hi - lo) / 5 / k;
+  const d = step > 0 ? Math.min(4, Math.max(0, Math.ceil(-Math.log10(step)))) : 1;
+  return v => `${v < 0 ? '-' : ''}$${(Math.abs(v) / k).toFixed(d)}${u}`;
+}
+
+export function lineChart(el, { times, series, bucketSeconds, fmt = v => usd(v), yFmt = null, area = true, scale = false }) {
   const chart = init(el);
   if (!chart) return;
+  if (!yFmt) {
+    const vals = series.flatMap(s => s.data).map(num).filter(v => v !== null);
+    yFmt = scale && vals.length ? usdAxisFor(Math.min(...vals), Math.max(...vals)) : usdAxis;
+  }
   chart.setOption({
     ...base(), grid: { ...base().grid, right: 22 }, xAxis: { ...timeAxis(times, bucketSeconds), boundaryGap: false }, yAxis: { ...valueAxis(yFmt), scale },
     tooltip: { ...base().tooltip, formatter: tooltip(fmt, bucketSeconds) },

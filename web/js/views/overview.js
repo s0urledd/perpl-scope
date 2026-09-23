@@ -75,6 +75,13 @@ export function mount(el, { query, setQuery }) {
     renderTape(); renderLiqs(l); renderFlows(f);
   }
 
+  // Change over the window from the running-sum series (null until history is complete).
+  function seriesChange(field) {
+    if (!series?.meta?.cumulative_complete) return undefined;
+    const vals = series.points.map(p => num(p[field])).filter(v => v !== null);
+    if (vals.length < 2 || !vals[0]) return undefined;
+    return Math.round((vals.at(-1) - vals[0]) / vals[0] * 10000) / 100;
+  }
   function spark(key, values, color = COLORS.accent) { const node = $(key); if (node && values.some(v => v !== null && v !== undefined)) sparkline(node, values, { color }); }
   function renderKpis() {
     const h = data.headline, c = data.current, pts = series.points;
@@ -82,8 +89,8 @@ export function mount(el, { query, setQuery }) {
     const partial = cov && !cov.complete ? ' <span class="tag warn" title="History for this window is still being indexed">partial</span>' : '';
     $('kpis').innerHTML = [
       kpi({ label: `Volume · ${w === 'all' ? 'all-time' : w}`, value: usd(h.volume.value), delta: h.volume.change_pct, note: `${int(h.trades.value)} trades${partial}`, spark: 'sp-vol' }),
-      kpi({ label: 'Open interest', value: usd(c?.open_interest), note: c ? `${int(c.positions)} open positions` : '', spark: 'sp-oi', tip: 'Long notional at the mark price; equal to short notional by construction, so each contract counts once.' }),
-      kpi({ label: 'TVL', value: usd(c?.tvl), note: `${usd(h.net_flow.value, { sign: true })} net flow`, spark: 'sp-tvl', tip: 'Collateral held by the exchange contract, read from chain state.' }),
+      kpi({ label: 'Open interest', value: usd(c?.open_interest), delta: seriesChange('open_interest'), note: c ? `${int(c.positions)} open positions` : '', spark: 'sp-oi', tip: 'Long notional at the mark price; equal to short notional by construction, so each contract counts once. The change compares the window\'s first and last points of the event-derived series.' }),
+      kpi({ label: 'TVL', value: usd(c?.tvl), delta: seriesChange('tvl'), note: `${usd(h.net_flow.value, { sign: true })} net flow`, spark: 'sp-tvl', tip: 'Collateral held by the exchange contract, read from chain state.' }),
       kpi({ label: 'Fees', value: usd(h.fees.value), delta: h.fees.change_pct, note: `${usd(h.protocol_fees.value)} to protocol`, spark: 'sp-fees', tip: `Maker and taker fees on fills, split between the protocol (${usd(h.protocol_fees.value)}) and the insurance fund (${usd(h.insurance_fees.value)}). Builder fees ${usd(h.builder_fees)}.` }),
       kpi({ label: 'Active traders', value: int(h.traders.value), delta: h.traders.change_pct, note: `${int(h.new_accounts.value)} new accounts`, spark: 'sp-tr' }),
       kpi({ label: 'Liquidations', value: usd(h.liquidated.value), delta: h.liquidated.change_pct, invert: true, note: `${int(h.liquidations.value)} positions`, spark: 'sp-liq' })

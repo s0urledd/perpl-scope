@@ -46,7 +46,11 @@ It needs no Perpl API: a Monad node is its only source.
 - **Liquidations** page, **funding** across markets and over time, and
   **deposit and withdrawal flows**.
 
+![Markets with the funding map](docs/images/markets.png)
+
 ## Wallets
+
+![Wallet profile](docs/images/wallet.png)
 
 Search any address or account ID (`/` focuses the search), or click any
 trader anywhere.
@@ -92,6 +96,8 @@ measured instead of estimated:
 - the **auto-deleveraging queue**;
 - health for every position, and concentration and insurance per market.
 
+![Risk: stress test and liquidation ladder](docs/images/risk.png)
+
 ## Why the numbers hold
 
 - **Finalized blocks only.** History and state are read at finalized blocks,
@@ -99,15 +105,20 @@ measured instead of estimated:
 - **Each event exactly once.** Coverage is tracked as block intervals. A
   range is recorded only after its rows are stored, and an interrupted
   commit is cleaned up on restart.
-- **Trades priced from their fills.** Every position change is linked to the
-  fill that settled it. Over 400,000 live blocks, 154,264 of 154,264 linked,
-  with no size mismatch.
-- **Reconciled against the contract.**
-  - Open interest summed from every event since launch must equal the
-    contract's counters, and net flows its collateral balance
-    (`/api/v1/integrity`).
-  - Live positions are reconciled with the open-interest counters every
-    poll, and rescanned through an independent path every hour.
+- **Trades priced from their fills.** Every position change is linked to
+  the fill that settled it. Over the full history this is 33,557,868 of
+  33,557,868 position events. The insurance and protocol fee split equals
+  the fill fee on all 18,630,950 fills that build a position.
+- **History reproduces the contract.** On 23 September 2026 at block
+  107,279,223, 67 million events since launch were summed and compared with
+  the contract ([evidence](docs/evidence/integrity-2026-09-23.json),
+  live at `/api/v1/integrity`):
+  - open interest matched the contract's counters exactly, for all
+    11 markets and both sides;
+  - the net collateral flow matched the exchange's balance to the
+    micro-dollar ($3,942,293.243869).
+- **Live positions are reconciled** with the open-interest counters every
+  poll, and rescanned through an independent path every hour.
 - **Matches the venue.** On 23 September 2026, the 24 h volume summed from
   maker fills was within 0.04 % of Perpl's own figure. Every active market
   was within 0.1 %, and the gaps come from window alignment. Perpl's API is

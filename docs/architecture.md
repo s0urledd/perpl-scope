@@ -93,9 +93,9 @@ closes, the size. Every one of them is immediately followed in its
 transaction by the fill that settled it: a `MakerOrderFilled` for the same
 account and market, or the `TakerOrderFilled` of the aggressor. The decoder
 links each position event to that fill and takes the price, size and fee from
-it. Over 400,000 live blocks, 154,264 of 154,264 position events linked, with
-no size mismatch, and the insurance and protocol fee split on the position
-event equalled the fill fee on every building fill.
+it. Over the full history (to 2026-09-23), all 33,557,868 position events
+linked. The insurance and protocol fee split on the position event equalled
+the fill fee on all 18,630,950 building fills.
 
 Two cases need care:
 
@@ -123,8 +123,9 @@ the status page and in `/api/v1/health` (`index.decoder_checks`).
 | `rollup_hours` | Which hours are rolled, with the rollup version | hour |
 | `snapshots`, `exchange_snapshots` | Contract state every 5 minutes: mark, oracle, OI, funding, insurance; TVL and account count | ts |
 
-The full history takes about 5 GB compressed (`ev` and `ev_account` hold
-almost all of it); rollups are tens of megabytes.
+The full history (67 million events, February to September 2026) takes
+3.4 GB compressed, almost all of it in `ev` and `ev_account`. Rollups take
+tens of megabytes.
 
 ## Aggregation
 
