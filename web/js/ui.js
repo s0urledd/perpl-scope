@@ -20,13 +20,20 @@ export const EXPLORER = 'https://monadvision.com';
 const SLOTS = ['var(--c1)', 'var(--c2)', 'var(--c3)', 'var(--c4)', 'var(--c5)', 'var(--c6)'];
 export const SLOT_HEX = ['#7b7dea', '#d36c00', '#00a999', '#b28500', '#cd5ea2', '#0098de'];
 export const OTHER_HEX = '#5c5b66';
+// Main assets keep a colour close to their own brand on every page: MON
+// purple, BTC orange, SOL teal, ZEC gold, LIT pink, ETH blue. Other markets
+// take a free slot by volume, or grey "Other".
+const ASSET_SLOT = { MON: 0, BTC: 1, SOL: 2, ZEC: 3, LIT: 4, ETH: 5 };
+const COLOR_KEY = 'ps.colors.v2';
 let colorMap = {};
-try { colorMap = JSON.parse(localStorage.getItem('ps.colors') || '{}'); } catch { colorMap = {}; }
-// Assigns free slots to markets ranked by all-time volume (called once data arrives).
-export function assignColors(idsByVolume) {
+try { colorMap = JSON.parse(localStorage.getItem(COLOR_KEY) || '{}'); } catch { colorMap = {}; }
+// markets: [{ id, symbol }] ranked by all-time volume (plain ids also accepted).
+export function assignColors(markets) {
+  const list = markets.map(m => (typeof m === 'object' ? m : { id: m, symbol: null }));
+  for (const m of list) { const slot = ASSET_SLOT[assetOf(m.symbol)]; if (slot !== undefined) colorMap[m.id] = slot; }
   const used = new Set(Object.values(colorMap));
-  for (const id of idsByVolume) { if (Object.keys(colorMap).length >= SLOTS.length) break; if (colorMap[id] === undefined) { const slot = SLOTS.findIndex((_, i) => !used.has(i)); if (slot === -1) break; colorMap[id] = slot; used.add(slot); } }
-  try { localStorage.setItem('ps.colors', JSON.stringify(colorMap)); } catch { /* storage unavailable */ }
+  for (const m of list) { if (colorMap[m.id] !== undefined) continue; const slot = SLOTS.findIndex((_, i) => !used.has(i)); if (slot === -1) break; colorMap[m.id] = slot; used.add(slot); }
+  try { localStorage.setItem(COLOR_KEY, JSON.stringify(colorMap)); } catch { /* storage unavailable */ }
 }
 export const colorOf = id => (colorMap[id] === undefined ? OTHER_HEX : SLOT_HEX[colorMap[id]]);
 export const hasColor = id => colorMap[id] !== undefined;
@@ -129,4 +136,20 @@ export function download(filename, text, type = 'text/csv') {
   const url = URL.createObjectURL(new Blob([text], { type }));
   const a = Object.assign(document.createElement('a'), { href: url, download: filename });
   document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Per-market series merged by displayed asset: a relisted market and its
+// delisted original ('SOL_v2' shown as 'SOL', and 'SOL') become one series.
+// The row keeps the id of the member with the most activity, for its colour.
+export function mergeByAsset(rows, fields) {
+  const byName = new Map();
+  for (const r of rows) {
+    const total = fields.reduce((a, f) => a + r[f].reduce((b, v) => b + (Number(v) || 0), 0), 0);
+    const cur = byName.get(r.symbol);
+    if (!cur) { byName.set(r.symbol, { ...r, _total: total, ...Object.fromEntries(fields.map(f => [f, r[f].map(v => Number(v) || 0)])) }); continue; }
+    for (const f of fields) cur[f] = cur[f].map((v, i) => v + (Number(r[f][i]) || 0));
+    if (total > cur._total) cur.id = r.id;
+    cur._total += total;
+  }
+  return [...byName.values()];
 }

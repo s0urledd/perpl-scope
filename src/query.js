@@ -21,7 +21,7 @@ const cond = (col, ranges) => ranges.length ? ranges.map(([a, b]) => `(${col} >=
 
 export const BUCKETS = { '1h': 3600, '4h': 14400, '1d': 86400, '1w': 604800 };
 export const WINDOWS = { '24h': 86400, '7d': 7 * 86400, '30d': 30 * 86400, '90d': 90 * 86400, all: null };
-export const DEFAULT_BUCKET = { '24h': '1h', '7d': '4h', '30d': '1d', '90d': '1d', all: '1d' };
+export const DEFAULT_BUCKET = { '24h': '1h', '7d': '4h', '30d': '1d', '90d': '1d', all: '1w' }; // all-time: weekly, so single spikes do not flatten the rest
 
 // Intersection of two sorted lists of [a, b) ranges.
 export function intersect(ranges, allowed) {

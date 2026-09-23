@@ -234,7 +234,7 @@ export function mount(el, { params, query, setQuery, navigate }) {
   }
 
   const PERIOD_LABEL = { '24h': '24 hours', '7d': '7 days', '30d': '30 days', all: 'All time' };
-  const rankCell = (n, of) => (n ? `<span class="rank-pill${n <= 10 ? ' top' : ''}">#${int(n)}</span><span class="faint"> of ${int(of)}</span>` : '<span class="faint">—</span>');
+  const rankCell = (n, of) => (n ? `<span class="rank-pill${n <= 10 ? ' lead' : ''}">#${int(n)}</span><span class="faint rank-of">of ${int(of)}</span>` : '<span class="faint">—</span>');
   function periodsTable() {
     return table({ id: 'periods', compact: true, columns: [
       { key: 'w', label: 'Period', render: r => `${PERIOD_LABEL[r.window] ?? esc(r.window)}${r.coverage_complete ? '' : ' <span class="tag warn" title="History for this window is still being indexed">partial</span>'}` },

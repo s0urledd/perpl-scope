@@ -108,12 +108,14 @@ button, input, select { font: inherit; color: inherit; }
 /* Overview hero: the venue's identity first, as venue analytics sites do. */
 .page-head.hero { align-items: center; margin: 12px 0 22px; }
 .hero-id { display: flex; align-items: center; gap: 14px; min-width: 0; }
-.hero-logo { width: 44px; height: 44px; border-radius: 10px; flex: none; box-shadow: 0 0 0 1px var(--line-2), 0 8px 24px rgba(111, 92, 255, 0.25); }
-.page-head.hero h1 { font-size: 28px; letter-spacing: -0.03em; line-height: 1.1; }
+.hero-logo { width: 26px; height: 26px; border-radius: 6px; flex: none; box-shadow: 0 0 0 1px var(--line-2); }
+.page-head.hero h1 { display: flex; align-items: center; gap: 10px; font-size: 22px; letter-spacing: -0.02em; line-height: 26px; }
+.page-head.hero h1 .hero-muted { margin-left: -4px; }
+.page-head.hero .sub { margin-top: 6px; }
 .hero-muted { color: var(--text-3); font-weight: 500; }
 .hero-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .hero-actions .btn svg { width: 13px; height: 13px; margin-left: 2px; vertical-align: -1px; }
-@media (max-width: 860px) { .page-head.hero h1 { font-size: 22px; } .hero-logo { width: 36px; height: 36px; } }
+@media (max-width: 860px) { .page-head.hero h1 { font-size: 20px; } }
 .stack { display: flex; flex-direction: column; gap: 16px; }
 .grid { display: grid; gap: 16px; }
 .g-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -245,7 +247,8 @@ tr.hl td { background: rgba(162, 164, 255, 0.07); }
 .tag.bad { color: var(--short); background: var(--short-soft); }
 .tag.good { color: var(--long); background: var(--long-soft); }
 .rank-pill { display: inline-block; min-width: 34px; padding: 1px 6px; border-radius: 3px; font-size: 11.5px; font-weight: 500; text-align: center; color: var(--text-2); background: rgba(255, 255, 255, 0.06); font-variant-numeric: tabular-nums; }
-.rank-pill.top { color: var(--accent); background: var(--accent-soft); }
+/* Not ".top": that is the site header (sticky, z-index), which a pill must never inherit. */
+.rank-pill.lead { color: var(--accent); background: var(--accent-soft); }
 tr.inactive td { opacity: 0.5; }
 .sub.tags { display: flex; gap: 4px; margin-top: 3px; }
 .sub.tags .tag { font-size: 10.5px; padding: 1px 5px; cursor: help; }
@@ -363,3 +366,15 @@ tr.inactive td { opacity: 0.5; }
 .calc-out { margin: 0 -16px; }
 .calc-note { font-size: 11.5px; margin-top: 10px; }
 .lb-search { height: 30px; width: 240px; max-width: 100%; font-size: 12.5px; }
+/* Inline pieces inside table cells sit on the cell's 20px first line, centred,
+   so a logo, an icon button or a badge never shifts the row's values:
+   - a logo-first chip would otherwise align on the logo's bottom edge;
+   - 24px icon buttons would otherwise grow the line;
+   - small badges would otherwise sit low on the text baseline. */
+.t td .mkt, .t td .addr { vertical-align: top; height: 20px; }
+.t td .addr .icon-btn { width: 20px; height: 20px; }
+.t td .tag, .t td .side { vertical-align: top; margin-top: 1px; height: 18px; line-height: 18px; padding-top: 0; padding-bottom: 0; }
+/* Rank pills take the text line's own height, and the "of N" beside them a fixed
+   width, so pills line up in one column and centre on the row's values. */
+.t td .rank-pill { vertical-align: top; height: 20px; line-height: 20px; padding: 0 6px; min-width: 44px; }
+.t td .rank-of { display: inline-block; min-width: 64px; text-align: left; padding-left: 6px; }

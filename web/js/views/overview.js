@@ -3,7 +3,7 @@
 // latest liquidations and flows.
 import { get, stream } from '../api.js';
 import { usd, compact, int, price, pct, num, esc, timeOnly, ago, duration } from '../format.js';
-import { kpi, seg, table, mkt, sideTag, addr, ratio, pctCell, fundingCell, fundingTip, tradeAction, chartTools, skeleton, skChart, empty, assignColors, colorOf, hasColor, logo, ICON, OTHER_HEX, SLOT_HEX } from '../ui.js';
+import { kpi, seg, table, mkt, sideTag, addr, ratio, pctCell, fundingCell, fundingTip, tradeAction, chartTools, skeleton, skChart, empty, assignColors, colorOf, hasColor, logo, ICON, OTHER_HEX, SLOT_HEX, mergeByAsset } from '../ui.js';
 import { sparkline, stackedBars, lineChart, signedBars, twoSided, toggleSeries, COLORS, CUMULATIVE } from '../charts.js';
 
 const WINDOWS = [['24h', '24H'], ['7d', '7D'], ['30d', '30D'], ['all', 'All']];
@@ -26,8 +26,7 @@ export function mount(el, { query, setQuery }) {
   el.innerHTML = `
     <div class="page-head hero">
       <div class="hero-id">
-        <img class="hero-logo" src="img/venues/perpl.png" alt="" width="44" height="44">
-        <div><h1>Perpl <span class="hero-muted">Analytics</span></h1>
+        <div><h1><img class="hero-logo" src="img/venues/perpl.png" alt="" width="26" height="26">Perpl <span class="hero-muted">Analytics</span></h1>
           <div class="sub">Real-time protocol, wallet and risk analytics for Perpl on Monad.</div></div>
       </div>
       <div class="hero-actions"><a class="btn primary" href="https://app.perpl.xyz" target="_blank" rel="noopener noreferrer">Trade on Perpl ${ICON.ext}</a><div id="win">${seg('window', WINDOWS, w)}</div></div>
@@ -37,7 +36,7 @@ export function mount(el, { query, setQuery }) {
       <div class="grid g-main">
         <section class="panel">
           <div class="panel-head"><div><h2>Trading volume</h2><div class="desc">Maker-fill notional by market; line: running total</div></div><div class="head-right">${chartTools('main-chart', 'volume')}</div></div>
-          <div class="panel-head" style="min-height:0;padding-top:0"><div class="legend toggles" id="legend"></div><span class="meta" id="chart-meta"></span></div>
+          <div class="panel-head" style="min-height:0;padding-top:0"><div class="legend toggles" id="legend"></div><span class="head-right"><span id="bucket"></span><span class="meta" id="chart-meta"></span></span></div>
           <div class="panel-body"><div class="chart" id="main-chart">${skChart()}</div></div>
         </section>
         <section class="panel fill">
@@ -77,13 +76,18 @@ export function mount(el, { query, setQuery }) {
   // Every figure says which period it covers: the window, or "now" for state.
   const windowLabel = () => (w === 'all' ? 'all-time' : w);
   const BUCKET_NAMES = { 3600: 'hourly', 14400: '4-hour', 86400: 'daily', 604800: 'weekly' };
+  // Period length: the API's default per window (all-time: weekly), or daily/weekly on request.
+  const BUCKET_CHOICES = { '30d': [['1d', 'Daily'], ['1w', 'Weekly']], all: [['1d', 'Daily'], ['1w', 'Weekly']] };
+  let bucket = null;
+  const seriesPath = () => `protocol/series?window=${w}${bucket ? `&bucket=${bucket}` : ''}`;
+  function renderBucket() { const c = BUCKET_CHOICES[w]; $('bucket').innerHTML = c ? segSm('bucket', c, bucket ?? (w === 'all' ? '1w' : '1d')) : ''; }
 
   async function load() {
-    const [p, s] = await Promise.all([get(`protocol?window=${w}`), get(`protocol/series?window=${w}`)]);
+    const [p, s] = await Promise.all([get(`protocol?window=${w}`), get(seriesPath())]);
     if (!alive) return;
     data = p; series = s;
-    assignColors([...p.markets].sort((a, b) => num(b.volume) - num(a.volume)).map(m => m.id));
-    renderKpis(); renderVolume(); renderTrends(); renderMarkets(); renderWindows();
+    assignColors([...p.markets].sort((a, b) => num(b.volume) - num(a.volume)).map(m => ({ id: m.id, symbol: m.symbol })));
+    renderBucket(); renderKpis(); renderVolume(); renderTrends(); renderMarkets(); renderWindows();
   }
   async function loadFeeds() {
     const [t, l, f] = await Promise.all([get('trades?limit=200', { maxAge: 800 }), get('liquidations?limit=8'), get(`flows?window=${w}`)]);
@@ -124,7 +128,7 @@ export function mount(el, { query, setQuery }) {
 
   // Stacked by market: the six largest markets keep their colour, the rest fold into Other.
   function byMarket(metric) {
-    const all = (series.by_market ?? []).filter(m => m[metric].some(v => num(v) > 0));
+    const all = mergeByAsset(series.by_market ?? [], ['volume', 'liquidated', 'fees']).filter(m => m[metric].some(v => num(v) > 0));
     const top = all.filter(m => hasColor(m.id)), rest = all.filter(m => !hasColor(m.id));
     const list = top.map(m => ({ id: m.id, name: m.symbol, color: colorOf(m.id), data: m[metric].map(num) }));
     if (rest.length) list.push({ name: 'Other', color: OTHER_HEX, data: series.times.map((_, i) => rest.reduce((a, m) => a + num(m[metric][i]), 0)) });
@@ -135,7 +139,8 @@ export function mount(el, { query, setQuery }) {
   function renderVolume() {
     const node = $('main-chart'), b = series.meta.bucket_seconds;
     node.innerHTML = '';
-    $('chart-meta').textContent = `${w === 'all' ? 'All-time' : `Last ${w}`} · ${BUCKET_NAMES[b] ?? `${series.meta.bucket}`} bars · UTC`;
+    // With the daily/weekly switch shown, the meta names only the span.
+    $('chart-meta').textContent = BUCKET_CHOICES[w] ? `${w === 'all' ? 'All-time' : `Last ${w}`} · UTC` : `${w === 'all' ? 'All-time' : `Last ${w}`} · ${BUCKET_NAMES[b] ?? `${series.meta.bucket}`} bars · UTC`;
     const list = byMarket('volume');
     stackedBars(node, { times: series.times, series: list, bucketSeconds: b, cumulative: true, zoom: true });
     $('legend').innerHTML = list.map(s => `<button class="lg" data-action="toggle" data-name="${esc(s.name)}"><i style="background:${s.color}"></i>${legendLogo(s)}${esc(s.name)}</button>`).join('')
@@ -300,7 +305,7 @@ export function mount(el, { query, setQuery }) {
     const finished = backfill && !backfill.complete && p.complete;
     backfill = p;
     if (!alive || !series) return;
-    if (finished) get(`protocol/series?window=${w}`, { maxAge: 0 }).then(s => { if (!alive) return; series = s; renderTrends(); }).catch(() => {});
+    if (finished) get(seriesPath(), { maxAge: 0 }).then(s => { if (!alive) return; series = s; renderTrends(); }).catch(() => {});
     else if (!series.meta.cumulative_complete) for (const id of ['oi', 'tvl']) { const n = $(id)?.querySelector('.empty-state'); if (n) n.textContent = historyNote(); }
   }));
   get('health', { maxAge: 30000 }).then(h => { backfill = h.index?.backfill ?? null; }).catch(() => {});
@@ -313,7 +318,7 @@ export function mount(el, { query, setQuery }) {
     get(`flows?window=${w}`, { maxAge: 0 }).then(f => alive && renderFlows(f)).catch(() => {});
   }));
   off.push(stream.on('protocol', p => { if (w !== '24h' || !data || !alive) return; data = { ...data, headline: p.headline, current: p.current, markets: data.markets.map(m => { const u = p.markets.find(x => x.id === m.id); return u ? { ...m, mark: u.mark ?? m.mark, volume: u.volume, change_pct: u.change_pct, open_interest: u.open_interest ?? m.open_interest, funding: u.funding ?? m.funding } : m; }) }; renderKpis(); renderMarkets(); }));
-  const timer = setInterval(() => { get(`protocol/series?window=${w}`, { maxAge: 0 }).then(s => { if (!alive) return; series = s; renderVolume(); renderTrends(); if (w !== '24h') load().catch(() => {}); }).catch(() => {}); }, 60000);
+  const timer = setInterval(() => { get(seriesPath(), { maxAge: 0 }).then(s => { if (!alive) return; series = s; renderVolume(); renderTrends(); if (w !== '24h') load().catch(() => {}); }).catch(() => {}); }, 60000);
 
   load().catch(error => { $('kpis').innerHTML = `<div class="empty-state">Could not load protocol data (${esc(error.message)})</div>`; });
   loadFeeds().catch(() => {});
@@ -324,11 +329,12 @@ export function mount(el, { query, setQuery }) {
       if (name === 'window') setQuery({ window: v === '24h' ? null : v });
       if (name === 'min') { minSize = v; try { localStorage.setItem('ps.minsize', v); } catch { /* storage unavailable */ } $('minsize').innerHTML = segSm('min', MIN_SIZES, minSize); renderTape(); }
       if (name === 'flowv') { flowView = v; $('flowview').innerHTML = segSm('flowv', FLOW_VIEWS, flowView); renderFlows(); }
+      if (name === 'bucket') { bucket = v; renderBucket(); get(seriesPath()).then(s => { if (!alive) return; series = s; renderVolume(); renderTrends(); renderKpis(); }).catch(() => {}); return; }
       if (name === 'feesv') { feeView = v; $('fees-mode').innerHTML = segSm('feesv', FEE_VIEWS, feeView); renderFees(); }
     },
     onAction(a, t) { if (a === 'toggle') { t.classList.toggle('off'); toggleSeries($('main-chart'), t.dataset.name); } },
     onSort(id, key) { if (id !== 'markets') return; sort = { key, dir: sort.key === key && sort.dir === 'desc' ? 'asc' : 'desc' }; renderMarkets(); },
-    update(q) { const nw = WINDOWS.some(([v]) => v === q.get('window')) ? q.get('window') : '24h'; if (nw === w) return; w = nw; $('win').innerHTML = seg('window', WINDOWS, w); load().catch(() => {}); get(`flows?window=${w}`).then(f => alive && renderFlows(f)).catch(() => {}); },
+    update(q) { const nw = WINDOWS.some(([v]) => v === q.get('window')) ? q.get('window') : '24h'; if (nw === w) return; w = nw; bucket = null; $('win').innerHTML = seg('window', WINDOWS, w); load().catch(() => {}); get(`flows?window=${w}`).then(f => alive && renderFlows(f)).catch(() => {}); },
     destroy() { alive = false; clearInterval(timer); off.forEach(f => f()); }
   };
 }

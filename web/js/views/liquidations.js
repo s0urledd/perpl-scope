@@ -2,7 +2,7 @@
 // full feed (on-book liquidations and auto-deleveraging), live.
 import { get, stream } from '../api.js';
 import { usd, int, price, esc, dateTime, ago, num, size } from '../format.js';
-import { kpi, seg, table, mktLink, sideTag, addr, pnl, skeleton, skChart, empty, ICON, colorOf, hasColor, OTHER_HEX, assignColors, chartTools } from '../ui.js';
+import { kpi, seg, table, mktLink, sideTag, addr, pnl, skeleton, skChart, empty, ICON, colorOf, hasColor, OTHER_HEX, assignColors, chartTools, mergeByAsset } from '../ui.js';
 import { stackedBars } from '../charts.js';
 
 const WINDOWS = [['24h', '24H'], ['7d', '7D'], ['30d', '30D'], ['all', 'All']];
@@ -21,7 +21,7 @@ export function mount(el, { query, setQuery }) {
     const [p, s, l] = await Promise.all([get(`protocol?window=${w}`), get(`protocol/series?window=${w}`), get(`liquidations?limit=200${market ? `&market=${market}` : ''}`)]);
     if (!alive) return;
     markets = p.markets;
-    assignColors([...p.markets].sort((a, b) => num(b.volume) - num(a.volume)).map(m => m.id));
+    assignColors([...p.markets].sort((a, b) => num(b.volume) - num(a.volume)).map(m => ({ id: m.id, symbol: m.symbol })));
     const h = p.headline;
     // Largest inside the selected window (from the latest 200 rows the feed holds).
     const span = { '24h': 86400, '7d': 7 * 86400, '30d': 30 * 86400 }[w];
@@ -34,7 +34,7 @@ export function mount(el, { query, setQuery }) {
       kpi({ label: `Largest · ${w === 'all' ? 'recent' : w}`, value: largest ? usd(largest.notional) : '—', note: largest ? `${esc(largest.symbol)} ${esc(largest.side ?? '')} · ${ago(largest.ts)}` : '' })
     ].join('');
     const node = $('chart'); node.innerHTML = '';
-    const withLiq = (s.by_market ?? []).filter(m => m.liquidated.some(v => num(v) > 0));
+    const withLiq = mergeByAsset(s.by_market ?? [], ['liquidated']).filter(m => m.liquidated.some(v => num(v) > 0));
     const top = withLiq.filter(m => hasColor(m.id)), rest = withLiq.filter(m => !hasColor(m.id));
     const list = top.map(m => ({ name: m.symbol, color: colorOf(m.id), data: m.liquidated.map(num) }));
     if (rest.length) list.push({ name: 'Other', color: OTHER_HEX, data: s.times.map((_, i) => rest.reduce((a, m) => a + num(m.liquidated[i]), 0)) });
