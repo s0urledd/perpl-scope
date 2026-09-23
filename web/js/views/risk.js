@@ -83,7 +83,7 @@ export function mount(el, { query, setQuery }) {
         <div class="stat"><span>Shortfall (bad debt)</span><span class="${num(r.shortfall) > 0 ? 'neg' : ''}">${usd(r.shortfall)}</span></div><div class="stat"><span>Insurance covers</span><span>${r.insurance_coverage_pct === null ? 'no shortfall' : multiple(r.insurance_coverage_pct)}</span></div>
         <div class="stat"><span>Book depth to absorb</span><span>${r.liquidity ? atLeast(r.liquidity.complete) + usd(r.liquidity.depth) : '—'}</span></div><div class="stat"><span>Absorption</span><span>${cover === null || cover === undefined ? '—' : atLeast(r.liquidity.complete) + multiple(cover)}</span></div>
       </div>${r.positions_hit.length ? table({ id: 'hit', compact: true, columns: [
-        { key: 'a', label: 'Largest positions hit', render: p => addr(null, p.account_id) },
+        { key: 'a', label: 'Largest positions hit', render: p => addr(p.address, p.account_id) },
         { key: 's', label: 'Side', render: p => sideTag(p.side) },
         { key: 'n', label: 'Notional', n: true, render: p => usd(p.notional) },
         { key: 'l', label: 'Leverage', n: true, render: p => (p.leverage ? `${p.leverage.toFixed(1)}x` : '—') },

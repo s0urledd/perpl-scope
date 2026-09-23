@@ -10,6 +10,7 @@ export function mount(el, { navigate }) {
     <section class="panel" id="list">${skeleton(6)}</section>`;
   async function load() {
     const list = watch.list();
+    el.querySelector('[data-action="compare"]').disabled = !list.length;
     if (!list.length) { el.querySelector('#list').innerHTML = empty('No wallets yet. Star a wallet from the leaderboard, a feed or a wallet page.'); return; }
     const rows = await Promise.all(list.map(w => get(`wallets/${encodeURIComponent(w.key)}`, { maxAge: 10000 }).then(d => ({ key: w.key, added: w.added, d })).catch(() => ({ key: w.key, added: w.added, d: null }))));
     if (!alive) return;

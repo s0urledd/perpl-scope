@@ -80,15 +80,19 @@ const niceCeil = v => { const p = 10 ** Math.floor(Math.log10(v)); return [1, 2,
 export const usdAxis = v => { const n = Number(v); if (!n) return '$0'; const a = Math.abs(n); const [k, u] = a >= 1e9 ? [1e9, 'B'] : a >= 1e6 ? [1e6, 'M'] : a >= 1e3 ? [1e3, 'K'] : [1, '']; const x = a / k; return `${n < 0 ? '-' : ''}$${x >= 100 || Number.isInteger(x) ? Math.round(x) : x.toFixed(1).replace(/\.0$/, '')}${u}`; };
 const valueAxis = fmt => ({ type: 'value', splitNumber: 4, axisLabel: { color: T.faint, formatter: fmt, margin: 10 }, splitLine: { lineStyle: { color: T.grid } }, axisLine: { show: false }, axisTick: { show: false } });
 const row = (color, name, value) => `<div style="display:flex;justify-content:space-between;gap:18px;line-height:1.7"><span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${color};margin-right:7px"></span>${esc(name)}</span><b style="font-weight:500;font-variant-numeric:tabular-nums">${value}</b></div>`;
-function tooltip(fmt, bucketSeconds, { total = false } = {}) {
+function tooltip(fmt, bucketSeconds, { total = false, exclude = null } = {}) {
   return params => {
-    const list = Array.isArray(params) ? params : [params];
+    const all = Array.isArray(params) ? params : [params];
+    // A running-total line is shown on its own row, outside the per-period sum.
+    const extra = exclude ? all.find(p => p.seriesName === exclude) : null;
+    const list = exclude ? all.filter(p => p.seriesName !== exclude) : all;
     if (!list.length) return '';
     const t = list[0].axisValue;
     const head = `<div style="color:${T.faint};margin-bottom:4px">${bucketSeconds >= 86400 ? date(t) : dateTime(t) + ' UTC'}</div>`;
     const rows = list.filter(p => p.value !== null && p.value !== undefined && p.value !== 0 && p.value !== '-').sort((a, b) => Math.abs(b.value) - Math.abs(a.value)).slice(0, 10);
     const sum = list.reduce((a, p) => a + (num(p.value) ?? 0), 0);
-    return head + rows.map(p => row(p.color, p.seriesName, fmt(p.value))).join('') + (total && list.length > 1 ? `<div style="border-top:1px solid ${T.border};margin-top:4px;padding-top:4px">${row('transparent', 'Total', fmt(sum))}</div>` : '');
+    const foot = [total && list.length > 1 ? row('transparent', 'Total', fmt(sum)) : '', extra && extra.value !== null && extra.value !== undefined ? row('#ffffff', extra.seriesName, fmt(extra.value)) : ''].join('');
+    return head + rows.map(p => row(p.color, p.seriesName, fmt(p.value))).join('') + (foot ? `<div style="border-top:1px solid ${T.border};margin-top:4px;padding-top:4px">${foot}</div>` : '');
   };
 }
 
@@ -102,15 +106,35 @@ export function sparkline(el, values, { color = T.accent, area = true } = {}) {
   }, true);
 }
 
+// A range slider under a time chart (drag or scroll to zoom), plus wheel zoom.
+export const CUMULATIVE = 'Cumulative';
+function zoomOptions(xAxisIndex = 0) {
+  return [
+    { type: 'inside', xAxisIndex, zoomOnMouseWheel: 'shift', moveOnMouseMove: false },
+    { type: 'slider', xAxisIndex, height: 16, bottom: 4, borderColor: T.axis, backgroundColor: 'rgba(255,255,255,0.02)', fillerColor: 'rgba(162,164,255,0.12)', dataBackground: { lineStyle: { color: 'rgba(162,164,255,0.35)' }, areaStyle: { color: 'rgba(162,164,255,0.08)' } }, selectedDataBackground: { lineStyle: { color: T.accent }, areaStyle: { color: 'rgba(162,164,255,0.18)' } }, handleStyle: { color: '#24222a', borderColor: T.accent }, moveHandleSize: 0, textStyle: { color: T.faint, fontSize: 10 }, labelFormatter: () => '', brushSelect: false }
+  ];
+}
+
 // Stacked bars over time (one series per market, colour follows the market).
-export function stackedBars(el, { times, series, bucketSeconds, fmt = v => usd(v), yFmt = usdAxis }) {
+// cumulative: a running total of all series as a line on a right-hand axis.
+// zoom: a range slider under the chart.
+export function stackedBars(el, { times, series, bucketSeconds, fmt = v => usd(v), yFmt = usdAxis, cumulative = false, zoom = false }) {
   const chart = init(el);
   if (!chart) return;
+  let run = 0;
+  const total = cumulative ? times.map((_, i) => (run += series.reduce((a, s) => a + (num(s.data[i]) || 0), 0))) : null;
   chart.setOption({
-    ...base(), xAxis: timeAxis(times, bucketSeconds), yAxis: valueAxis(yFmt),
-    legend: { show: false, data: series.map(s => s.name) },
-    tooltip: { ...base().tooltip, formatter: tooltip(fmt, bucketSeconds, { total: true }) },
-    series: series.map((s, i) => ({ name: s.name, type: 'bar', stack: 'a', data: s.data, itemStyle: { color: s.color, borderRadius: i === series.length - 1 ? [2, 2, 0, 0] : 0, borderColor: '#0e0d10', borderWidth: series.length > 1 ? 0.5 : 0 }, barMaxWidth: 22, emphasis: { focus: 'series' } }))
+    ...base(),
+    grid: { ...base().grid, right: cumulative ? 8 : 12, bottom: zoom ? 30 : 6 },
+    xAxis: timeAxis(times, bucketSeconds),
+    yAxis: cumulative ? [valueAxis(yFmt), { ...valueAxis(yFmt), splitLine: { show: false } }] : valueAxis(yFmt),
+    legend: { show: false, data: [...series.map(s => s.name), ...(cumulative ? [CUMULATIVE] : [])] },
+    tooltip: { ...base().tooltip, formatter: tooltip(fmt, bucketSeconds, { total: true, exclude: CUMULATIVE }) },
+    dataZoom: zoom ? zoomOptions() : undefined,
+    series: [
+      ...series.map((s, i) => ({ name: s.name, type: 'bar', stack: 'a', data: s.data, itemStyle: { color: s.color, borderRadius: i === series.length - 1 ? [2, 2, 0, 0] : 0, borderColor: '#0e0d10', borderWidth: series.length > 1 ? 0.5 : 0 }, barMaxWidth: 22, emphasis: { focus: 'series' } })),
+      ...(cumulative ? [{ name: CUMULATIVE, type: 'line', yAxisIndex: 1, data: total, symbol: 'none', smooth: 0.2, lineStyle: { color: 'rgba(255,255,255,0.75)', width: 1.5 }, itemStyle: { color: '#ffffff' }, z: 5 }] : [])
+    ]
   }, true);
 }
 
@@ -145,7 +169,10 @@ export function signedBars(el, { times, values, bucketSeconds, name = 'Value', f
   const xAxis = timeAxis(times, bucketSeconds);
   if (dayTicks) {
     const day = t => Math.floor(Number(t) / 86400);
-    xAxis.axisLabel = { ...xAxis.axisLabel, interval: 0, hideOverlap: false, formatter: (v, i) => (i === 0 || day(times[i - 1]) !== day(v) ? timeLabel(day(v) * 86400, 86400) : '') };
+    // The first point is labelled only when the next day starts far enough away not to collide with it.
+    const firstBreak = times.findIndex((t, i) => i > 0 && day(times[i - 1]) !== day(t));
+    const labelFirst = firstBreak === -1 || firstBreak >= times.length / 14;
+    xAxis.axisLabel = { ...xAxis.axisLabel, interval: 0, hideOverlap: false, formatter: (v, i) => ((i === 0 && labelFirst) || (i > 0 && day(times[i - 1]) !== day(v)) ? timeLabel(day(v) * 86400, 86400) : '') };
   }
   chart.setOption({
     ...base(), xAxis, yAxis: valueAxis(yFmt),
@@ -191,13 +218,14 @@ export function divergingHeatmap(el, { times, rows, bucketSeconds, clamp, fmt = 
 }
 
 // Candles with volume below (two stacked grids, each with its own single axis).
-export function candles(el, { times, ohlc, volume, bucketSeconds, priceFmt, volColor = 'rgba(162,164,255,0.35)' }) {
+export function candles(el, { times, ohlc, volume, bucketSeconds, priceFmt, volColor = 'rgba(162,164,255,0.35)', zoom = false }) {
   const chart = init(el);
   if (!chart) return;
   const x = i => ({ ...timeAxis(times, bucketSeconds), gridIndex: i, axisLabel: i === 0 ? { show: false } : timeAxis(times, bucketSeconds).axisLabel });
   chart.setOption({
     ...base(),
-    grid: [{ left: 8, right: 12, top: 12, height: '64%', containLabel: true }, { left: 8, right: 12, top: '78%', bottom: 6, containLabel: true }],
+    dataZoom: zoom ? zoomOptions([0, 1]) : undefined,
+    grid: [{ left: 8, right: 12, top: 12, height: zoom ? '58%' : '64%', containLabel: true }, { left: 8, right: 12, top: zoom ? '72%' : '78%', bottom: zoom ? 30 : 6, containLabel: true }],
     xAxis: [x(0), x(1)],
     yAxis: [{ ...valueAxis(priceFmt), scale: true, gridIndex: 0 }, { ...valueAxis(usdAxis), gridIndex: 1, splitNumber: 2 }],
     tooltip: { ...base().tooltip, formatter: params => { const c = params.find(p => p.seriesType === 'candlestick'); const v = params.find(p => p.seriesType === 'bar'); const t = params[0]?.axisValue; if (!c) return ''; const [o, cl, lo, hi] = c.value.slice(1); return `<div style="color:${T.faint};margin-bottom:4px">${bucketSeconds >= 86400 ? date(t) : dateTime(t) + ' UTC'}</div>${row('transparent', 'Open', priceFmt(o))}${row('transparent', 'High', priceFmt(hi))}${row('transparent', 'Low', priceFmt(lo))}${row('transparent', 'Close', priceFmt(cl))}${v ? row('transparent', 'Volume', usd(v.value)) : ''}`; } },

@@ -118,7 +118,7 @@ button, input, select { font: inherit; color: inherit; }
 .grid { display: grid; gap: 16px; }
 .g-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .g-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.g-main { grid-template-columns: minmax(0, 2.1fr) minmax(0, 1fr); }
+.g-main { grid-template-columns: minmax(0, 1.8fr) minmax(0, 1fr); }
 @media (max-width: 1300px) { .top-inner { gap: 18px; } .nav a { padding: 7px 9px; } }
 @media (max-width: 1100px) { .g-2, .g-3, .g-main { grid-template-columns: minmax(0, 1fr); } .nav a { padding: 7px 8px; font-size: 13px; } .search kbd { display: none; } }
 /* Phones: the nav becomes a second, horizontally scrolling row. */
@@ -203,14 +203,22 @@ table.t { width: 100%; border-collapse: collapse; font-size: 13px; }
 .t th.sort { cursor: pointer; }
 .t th.sort:hover { color: var(--text-2); }
 .t th.sorted { color: var(--text); }
-.t td { padding: 0 12px; height: 42px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+/* Cells align to the top with a fixed inset, so the first line of every cell
+   (the value) sits on one line across the row; a second line (APR, counts)
+   hangs below it instead of pushing the value up. */
+.t td { padding: 11px 12px 8px; height: 42px; vertical-align: top; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .t tr:last-child td { border-bottom: 0; }
 .t tbody tr { transition: background 0.12s; }
 .t tbody tr.link { cursor: pointer; }
 .t tbody tr:hover { background: rgba(162, 164, 255, 0.045); }
 .t td:first-child, .t th:first-child { padding-left: 16px; }
 .t td:last-child, .t th:last-child { padding-right: 16px; }
-.t.compact td { height: 36px; }
+.t.compact td { height: 36px; padding-top: 8px; padding-bottom: 6px; }
+/* The live tape sits in the narrow column: tighter cells so every column fits. */
+#tape .t th, #tape .t td { padding-left: 8px; padding-right: 8px; }
+#tape .t th:first-child, #tape .t td:first-child { padding-left: 14px; }
+#tape .t th:last-child, #tape .t td:last-child { padding-right: 14px; }
+#tape .mkt { gap: 6px; }
 .t .sub { color: var(--text-3); font-size: 11.5px; }
 .t tr.flash td { animation: flash 1.6s ease-out; }
 @keyframes flash { from { background: rgba(162, 164, 255, 0.14); } to { background: transparent; } }
@@ -219,7 +227,8 @@ table.t { width: 100%; border-collapse: collapse; font-size: 13px; }
 .cell-bar { position: relative; }
 tr.hl td { background: rgba(162, 164, 255, 0.07); }
 .t tbody tr.sel td { background: var(--accent-soft); }
-.cell-bar .track { position: absolute; right: 12px; bottom: 6px; width: 64px; height: 2px; background: rgba(255, 255, 255, 0.07); border-radius: 1px; overflow: hidden; }
+.t.compact .cell-bar .track { top: 29px; }
+.cell-bar .track { position: absolute; right: 12px; top: 33px; width: 64px; height: 2px; background: rgba(255, 255, 255, 0.07); border-radius: 1px; overflow: hidden; }
 .cell-bar .track > i { position: absolute; right: 0; top: 0; bottom: 0; background: var(--accent); opacity: 0.8; }
 
 /* ---------- small components ---------- */
@@ -246,7 +255,7 @@ tr.inactive td { opacity: 0.5; }
 .ratio i { display: block; height: 100%; }
 .ratio i.l { background: var(--long); }
 .ratio i.s { background: var(--short); }
-.ratio-wrap { display: flex; flex-direction: column; gap: 4px; min-width: 96px; }
+.ratio-wrap { display: flex; flex-direction: column; gap: 4px; min-width: 96px; margin-top: 7px; }
 .ratio-wrap .lbl { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--text-2); }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
@@ -331,3 +340,26 @@ tr.inactive td { opacity: 0.5; }
 .legend .lg .tk { border-radius: 50%; margin-left: -1px; }
 .legend .lg.off { opacity: 0.4; }
 .legend .lg.off i { background: transparent !important; box-shadow: inset 0 0 0 1px var(--text-3); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+/* Order book ladder */
+.book { font-size: 12.5px; padding: 4px 0 8px; }
+.book-row { position: relative; display: grid; grid-template-columns: 1fr 1fr 1fr; padding: 3px 16px; line-height: 18px; }
+.book-row > span { position: relative; text-align: right; }
+.book-row > span:first-of-type { text-align: left; }
+.book-row > i { position: absolute; right: 0; top: 1px; bottom: 1px; opacity: 0.14; }
+.book-row.ask > span:first-of-type { color: var(--short); }
+.book-row.bid > span:first-of-type { color: var(--long); }
+.book-row.ask > i { background: var(--short); }
+.book-row.bid > i { background: var(--long); }
+.book-row.head { color: var(--text-3); font-size: 11.5px; padding-bottom: 6px; }
+.book-mid { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 16px; margin: 4px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); font-size: 14px; font-weight: 500; }
+.book-mid .faint { font-size: 11.5px; font-weight: 400; }
+/* Position calculator */
+.calc-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; font-size: 12px; }
+.calc-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; margin-bottom: 12px; }
+.calc-f { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--text-2); }
+.calc-in { height: 34px; padding: 0 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); outline: none; font-size: 13px; }
+.calc-in:focus { border-color: rgba(162, 164, 255, 0.45); }
+.calc-out { margin: 0 -16px; }
+.calc-note { font-size: 11.5px; margin-top: 10px; }
+.lb-search { height: 30px; width: 240px; max-width: 100%; font-size: 12.5px; }

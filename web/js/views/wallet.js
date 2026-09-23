@@ -145,7 +145,7 @@ export function mount(el, { params, query, setQuery, navigate }) {
         { key: 'lev', label: 'Max lev.', n: true, render: r => (r.max_leverage ? `${r.max_leverage.toFixed(1)}x` : '—') },
         { key: 'p', label: 'Net PnL', n: true, render: r => pnl(r.net_pnl) },
         { key: 'r', label: 'Return', n: true, render: r => pctCell(r.return_pct) },
-        { key: 'f', label: 'Outcome', render: r => (r.liquidated ? '<span class="tag bad">liquidated</span>' : r.deleveraged ? '<span class="tag warn">ADL</span>' : num(r.net_pnl) > 0 ? '<span class="tag good">win</span>' : num(r.net_pnl) < 0 ? '<span class="tag">loss</span>' : '<span class="tag">flat</span>') }
+        { key: 'f', label: 'Outcome', render: r => (r.open ? '<span class="tag" title="Still open; PnL so far">open</span>' : r.liquidated ? '<span class="tag bad">liquidated</span>' : r.deleveraged ? '<span class="tag warn">ADL</span>' : num(r.net_pnl) > 0 ? '<span class="tag good">win</span>' : num(r.net_pnl) < 0 ? '<span class="tag">loss</span>' : '<span class="tag">flat</span>') }
       ], rows: [...an.open_trips.map(t => ({ ...t, open: true })), ...an.trips], rowAttrs: r => (r.open ? 'title="Still open"' : ''), emptyText: 'No round trips yet' });
     } else if (tab === 'flows') {
       body.innerHTML = `<div class="stat-grid" style="border-bottom:1px solid var(--line)"><div class="stat"><span>Total deposits</span><span class="pos">${usdFull(d.summary.deposits)}</span></div><div class="stat"><span>Total withdrawals</span><span class="neg">${usdFull(d.summary.withdrawals)}</span></div></div>` + table({ id: 'flows', columns: [

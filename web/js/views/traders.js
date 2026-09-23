@@ -2,7 +2,7 @@
 // with open positions from the live contract state.
 import { get } from '../api.js';
 import { usd, int, pct, num, esc } from '../format.js';
-import { seg, table, addr, pnl, ratio, skeleton, mkt, ICON } from '../ui.js';
+import { seg, table, addr, pnl, ratio, kpi, skeleton, mkt, ICON } from '../ui.js';
 
 const WINDOWS = [['24h', '24H'], ['7d', '7D'], ['30d', '30D'], ['all', 'All']];
 const SORTS = [['pnl', 'Top PnL'], ['loss', 'Top losses'], ['volume', 'Volume'], ['liquidated', 'Liquidated'], ['fees', 'Fees paid'], ['net_flow', 'Net inflow'], ['deposits', 'Deposits'], ['withdrawals', 'Withdrawals']];
@@ -16,9 +16,10 @@ export function mount(el, { query, setQuery }) {
   const LIMIT = 50;
   el.innerHTML = `
     <div class="page-head"><div><h1>Traders</h1><div class="sub">Accounts that traded in the window, ranked from indexed events (flow rankings: accounts that deposited or withdrew). Net PnL = realized PnL (price PnL + funding) − fees.</div></div></div>
+    <div class="kpis k4" id="tkpis" style="margin-bottom:16px">${Array.from({ length: 4 }, () => '<div class="kpi"><div class="skeleton sk-line" style="width:40%"></div><div class="skeleton" style="height:26px;width:60%;margin-top:10px"></div></div>').join('')}</div>
     <section class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h2>Positioning by cohort</h2><div class="desc" id="co-desc">Open positions now, grouped by account · click a cohort for its largest wallets</div></div><div id="co-tabs">${seg('co', CO_TABS, coTab)}</div></div>
       <div class="panel-body flush" id="cohorts">${skeleton(4)}</div><div id="co-detail"></div></section>
-    <section class="panel"><div class="panel-head"><h2 id="title">Leaderboard</h2><div style="display:flex;gap:10px;align-items:center"><span class="meta" id="meta"></span><a class="btn ghost" id="csv">${ICON.download} CSV</a></div></div>
+    <section class="panel"><div class="panel-head"><h2 id="title">Leaderboard</h2><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><input id="lb-search" class="calc-in lb-search" type="search" placeholder="Filter this page · Enter opens a wallet" autocomplete="off" spellcheck="false" aria-label="Filter traders by address"><span class="meta" id="meta"></span><a class="btn ghost" id="csv">${ICON.download} CSV</a></div></div>
       <div class="panel-head" style="min-height:0;padding-top:0;flex-wrap:wrap;gap:10px"><div id="by" style="max-width:100%;min-width:0">${seg('by', SORTS, by)}</div><div id="win">${seg('window', WINDOWS, w)}</div></div>
       <div class="panel-body flush" id="list">${skeleton(12)}</div>
       <div class="panel-foot"><span id="count"></span><span><button class="btn ghost" data-action="prev">← Prev</button> <button class="btn ghost" data-action="next">Next →</button></span></div></section>`;
@@ -56,10 +57,34 @@ export function mount(el, { query, setQuery }) {
     $('meta').textContent = `${w === 'all' ? 'All-time' : w}${data.meta.coverage && !data.meta.coverage.complete ? ' · history still indexing' : ''}`;
     // Flow rankings swap the fee and liquidation columns for the flows themselves.
     const flow = FLOW_SORTS.has(by), columns = COLS.filter(c => (flow ? !['fees', 'liq', 'maker'].includes(c.key) : !c.flow));
-    $('list').innerHTML = table({ id: 'lb', columns, rows: data.rows, rowAttrs: r => `class="link" data-href="#/wallet/${esc(r.address || r.account)}"`, emptyText: 'No traders in this window' });
+    lbColumns = columns; renderList();
     $('count').textContent = `${int(data.total)} accounts · showing ${page * LIMIT + 1}–${page * LIMIT + data.rows.length}`;
     $('csv').href = `/api/v1/leaderboard?window=${w}&by=${by}&limit=200&format=csv`;
   }
+  // The leaderboard page, filtered by the address typed in its search box.
+  let lbColumns = null, filter = '';
+  function renderList() {
+    if (!data || !lbColumns) return;
+    const f = filter.toLowerCase();
+    const rows = f ? data.rows.filter(r => String(r.address ?? '').toLowerCase().includes(f) || String(r.account) === f.replace(/^#/, '')) : data.rows;
+    $('list').innerHTML = table({ id: 'lb', columns: lbColumns, rows, rowAttrs: r => `class="link" data-href="#/wallet/${esc(r.address || r.account)}"`, emptyText: f ? 'Not on this page. Press Enter to open the wallet, if it is a full address or account ID.' : 'No traders in this window' });
+  }
+  $('lb-search').addEventListener('input', e => { filter = e.target.value.trim(); renderList(); });
+  $('lb-search').addEventListener('keydown', e => { const q = e.target.value.trim(); if (e.key === 'Enter' && (/^0x[0-9a-fA-F]{40}$/.test(q) || /^\d{1,9}$/.test(q))) location.hash = `#/wallet/${q}`; });
+
+  // Traders at a glance for the leaderboard's window.
+  async function loadSummary() {
+    const t = await get(`traders/summary?window=${w}`, { maxAge: 20000 });
+    if (!alive) return;
+    const wl = w === 'all' ? 'all-time' : w, partial = t.meta?.coverage && !t.meta.coverage.complete ? ' <span class="tag warn" title="History for this window is still being indexed">partial</span>' : '';
+    $('tkpis').innerHTML = [
+      kpi({ label: `Traders · ${wl}`, value: int(t.traders), note: `${usd(t.volume)} volume${partial}` }),
+      kpi({ label: `Profitable · ${wl}`, value: int(t.profitable), note: `${pct(t.profitable_pct, { digits: 1 })} of traders, after fees` }),
+      kpi({ label: `Traders' net PnL · ${wl}`, value: pnl(t.net_pnl), note: 'all traders, after fees', tip: 'Realized PnL (price PnL and funding) minus fees, summed over every account that traded in the window.' }),
+      kpi({ label: 'Median PnL / volume', value: t.median_pnl_per_volume_bps === null ? '—' : `<span class="${t.median_pnl_per_volume_bps > 0 ? 'pos' : t.median_pnl_per_volume_bps < 0 ? 'neg' : ''}">${t.median_pnl_per_volume_bps > 0 ? '+' : ''}${t.median_pnl_per_volume_bps.toFixed(1)} bps</span>`, note: 'the typical trader, per $ traded', tip: 'Net PnL divided by volume for each trader, then the median across traders: what the typical trader keeps or loses per dollar traded.' })
+    ].join('');
+  }
+
   // Cohorts: who holds the open interest, by size or by track record.
   function renderCohorts() {
     if (!cohorts) return;
@@ -89,10 +114,11 @@ export function mount(el, { query, setQuery }) {
   const coTimer = setInterval(loadCohorts, 10000);
 
   load().catch(error => { $('list').innerHTML = `<div class="empty-state">${esc(error.message)}</div>`; });
+  loadSummary().catch(() => { $('tkpis').innerHTML = ''; });
   return {
     onSeg(name, v) { if (name === 'co') { coTab = v; coSel = null; $('co-tabs').innerHTML = seg('co', CO_TABS, coTab); renderCohorts(); return; } if (name === 'window') setQuery({ window: v === '7d' ? null : v }); if (name === 'by') setQuery({ by: v === 'pnl' ? null : v }); },
     onAction(a, t) { if (a === 'co-pick') { coSel = coSel === t.dataset.key ? null : t.dataset.key; renderCohorts(); return; } if (a === 'co-close') { coSel = null; renderCohorts(); return; } if (a === 'next' && data && (page + 1) * LIMIT < data.total) { page++; load().catch(() => {}); } if (a === 'prev' && page > 0) { page--; load().catch(() => {}); } },
-    update(q) { w = WINDOWS.some(([v]) => v === q.get('window')) ? q.get('window') : '7d'; by = SORTS.some(([v]) => v === q.get('by')) ? q.get('by') : 'pnl'; page = 0; $('win').innerHTML = seg('window', WINDOWS, w); $('by').innerHTML = seg('by', SORTS, by); load().catch(() => {}); },
+    update(q) { w = WINDOWS.some(([v]) => v === q.get('window')) ? q.get('window') : '7d'; by = SORTS.some(([v]) => v === q.get('by')) ? q.get('by') : 'pnl'; page = 0; $('win').innerHTML = seg('window', WINDOWS, w); $('by').innerHTML = seg('by', SORTS, by); load().catch(() => {}); loadSummary().catch(() => {}); },
     destroy() { alive = false; clearInterval(coTimer); }
   };
 }

@@ -5,6 +5,9 @@ import { usd, int, pct, num, esc, short, duration, date } from '../format.js';
 import { pnl, empty, skeleton, ICON, SLOT_HEX, watch, chartTools } from '../ui.js';
 import { lineChart } from '../charts.js';
 
+// Wallet errors from the API, in words.
+const ERRORS = { INVALID_ACCOUNT: 'not a full address or account ID', NOT_FOUND: 'no Perpl account', ACCOUNT_NOT_FOUND: 'no Perpl account' };
+
 const COLORS = [SLOT_HEX[0], SLOT_HEX[1], SLOT_HEX[2], SLOT_HEX[3], SLOT_HEX[4]];
 
 export function mount(el, { query, navigate }) {
@@ -23,13 +26,14 @@ export function mount(el, { query, navigate }) {
       const suggested = watch.list().slice(0, 5).map(w => w.key);
       $('table').innerHTML = empty(suggested.length ? 'No wallets selected. Your watchlist is below.' : 'No wallets selected. Add an address above or use Compare on a wallet page.');
       if (suggested.length) $('table').innerHTML += `<div class="panel-foot"><span>Watchlist: ${suggested.map(k => `<a href="#/compare?w=${esc(k)}">${esc(short(k))}</a>`).join(' · ')}</span><button class="btn" data-action="all-watch">Compare watchlist</button></div>`;
-      $('chart').innerHTML = '';
+      $('chart').innerHTML = ''; $('chart').closest('.panel').hidden = true;
       return;
     }
     const r = await get(`compare?wallets=${keys.map(encodeURIComponent).join(',')}`, { maxAge: 5000 });
     if (!alive) return;
     const ws = r.wallets;
-    const col = (w, i) => w.error ? `<th class="n"><span class="neg">${esc(short(w.key))}</span><div class="sub">${esc(w.error)}</div></th>` : `<th class="n"><span style="display:inline-flex;align-items:center;gap:6px"><i style="width:8px;height:8px;border-radius:2px;background:${COLORS[i]}"></i><a class="mono" href="#/wallet/${esc(w.account.address)}">${esc(short(w.account.address))}</a><button class="icon-btn" data-action="remove" data-key="${esc(w.key)}" title="Remove">${ICON.x}</button></span><div class="sub">#${esc(w.account.id)}</div></th>`;
+    $('chart').closest('.panel').hidden = false;
+    const col = (w, i) => w.error ? `<th class="n"><span class="neg">${esc(short(w.key))}</span><div class="sub">${esc(ERRORS[w.error] ?? 'not found')}</div></th>` : `<th class="n"><span style="display:inline-flex;align-items:center;gap:6px"><i style="width:8px;height:8px;border-radius:2px;background:${COLORS[i]}"></i><a class="mono" href="#/wallet/${esc(w.account.address)}">${esc(short(w.account.address))}</a><button class="icon-btn" data-action="remove" data-key="${esc(w.key)}" title="Remove">${ICON.x}</button></span><div class="sub">#${esc(w.account.id)}</div></th>`;
     const rows = [
       ['Account value', w => usd(w.portfolio?.account_value)],
       ['Open positions', w => int(w.positions?.length ?? 0)],

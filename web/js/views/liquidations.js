@@ -38,8 +38,8 @@ export function mount(el, { query, setQuery }) {
     const top = withLiq.filter(m => hasColor(m.id)), rest = withLiq.filter(m => !hasColor(m.id));
     const list = top.map(m => ({ name: m.symbol, color: colorOf(m.id), data: m.liquidated.map(num) }));
     if (rest.length) list.push({ name: 'Other', color: OTHER_HEX, data: s.times.map((_, i) => rest.reduce((a, m) => a + num(m.liquidated[i]), 0)) });
-    $('legend').innerHTML = list.map(x => `<span><i style="background:${x.color}"></i>${esc(x.name)}</span>`).join('');
-    if (list.length) stackedBars(node, { times: s.times, series: list, bucketSeconds: s.meta.bucket_seconds }); else node.innerHTML = empty('No liquidations in this window');
+    $('legend').innerHTML = list.map(x => `<span><i style="background:${x.color}"></i>${esc(x.name)}</span>`).join('') + '<span><i style="background:#fff;height:2px"></i>Cumulative</span>';
+    if (list.length) stackedBars(node, { times: s.times, series: list, bucketSeconds: s.meta.bucket_seconds, cumulative: true, zoom: true }); else node.innerHTML = empty('No liquidations in this window');
     $('mf').innerHTML = `<option value="">All markets</option>${markets.filter(m => m.liquidations || m.id === Number(market)).map(m => `<option value="${m.id}" ${String(m.id) === market ? 'selected' : ''}>${esc(m.symbol)}</option>`).join('')}`;
     $('csv').href = `/api/v1/liquidations?limit=500&format=csv${market ? `&market=${market}` : ''}`;
     renderFeed(l.rows);

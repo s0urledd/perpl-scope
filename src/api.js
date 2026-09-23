@@ -288,12 +288,20 @@ export function createApi({ collector, analytics = null, sse = null, statusOf = 
   }
 
   const risk = true;
+  // Positions carry the account's address when the index (or the contract) knows it.
+  async function withAddresses(rows) {
+    if (!analytics?.addressesOf || !rows?.length) return rows;
+    const map = await analytics.addressesOf([...new Set(rows.map(r => Number(r.account_id)))]).catch(() => new Map());
+    for (const r of rows) r.address = map.get(Number(r.account_id))?.address ?? null;
+    return rows;
+  }
   const A = name => { if (!analytics) throw Object.assign(new Error('ANALYTICS_UNAVAILABLE'), { status: 503 }); return analytics[name]; };
   const routes = [
     ['GET', /^\/api\/v1\/health$/, () => ({ ok: true, version, snapshot: snapshot(), collector: { polls: state.stats.polls, errors: state.stats.errors, last_error: errorCode(state.stats.lastError), last_poll_ms: state.stats.lastPollMs, uptime_ms: now() - state.stats.startedAt, rpc_requests: collector.reader.stats.requests }, ...statusOf(), memory: { rss_mb: Math.round(process.memoryUsage().rss / 1048576), heap_mb: Math.round(process.memoryUsage().heapUsed / 1048576) } })],
     // Protocol analytics (ClickHouse index + live contract state).
     ['GET', /^\/api\/v1\/protocol$/, (_, q) => A('protocol')(q)],
     ['GET', /^\/api\/v1\/cohorts$/, () => A('cohorts')(), risk],
+    ['GET', /^\/api\/v1\/traders\/summary$/, (_, q) => A('traderSummary')(q)],
     ['GET', /^\/api\/v1\/protocol\/series$/, (_, q) => A('series')(q)],
     ['GET', /^\/api\/v1\/trades$/, (_, q) => A('trades')(q)],
     ['GET', /^\/api\/v1\/liquidations$/, async (_, q) => { const body = await A('liquidations')(q); return q.get('format') === 'csv' ? { csv: toCsv(body.rows), filename: `plumb-liquidations-${body.meta.block ?? 'unknown'}.csv` } : body; }],
@@ -310,9 +318,9 @@ export function createApi({ collector, analytics = null, sse = null, statusOf = 
     // Risk (contract snapshot).
     ['GET', /^\/api\/v1\/overview$/, () => ({ snapshot: snapshot(), ...overview() }), risk],
     ['GET', /^\/api\/v1\/markets$/, () => ({ snapshot: snapshot(), markets: computeMetrics(state).markets.map(marketSummary) }), risk],
-    ['GET', /^\/api\/v1\/markets\/(\d+)$/, (match, query) => ({ snapshot: snapshot(), market: marketDetail(entryFor(match[1]), query) }), risk],
+    ['GET', /^\/api\/v1\/markets\/(\d+)$/, async (match, query) => { const market = marketDetail(entryFor(match[1]), query); await withAddresses(market.top_positions); return { snapshot: snapshot(), market }; }, risk],
     ['GET', /^\/api\/v1\/markets\/(\d+)\/positions$/, (match, query) => { const csv = query.get('format') === 'csv'; const body = { snapshot: snapshot(), ...positionsList(entryFor(match[1]), query, csv ? { defaultLimit: 5000, maxLimit: 5000 } : {}) }; return csv ? { csv: toCsv(body.positions, POSITION_COLUMNS), filename: `plumb-${safeName(body.symbol)}-positions-${body.snapshot.block}.csv` } : body; }, risk],
-    ['GET', /^\/api\/v1\/markets\/(\d+)\/stress$/, (match, query) => ({ snapshot: snapshot(), ...stressView(entryFor(match[1]), query) }), risk],
+    ['GET', /^\/api\/v1\/markets\/(\d+)\/stress$/, async (match, query) => { const view = stressView(entryFor(match[1]), query); await withAddresses(view.positions_hit); return { snapshot: snapshot(), ...view }; }, risk],
     ['GET', /^\/api\/v1\/markets\/(\d+)\/book$/, match => ({ snapshot: snapshot(), ...bookView(entryFor(match[1])) }), risk],
     ['GET', /^\/api\/v1\/markets\/(\d+)\/ladder$/, match => { const e = entryFor(match[1]); return { snapshot: snapshot(), market_id: e.market.id, symbol: e.market.symbol, ladder: ladderView(e.metrics.ladder, e.market), liquidation_map: mapView(e.metrics.map) }; }, risk],
     ['GET', /^\/api\/v1\/markets\/(\d+)\/funding$/, async (match, query) => { const e = entryFor(match[1]); const history = analytics ? await analytics.funding(e.market.id, query) : null; return { snapshot: snapshot(), market_id: e.market.id, symbol: e.market.symbol, current: fundingView(e.market), history: history?.rows ?? state.history.funding.filter(f => f.perpId === e.market.id).slice(-48).map(f => fundingEntry(f, e.market)) }; }, risk],
@@ -343,11 +351,15 @@ export function createApi({ collector, analytics = null, sse = null, statusOf = 
     try {
       const info = await stat(file);
       if (!info.isFile()) return send(res, 404, { error: 'NOT_FOUND' });
+      // Dashboard files are revalidated on every load (a cheap 304 when
+      // unchanged), so a deploy never leaves a browser mixing old and new modules.
+      const etag = `W/"${info.size.toString(36)}-${Math.floor(info.mtimeMs).toString(36)}"`;
+      if (req.headers['if-none-match'] === etag) { res.writeHead(304, { etag, 'cache-control': 'no-cache' }); return res.end(); }
       const raw = await readFile(file);
       const zip = /\.(html|js|css|svg|json)$/.test(file) && /\bgzip\b/.test(req.headers['accept-encoding'] ?? '') && raw.length > 1024;
       const body = zip ? gzipSync(raw) : raw;
       const csp = extname(file) === '.html' ? CSP : extname(file) === '.svg' ? SVG_CSP : null;
-      res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream', 'cache-control': extname(file) === '.html' ? 'no-cache' : 'public, max-age=300', 'content-length': body.length, ...(zip ? { 'content-encoding': 'gzip', vary: 'accept-encoding' } : {}), ...SECURITY_HEADERS, ...(csp ? { 'content-security-policy': csp } : {}) });
+      res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-cache', etag, 'content-length': body.length, ...(zip ? { 'content-encoding': 'gzip', vary: 'accept-encoding' } : {}), ...SECURITY_HEADERS, ...(csp ? { 'content-security-policy': csp } : {}) });
       res.end(body);
     } catch { send(res, 404, { error: 'NOT_FOUND' }); }
   }

@@ -87,7 +87,7 @@ export function tradeAction(r) {
 export function fundingCell(f, { apr = true } = {}) {
   const rate = num(f?.rate_8h_pct);
   if (rate === null) return '<span class="faint">—</span>';
-  if (rate === 0) return '<span class="faint">0%</span>';
+  if (rate === 0) return '<span class="faint" title="Flat: the contract set no funding for this interval">0% · flat</span>';
   return `<span class="${rate > 0 ? 'pos' : 'neg'}">${pct(rate, { digits: 4, sign: true })}</span>${apr ? `<div class="sub">${pct(f.apr_pct, { digits: 1, sign: true })} APR</div>` : ''}`;
 }
 export const pctCell = (v, sign = true) => { const n = num(v); return n === null ? '<span class="faint">—</span>' : `<span class="${sign ? (n > 0 ? 'pos' : n < 0 ? 'neg' : '') : ''}">${pct(v, { sign })}</span>`; };
