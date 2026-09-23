@@ -184,6 +184,15 @@ block 107,279,223, over 67,168,371 events from block 54,773,010 onwards:
 
 Evidence: `docs/evidence/integrity-2026-09-23.json`.
 
+**Corrections in version 3.** Re-reading the chain over the full history
+(2026-09-23) sized what the previous decoder missed: the funding settled at
+151,626 position increases ($106,859 moved, $13,234 net to traders), the
+liquidation fees of all 3,341 liquidations ($84,765), and builder shares
+counted twice in wallet fees ($20,345). Together they change the realized
+PnL of 2,878 accounts, by up to $7,628 for one account
+(`docs/evidence/pnl-corrections-2026-09-23.json`). Neither open interest nor
+TVL depends on them, so the integrity checks above are unchanged.
+
 ### Funding
 
 The current rate is the contract's `fundingRatePct100k` per funding interval.
