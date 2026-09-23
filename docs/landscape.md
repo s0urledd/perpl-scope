@@ -1,25 +1,61 @@
-# Landscape: comparable tools and where PerplScope differs
+# Landscape
 
-Reviewed 2026-09-21.
+Reviewed 2026-09-21 and 2026-09-23. Captures were taken in dark mode at
+desktop and phone widths. The open-source ones (gmx-stats, gmx-interface,
+hyperliquid-stats, perps-observatory) were read alongside.
 
-| Tool | Scope | Positions | Liquidation levels | Liquidity | Validation | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| Coinglass, CoinMarketCap liquidation dashboards | Centralised exchanges | Not observable | Estimated from open-interest changes and price | No | No | Heatmaps are inferred, not measured |
-| TapeSurf, HypurrTrade dashboard, Hypurrscan | Hyperliquid | Real, from the venue's API | Computed per position | Partial (venue API) | No | Depend on the venue's own API for state |
-| Open-source heatmap scripts (e.g. minchillo4/btc-liquidation-heatmap) | Binance via third-party APIs | Not observable | Statistical zones over candles | No | No | Backtests, not live risk |
-| Chaos Labs dYdX risk portal | dYdX | Indexed | At-risk positions | Order-book depth informs parameter recommendations | Internal | Institutional risk management |
-| Perpl app | Perpl | Own account only | Own positions only | Order book | Venue-reported | The venue's own UI |
-| **PerplScope** | Perpl on Monad | **Read from the contract at a pinned block** | **Exact per position, contract-validated formulas** | **Resting depth walked from the on-chain book** | **Continuous reconciliation, independent rescan, live formula checks** | No venue API in any metric |
+## Perp analytics dashboards
+
+| Product | Venue | What it does well | What PerplScope takes from it |
+| --- | --- | --- | --- |
+| stats.nado.xyz | Nado | One hue per chart with a grey cumulative line; KPIs directly above their chart; tooltips with a date header and a net row | Per-period / cumulative switch; KPI-over-chart rhythm; tooltip layout |
+| HyperScreener (ASXN) | Hyperliquid | Hero cards with deltas and background sparklines; section labels with hairline rules; chart screenshots | KPI strip with deltas (inverted colours where rises are bad) and sparklines; section labels |
+| LighterDash | Lighter | Liquidation and analytics pages; averages drawn as dashed lines | Liquidations page layout (and a warning: its liquidation dates show a seconds-vs-milliseconds bug) |
+| GMX stats and account pages | GMX | Performance by period; share cards; CSV links on every chart; "updated at block N" | By-period table with ranks; CSV and PNG on every chart; block and age in the header |
+| Hyperdash, Hypurrscan | Hyperliquid | Cohorts; labelled fills (open, add, reduce, close, flip); size filters | Trade actions and size filter on the live tapes |
+| CoinGlass | Centralised venues and Hyperliquid | Funding heatmaps; liquidation heatmaps (modelled) | Markets × time funding map on a diverging scale; measured liquidation ladder instead of a modelled heatmap |
+| Gains, Orderly, Paradex, Synthetix stats | Their venues | Protocol totals, leaderboards | Leaderboard sorts and CSV |
+
+## Risk tools
+
+| Tool | Positions | Liquidation levels | Liquidity | Validation |
+| --- | --- | --- | --- | --- |
+| CoinGlass, CoinMarketCap liquidation maps | Not observable | Estimated from open-interest changes and price | No | No |
+| Hyperliquid dashboards (TapeSurf, HypurrTrade, Hypurrscan) | From the venue's API | Per position | Partial (venue API) | No |
+| Chaos Labs risk portals | Indexed | At-risk positions | Informs parameters | Internal |
+| Perpl app | Own account | Own positions | Order book | Venue-reported |
+| **PerplScope** | **Read from the contract at a pinned block** | **Exact per position, contract-validated formulas** | **Resting depth walked from the on-chain book** | **Reconciliation every poll, independent rescan, event history checked against the contract** |
 
 ## What only PerplScope shows
 
-1. **Liquidation ladder with bad debt and insurance cover**: notional liquidated per adverse move, the equity below zero if price gaps past bankruptcy, and whether the market's insurance balance covers it.
-2. **On-chain liquidity versus liquidation demand**: because Perpl's central limit order book is a contract, the resting depth that a liquidation cascade would trade through can be read at the same block as the positions. The cover ratio (depth ÷ demand) per move is a cascade-risk gauge that estimated heatmaps cannot produce. On 2026-09-21 BTC showed 11× cover for long liquidations at a 5 % move but only 84 % for short liquidations, and 39 % at 10 %.
-3. **Interactive stress test**: any move from −30 % to +30 % returns the positions hit, bad debt, insurance cover and the depth available.
-4. **Auto-deleveraging queue**: the opposing positions Perpl's ADL would close first, ranked as the venue documents (most profitable first).
-5. **Independent account risk view**: any account ID or address, all positions, liquidation prices, distance and health without connecting a wallet.
-6. **Validation page**: reconciliation, independent discovery, PnL agreement and a cross-check against the venue's own API, all live.
+1. **Measured, not modelled, liquidation risk.** The ladder of notional
+   liquidated per adverse move, the bad debt past bankruptcy and whether the
+   market's insurance fund covers it. The positions are read from the
+   contract, not inferred.
+2. **Order-book cover.** Perpl's order book is a contract, so the resting
+   depth a liquidation cascade would trade through is read at the same block
+   as the positions.
+3. **A wallet's rank in every window**, next to its PnL, volume and
+   performance.
+4. **History that reproduces the contract.** Open interest and net flows
+   summed from every event since launch are checked against the contract's
+   own counters.
 
 ## Design language
 
-The dashboard follows Perpl's visual identity (Geist typeface, dark `#161418` base, smoke `#f1f1f1` light theme, purple `#6f5cff` and lilac `#a2a4ff` accents) while keeping data colours from a validated palette: long `#008300`, short `#e34948` / `#e66767`, single-series blue. Every chart has a legend, named tooltips and a table view, which is the secondary encoding the colour-vision checks require for a green/red pair.
+The page follows the dark Perpl and Monad look:
+- black page (`#000`) with near-black panels (`#0e0d10`, `#121113`);
+- the Geist typeface, served locally;
+- lilac and purple accents (`#a2a4ff`, `#6f5cff`).
+
+Data colours come from a categorical palette validated for colour-vision
+deficiency against the dark surface:
+- market series use `#7b7dea`, `#d36c00`, `#00a999`, `#b28500`, `#cd5ea2`
+  and `#0098de`, with grey `#5c5b66` for Other;
+- colours follow each market's all-time volume rank and never change with
+  filters.
+
+Long and short use `#81c784` and `#f65a6e`. Funding uses a diverging
+blue–orange pair around a grey midpoint. Every chart has a legend or labels,
+a tooltip and a CSV download, so no reading depends on colour alone. The
+page states that it is unofficial and uses no Perpl or Monad logos.

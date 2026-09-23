@@ -1,0 +1,145 @@
+{
+  "collected_at": "2026-09-23T08:57:47.305Z",
+  "chain_id": 143,
+  "exchange": "0x34B6552d57a35a1D042CcAe1951BD1C370112a6F",
+  "coverage": {
+    "from_block": 54773010,
+    "contiguous": true,
+    "note": "every block from the deployment block to the collector block indexed"
+  },
+  "integrity": {
+    "complete": true,
+    "block": "107279223",
+    "method": "Running sums of indexed events up to the contract snapshot block compared with the contract counters read at that same block.",
+    "open_interest": [
+      {
+        "market": 1,
+        "symbol": "BTC",
+        "events_long": "8.21453",
+        "contract_long": "8.21453",
+        "events_short": "8.21453",
+        "contract_short": "8.21453",
+        "ok": true
+      },
+      {
+        "market": 10,
+        "symbol": "MON",
+        "events_long": "4732237",
+        "contract_long": "4732237",
+        "events_short": "4732237",
+        "contract_short": "4732237",
+        "ok": true
+      },
+      {
+        "market": 20,
+        "symbol": "ETH",
+        "events_long": "90.069",
+        "contract_long": "90.069",
+        "events_short": "90.069",
+        "contract_short": "90.069",
+        "ok": true
+      },
+      {
+        "market": 30,
+        "symbol": "SOL",
+        "events_long": "0.000",
+        "contract_long": "0.000",
+        "events_short": "0.000",
+        "contract_short": "0.000",
+        "ok": true
+      },
+      {
+        "market": 31,
+        "symbol": "SOL_v2",
+        "events_long": "1437.497",
+        "contract_long": "1437.497",
+        "events_short": "1437.497",
+        "contract_short": "1437.497",
+        "ok": true
+      },
+      {
+        "market": 40,
+        "symbol": "HYPE",
+        "events_long": "262.56",
+        "contract_long": "262.56",
+        "events_short": "262.56",
+        "contract_short": "262.56",
+        "ok": true
+      },
+      {
+        "market": 50,
+        "symbol": "ZEC",
+        "events_long": "41.7764",
+        "contract_long": "41.7764",
+        "events_short": "41.7764",
+        "contract_short": "41.7764",
+        "ok": true
+      },
+      {
+        "market": 60,
+        "symbol": "LIT",
+        "events_long": "5935.9",
+        "contract_long": "5935.9",
+        "events_short": "5935.9",
+        "contract_short": "5935.9",
+        "ok": true
+      },
+      {
+        "market": 70,
+        "symbol": "VVV",
+        "events_long": "0.00",
+        "contract_long": "0.00",
+        "events_short": "0.00",
+        "contract_short": "0.00",
+        "ok": true
+      },
+      {
+        "market": 80,
+        "symbol": "TAO",
+        "events_long": "0.000",
+        "contract_long": "0.000",
+        "events_short": "0.000",
+        "contract_short": "0.000",
+        "ok": true
+      },
+      {
+        "market": 90,
+        "symbol": "PUMP",
+        "events_long": "4489829",
+        "contract_long": "4489829",
+        "events_short": "4489829",
+        "contract_short": "4489829",
+        "ok": true
+      }
+    ],
+    "tvl": {
+      "events": "3942293.243869",
+      "contract": "3942293.243869",
+      "ok": true
+    }
+  },
+  "decoder_whole_history": {
+    "rows": 67168371,
+    "first_event_block": 54972991,
+    "last_block": 107279390,
+    "position_events": 33557868,
+    "unlinked_position_events": 0,
+    "fee_checks": 18630950,
+    "fee_mismatches": 0,
+    "maker_fills": 21629586,
+    "liquidations": 3341,
+    "deleverages": 11,
+    "traders": 5148
+  },
+  "duplicates": {
+    "rows": 67168371,
+    "unique_rows": 67168371
+  },
+  "volume_cross_check_24h": {
+    "perplscope_usd": 18240072,
+    "perpl_venue_usd": 18233631,
+    "gap_pct": 0.035,
+    "largest_market_gap_pct": 0.07,
+    "note": "windows end a few minutes apart"
+  }
+}

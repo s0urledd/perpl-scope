@@ -3,7 +3,7 @@
 // All sums are exact BigInt in contract units. Ratios are basis points
 // (BigInt) unless documented otherwise. Nothing here talks to the network.
 import * as m from './math.js';
-import { depthWithin, absorption } from './book.js';
+import { depthWithin, absorption, walkedBps, costToTrade, TRADE_SIZES_USD } from './book.js';
 
 export const DEPTH_BPS = [100n, 200n, 500n, 1000n];
 
@@ -127,7 +127,7 @@ export function liquiditySummary(market, ladder, u) {
   if (!book) return null;
   const depth = { bids: {}, asks: {} };
   for (const bps of DEPTH_BPS) { depth.bids[bps] = depthWithin(book.bids, 'bids', market.markPNS, bps, u); depth.asks[bps] = depthWithin(book.asks, 'asks', market.markPNS, bps, u); }
-  return { block: book.block, at: book.at, truncated: book.truncated, rangeBps: book.rangeBps ?? null, levels: { bids: book.bids.length, asks: book.asks.length }, bestBidPNS: book.bids[0]?.pricePNS ?? null, bestAskPNS: book.asks[0]?.pricePNS ?? null, depth, absorption: absorption(ladder, book, market.markPNS, u) };
+  return { block: book.block, at: book.at, truncated: book.truncated, walkedBps: { bids: walkedBps(book, 'bids', market.markPNS), asks: walkedBps(book, 'asks', market.markPNS) }, rangeBps: book.rangeBps ?? null, levels: { bids: book.bids.length, asks: book.asks.length }, bestBidPNS: book.bids[0]?.pricePNS ?? null, bestAskPNS: book.asks[0]?.pricePNS ?? null, depth, absorption: absorption(ladder, book, market.markPNS, u), cost: TRADE_SIZES_USD.map(usd => ({ usd, buy: costToTrade(book, 'buy', usd, u), sell: costToTrade(book, 'sell', usd, u) })) };
 }
 
 // One-off stress at a signed move: negative moves liquidate longs, positive shorts.
@@ -138,9 +138,11 @@ export function stressAt(positions, market, u, signedBps) {
   const bucket = row[side];
   const hit = positions.filter(p => p.side === side && p.liquidationDistanceBps !== null && p.liquidationDistanceBps <= bps).sort((a, b) => (b.markNotionalCNS > a.markNotionalCNS ? 1 : b.markNotionalCNS < a.markNotionalCNS ? -1 : 0));
   const inRange = market.book && (market.book.rangeBps === undefined || market.book.rangeBps === null || bps <= BigInt(market.book.rangeBps));
-  const depth = inRange ? depthWithin(side === 'long' ? market.book.bids : market.book.asks, side === 'long' ? 'bids' : 'asks', market.markPNS, bps, u) : null;
+  const bookSide = side === 'long' ? 'bids' : 'asks';
+  const depth = inRange ? depthWithin(market.book[bookSide], bookSide, market.markPNS, bps, u) : null;
+  const walked = inRange ? walkedBps(market.book, bookSide, market.markPNS) : null;
   const totalNotional = sum(positions, p => p.markNotionalCNS);
-  return { bps: BigInt(signedBps), side, pricePNS: bucket.pricePNS, count: bucket.count, notionalCNS: bucket.notionalCNS, shortfallCNS: bucket.shortfallCNS, insuranceCoverageBps: bucket.shortfallCNS > 0n ? m.floorDiv(BigInt(market.insuranceBalanceCNS) * 10000n, bucket.shortfallCNS) : null, remainingNotionalCNS: totalNotional - bucket.notionalCNS, shareBps: shareBps(bucket.notionalCNS, totalNotional), depthCNS: depth?.notionalCNS ?? null, depthLevels: depth?.levels ?? null, absorptionBps: depth && bucket.notionalCNS > 0n ? m.floorDiv(depth.notionalCNS * 10000n, bucket.notionalCNS) : null, hit };
+  return { bps: BigInt(signedBps), side, pricePNS: bucket.pricePNS, count: bucket.count, notionalCNS: bucket.notionalCNS, shortfallCNS: bucket.shortfallCNS, insuranceCoverageBps: bucket.shortfallCNS > 0n ? m.floorDiv(BigInt(market.insuranceBalanceCNS) * 10000n, bucket.shortfallCNS) : null, remainingNotionalCNS: totalNotional - bucket.notionalCNS, shareBps: shareBps(bucket.notionalCNS, totalNotional), depthCNS: depth?.notionalCNS ?? null, depthLevels: depth?.levels ?? null, depthComplete: depth ? walked === null || bps <= walked : null, absorptionBps: depth && bucket.notionalCNS > 0n ? m.floorDiv(depth.notionalCNS * 10000n, bucket.notionalCNS) : null, hit };
 }
 
 export function sideSummary(positions) {

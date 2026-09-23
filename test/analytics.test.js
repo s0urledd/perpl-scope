@@ -1,76 +1,54 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { tradesFor, performance, observations } from '../src/analytics.js';
-import { recordsFromLogs } from '../src/index.js';
-import * as m from '../src/math.js';
-import { logBuilder, ev } from './helpers/logs.js';
+import { roundTrips, performance, insights, activityGrid } from '../src/analytics.js';
 
-const units = new Map([[1, m.units(1, 5, 6)], [2, m.units(2, 3, 6)]]);
-const records = logs => recordsFromLogs(logs).filter(r => r.accountId === 7 && r.type !== 'takerFill');
+const LONG = 0, SHORT = 1;
+let seq = 0;
+const row = (kind, market, side, o = {}) => ({ kind, market, side, role: 'taker', block: ++seq, log_index: 0, ts: 1790000000 + seq * 600, lot: 0n, start_lot: 0n, end_lot: 0n, notional: 0n, fee: 0n, builder_fee: 0n, pnl: 0n, funding: 0n, leverage: 1000, ...o });
 
-function history() {
-  const b = logBuilder();
-  // Trip 1 (BTC long): open 0.5 @ 50,000, add 0.5 @ 51,000, sell 0.5 @ 52,000 (+1,000), close @ 53,000 (+1,000) -> +2,000
-  b.at(100n).tx().add(...ev.open(1, 7, 0, 500000n, 50000n)).add(...ev.takerFill(500000n, 50000n, 1000n));
-  b.at(120n).tx().add(...ev.increase(1, 7, 0, 505000n, 50000n, 100000n)).add(...ev.takerFill(510000n, 50000n, 500n));
-  b.at(140n).tx().add(...ev.decrease(1, 7, 0, 100000n, 50000n, 1000000000n)).add(...ev.takerFill(520000n, 50000n));
-  b.at(200n).tx().add(...ev.close(1, 7, 0, 530000n, 1000000000n, -1000000n)).add(...ev.takerFill(530000n, 50000n));
-  // Trip 2 (BTC short): open @ 53,000, liquidated fully @ 60,000 -> -3,500
-  b.at(300n).tx().add(...ev.open(1, 7, 1, 530000n, 50000n)).add(...ev.takerFill(530000n, 50000n, 1000n));
-  b.at(400n).tx().add(...ev.liquidation(1, 7, 1, 600000n, 50000n, 0n, -3500000000n));
-  // Trip 3 (ETH long): open, invert to short (+100), later close short (-50)
-  b.at(500n).tx().add(...ev.open(2, 7, 0, 300000n, 1000n)).add(...ev.takerFill(300000n, 1000n, 100n));
-  b.at(600n).tx().add(...ev.invert(2, 7, 0, 310000n, 1000n, 2000n, 100000000n)).add(...ev.takerFill(310000n, 3000n, 300n));
-  b.at(700n).tx().add(...ev.close(2, 7, 1, 315000n, -50000000n)).add(...ev.takerFill(315000n, 2000n));
-  return b.logs;
-}
-
-test('round trips are grouped per market and side', () => {
-  const t = tradesFor(records(history()), units);
-  assert.equal(t.trips.length, 4);
-  const [btcLong, btcShort, ethLong, ethShort] = t.trips;
-  assert.equal(btcLong.realizedCNS, 1999000000n); assert.equal(btcLong.openBlock, 100n); assert.equal(btcLong.closeBlock, 200n); assert.equal(btcLong.feesCNS, 1500n); assert.equal(btcLong.maxLotLNS, 100000n);
-  assert.equal(btcLong.entryNotionalCNS, m.notionalCNS(500000n, 50000n, units.get(1)) + m.notionalCNS(510000n, 50000n, units.get(1)));
-  assert.equal(btcShort.liquidated, true); assert.equal(btcShort.realizedCNS, -3500000000n);
-  assert.equal(ethLong.side, 0); assert.equal(ethLong.realizedCNS, 100000000n); assert.equal(ethLong.closeBlock, 600n);
-  assert.equal(ethShort.side, 1); assert.equal(ethShort.openBlock, 600n); assert.equal(ethShort.realizedCNS, -50000000n); assert.equal(ethShort.complete, true);
-  assert.equal(t.openTrips.length, 0);
-  assert.equal(t.realizedCNS, 1999000000n - 3500000000n + 100000000n - 50000000n);
-  assert.equal(t.events.length, 9); assert.equal(t.events[0].role, 'taker');
-  assert.equal(t.fundingCNS, -1000000n);
+test('a position is one round trip per market; a flip closes one side and opens the other', () => {
+  seq = 0;
+  const rows = [
+    row('open', 1, LONG, { lot: 10n, end_lot: 10n, notional: 1000n, fee: 1n }),
+    row('increase', 1, LONG, { lot: 10n, start_lot: 10n, end_lot: 20n, notional: 1000n, fee: 1n }),
+    row('decrease', 1, LONG, { lot: 5n, start_lot: 20n, end_lot: 15n, notional: 600n, pnl: 50n }),
+    row('invert', 1, SHORT, { lot: 25n, start_lot: 15n, end_lot: 10n, notional: 2500n, pnl: 120n, fee: 3n }),
+    row('close', 1, SHORT, { lot: 10n, start_lot: 10n, notional: 900n, pnl: 80n, funding: -5n }),
+    row('open', 2, SHORT, { lot: 4n, end_lot: 4n, notional: 400n }),
+    row('liquidation', 2, SHORT, { lot: 4n, start_lot: 4n, notional: 450n, pnl: -390n })
+  ];
+  const { trips, openTrips, totals } = roundTrips(rows);
+  assert.equal(openTrips.length, 0);
+  assert.deepEqual(trips.map(t => [t.market, t.side, t.realized, t.net, t.liquidated]), [[1, LONG, 170n, 168n, false], [1, SHORT, 75n, 72n, false], [2, SHORT, -390n, -390n, true]]);
+  assert.equal(trips[1].entryNotional, 1000n, 'the new side is entered with the part of the flip fill that opened it');
+  assert.equal(totals.trades, 7);
 });
 
-test('a trip that started before the window is incomplete', () => {
-  const t = tradesFor(records(history().slice(2)), units); // starts at the increase
-  assert.equal(t.trips[0].complete, false); assert.equal(t.trips[0].openBlock, 120n);
-  const p = performance(t.trips, { blockTimeMs: 1000 });
-  assert.equal(p.closedTrips, 4);
-  assert.equal(p.averageHoldMs, Math.round((100000 + 100000 + 100000) / 3), 'incomplete trip excluded from hold time');
+test('events before the first open form an incomplete trip without a hold time', () => {
+  seq = 0;
+  const { trips } = roundTrips([row('decrease', 1, LONG, { start_lot: 10n, end_lot: 5n, pnl: 10n }), row('close', 1, LONG, { lot: 5n, pnl: 5n })]);
+  assert.equal(trips.length, 1);
+  assert.equal(trips[0].complete, false);
+  assert.equal(trips[0].maxLot, 10n);
+  assert.equal(performance(trips).averageHold, null);
 });
 
-test('performance statistics', () => {
-  const t = tradesFor(records(history()), units);
-  const p = performance(t.trips, { blockTimeMs: 1000 });
-  assert.equal(p.wins, 2); assert.equal(p.losses, 2); assert.equal(p.winRateBps, 5000n);
-  assert.equal(p.grossProfitCNS, 2099000000n); assert.equal(p.grossLossCNS, 3550000000n);
-  assert.equal(p.profitFactorBps, 2099000000n * 10000n / 3550000000n);
-  assert.equal(p.realizedCNS, -1451000000n);
-  assert.equal(p.maxDrawdownCNS, 3500000000n, 'peak after trip 1, trough right after the liquidation');
-  assert.equal(p.bestStreak, 1); assert.equal(p.worstStreak, 1); assert.equal(p.currentStreak, -1);
-  assert.equal(p.longShareBps, 5000n); assert.equal(p.liquidatedTrips, 1);
-  assert.equal(p.largestWinCNS, 1999000000n); assert.equal(p.largestLossCNS, -3500000000n);
-  assert.equal(p.bestMarket.perpId, 2); assert.equal(p.worstMarket.perpId, 1);
-  assert.equal(p.medianHoldMs, 100000); assert.equal(p.curve.length, 4); assert.equal(p.curve.at(-1).equityCNS, p.realizedCNS);
-  assert.equal(p.averageWinCNS, 2099000000n / 2n); assert.equal(p.averageLossCNS, 3550000000n / 2n);
-});
-
-test('observations are plain sentences derived from the numbers', () => {
-  const t = tradesFor(records(history()), units);
-  const p = performance(t.trips, { blockTimeMs: 1000 });
-  const notes = observations(p, t.trips, new Map([[1, 'BTC'], [2, 'ETH']]));
-  assert.ok(notes.some(n => n.startsWith('Trades both directions')));
-  assert.ok(notes.some(n => n.startsWith('Losses exceed gains')));
-  assert.ok(notes.includes('Best market ETH, worst BTC.'));
-  assert.ok(notes.some(n => n.includes('ended in liquidation')));
-  assert.deepEqual(observations(performance([]), []), []);
+test('win rate, profit factor, drawdown, streaks and behaviour notes', () => {
+  seq = 0;
+  const rows = [];
+  for (const pnl of [100n, -40n, -30n, 80n, 60n, -200n, 10n]) rows.push(row('open', 1, LONG, { lot: 1n, end_lot: 1n, notional: 1000n }), row('close', 1, LONG, { lot: 1n, pnl }));
+  const perf = performance(roundTrips(rows).trips);
+  assert.equal(perf.closedTrips, 7);
+  assert.equal(perf.wins, 4);
+  assert.equal(Math.round(perf.winRate * 100), 57);
+  assert.equal(perf.profitFactor, 0.9259, 'gross wins 250 / gross losses 270');
+  assert.equal(perf.maxDrawdown, 200n, 'peak 170 after trip 5, trough -30 after trip 6');
+  assert.equal(perf.bestStreak, 2);
+  assert.equal(perf.worstStreak, 2);
+  assert.equal(perf.largestLoss, -200n);
+  const notes = insights(perf, rows);
+  assert.ok(notes.some(n => n.tag === 'bias' && /Long bias/.test(n.text)));
+  assert.ok(notes.some(n => n.tag === 'result'));
+  const grid = activityGrid(rows);
+  assert.equal(grid.flat().reduce((a, b) => a + b, 0), 14);
 });

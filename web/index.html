@@ -1,48 +1,51 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PerplScope</title>
-<meta name="description" content="Independent analytics and risk monitor for Perpl on Monad: volume, open interest, TVL, fees, flows, liquidations, funding and full wallet profiles computed from chain state and events.">
-<meta name="theme-color" content="#161418" media="(prefers-color-scheme: dark)">
-<meta name="theme-color" content="#f1f1f1" media="(prefers-color-scheme: light)">
-<link rel="icon" href="favicon.svg" type="image/svg+xml">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="styles.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PerplScope</title>
+  <meta name="description" content="Real-time analytics and risk for the Perpl perpetuals exchange on Monad: protocol metrics, markets, liquidations and wallet profiles, computed from chain data.">
+  <meta name="theme-color" content="#000000">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="/vendor/fonts/geist.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/vendor/echarts.min.js" defer></script>
+  <script src="/js/app.js" type="module"></script>
 </head>
 <body>
-<header class="topbar">
-  <div class="brand">
-    <a href="#/" class="brand-name"><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 14l4-5 3 3 5-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>PerplScope</a>
-    <span class="brand-sub">Independent analytics and risk monitor for Perpl on Monad</span>
-  </div>
-  <form id="search" class="search" role="search">
-    <input id="search-input" type="text" inputmode="text" autocomplete="off" spellcheck="false" placeholder="Search wallet: 0x address or account ID" aria-label="Look up a wallet by address or account ID">
-    <button type="submit" class="ghost">Look up</button>
-  </form>
-  <div class="topbar-right">
-    <div id="snapshot" class="snapshot" aria-live="polite"><span class="dot dot-syncing"></span><span class="snapshot-text">Connecting…</span></div>
-    <button id="theme" class="ghost" type="button" aria-label="Toggle colour theme">Theme</button>
-  </div>
-</header>
-<nav class="tabs" aria-label="Sections">
-  <a href="#/" data-route="overview">Overview</a>
-  <a href="#/market/1" data-route="market">Markets</a>
-  <a href="#/traders" data-route="traders">Traders</a>
-  <a href="#/liquidations" data-route="liquidations">Liquidations</a>
-  <a href="#/compare" data-route="compare">Watchlist <span id="watch-count" class="count"></span></a>
-  <a href="#/validation" data-route="validation">Validation</a>
-  <a href="#/about" data-route="about">About</a>
-</nav>
-<main id="main" class="main"></main>
-<footer class="footer">
-  <p>Every figure is computed from Monad chain state and exchange events at the block shown in the header. Perpl's public API is used only as a cross-check and never to compute a metric. Watchlists stay in your browser.</p>
-  <p><a href="https://github.com/s0urledd/perpl-scope">Source</a> · <a href="api/v1/overview">JSON API</a> · <a href="#/about">Methodology</a></p>
-</footer>
-<div id="tooltip" class="tooltip" role="status" hidden></div>
-<script type="module" src="app.js"></script>
+  <header class="top">
+    <div class="top-inner">
+      <a class="brand" href="#/" aria-label="PerplScope home">
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="11" fill="none" stroke="currentColor" stroke-width="2.5"/><circle cx="16" cy="16" r="4" fill="currentColor"/><path d="M24 24l5 5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+        <span class="brand-name">Perpl<span>Scope</span></span>
+      </a>
+      <nav class="nav" aria-label="Sections">
+        <a href="#/" data-nav="overview">Overview</a>
+        <a href="#/markets" data-nav="markets">Markets</a>
+        <a href="#/traders" data-nav="traders">Traders</a>
+        <a href="#/liquidations" data-nav="liquidations">Liquidations</a>
+        <a href="#/risk" data-nav="risk">Risk</a>
+        <a href="#/watchlist" data-nav="watchlist">Watchlist</a>
+      </nav>
+      <div class="search" role="search">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M13.5 13.5L17 17" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <input id="search" type="search" placeholder="Search address or account ID" autocomplete="off" spellcheck="false" aria-label="Search wallet by address or account ID">
+        <kbd>/</kbd>
+        <div id="search-results" class="search-results" hidden></div>
+      </div>
+      <a class="live" id="live" href="#/status" title="Data pipeline status">
+        <span class="dot"></span><span id="live-text">Connecting…</span>
+      </a>
+    </div>
+  </header>
+  <div id="banner" class="banner" hidden></div>
+  <main id="view" class="view" tabindex="-1"></main>
+  <footer class="foot">
+    <div class="foot-inner">
+      <span>Unofficial analytics. Not affiliated with or endorsed by Perpl or the Monad Foundation.</span>
+      <span>Data from Monad chain state and exchange events · <a href="#/status">Methodology &amp; data status</a></span>
+    </div>
+  </footer>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
 </body>
 </html>

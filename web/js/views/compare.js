@@ -1,0 +1,78 @@
+// Side-by-side comparison of up to five wallets: key metrics in columns and
+// their cumulative net PnL on one chart (each wallet keeps its colour).
+import { get } from '../api.js';
+import { usd, int, pct, num, esc, short, duration, date } from '../format.js';
+import { pnl, empty, skeleton, ICON, SLOT_HEX, watch, chartTools } from '../ui.js';
+import { lineChart } from '../charts.js';
+
+const COLORS = [SLOT_HEX[0], SLOT_HEX[1], SLOT_HEX[2], SLOT_HEX[3], SLOT_HEX[4]];
+
+export function mount(el, { query, navigate }) {
+  let keys = (query.get('w') ?? '').split(',').map(s => s.trim()).filter(Boolean).slice(0, 5);
+  let alive = true;
+  el.innerHTML = `
+    <div class="page-head"><div><h1>Compare wallets</h1><div class="sub">Up to five wallets side by side. Add from any wallet page or paste addresses.</div></div>
+      <form id="add" style="display:flex;gap:8px;flex:0 1 440px;min-width:0"><div class="search" style="margin:0;flex:1;max-width:none"><input id="add-input" placeholder="Add address or account ID" autocomplete="off" spellcheck="false"></div><button class="btn primary" type="submit">${ICON.plus} Add</button></form></div>
+    <div class="stack"><section class="panel" id="table">${skeleton(10)}</section>
+    <section class="panel"><div class="panel-head"><h2>Cumulative net PnL</h2><div class="head-right"><div class="legend" id="legend"></div>${chartTools('chart', 'compare-pnl')}</div></div><div class="panel-body"><div class="chart" id="chart"></div></div></section></div>`;
+  const $ = s => el.querySelector(`#${s}`);
+  const save = () => { try { sessionStorage.setItem('ps.compare', JSON.stringify(keys)); } catch { /* storage unavailable */ } };
+
+  async function load() {
+    if (!keys.length) {
+      const suggested = watch.list().slice(0, 5).map(w => w.key);
+      $('table').innerHTML = empty(suggested.length ? 'No wallets selected. Your watchlist is below.' : 'No wallets selected. Add an address above or use Compare on a wallet page.');
+      if (suggested.length) $('table').innerHTML += `<div class="panel-foot"><span>Watchlist: ${suggested.map(k => `<a href="#/compare?w=${esc(k)}">${esc(short(k))}</a>`).join(' · ')}</span><button class="btn" data-action="all-watch">Compare watchlist</button></div>`;
+      $('chart').innerHTML = '';
+      return;
+    }
+    const r = await get(`compare?wallets=${keys.map(encodeURIComponent).join(',')}`, { maxAge: 5000 });
+    if (!alive) return;
+    const ws = r.wallets;
+    const col = (w, i) => w.error ? `<th class="n"><span class="neg">${esc(short(w.key))}</span><div class="sub">${esc(w.error)}</div></th>` : `<th class="n"><span style="display:inline-flex;align-items:center;gap:6px"><i style="width:8px;height:8px;border-radius:2px;background:${COLORS[i]}"></i><a class="mono" href="#/wallet/${esc(w.account.address)}">${esc(short(w.account.address))}</a><button class="icon-btn" data-action="remove" data-key="${esc(w.key)}" title="Remove">${ICON.x}</button></span><div class="sub">#${esc(w.account.id)}</div></th>`;
+    const rows = [
+      ['Account value', w => usd(w.portfolio?.account_value)],
+      ['Open positions', w => int(w.positions?.length ?? 0)],
+      ['Unrealized PnL', w => pnl(w.portfolio?.unrealized_pnl)],
+      ['Net PnL (all-time)', w => pnl(w.summary.net_pnl)],
+      ['Realized PnL', w => pnl(w.summary.realized)],
+      ['Fees paid', w => usd(w.summary.fees)],
+      ['Volume', w => usd(w.summary.volume)],
+      ['Trades', w => int(w.summary.trades)],
+      ['Maker share', w => pct(w.summary.maker_share_pct, { digits: 0 })],
+      ['Win rate', w => (w.performance.win_rate_pct === null ? '—' : pct(w.performance.win_rate_pct, { digits: 1 }))],
+      ['Profit factor', w => (w.performance.profit_factor === null ? '—' : w.performance.profit_factor.toFixed(2))],
+      ['Closed round trips', w => int(w.performance.closed_trips)],
+      ['Average win', w => usd(w.performance.average_win)],
+      ['Average loss', w => usd(w.performance.average_loss)],
+      ['Max drawdown', w => usd(w.performance.max_drawdown)],
+      ['Best streak', w => `${int(w.performance.best_streak)}W`],
+      ['Worst streak', w => `${int(w.performance.worst_streak)}L`],
+      ['Median hold', w => duration(w.performance.median_hold_seconds)],
+      ['Long / short trips', w => `${int(w.performance.long.trips)} / ${int(w.performance.short.trips)}`],
+      ['Best market', w => (w.performance.best_market ? esc(w.performance.best_market.symbol) : '—')],
+      ['Worst market', w => (w.performance.worst_market ? esc(w.performance.worst_market.symbol) : '—')],
+      ['Liquidations', w => int(w.summary.liquidations)],
+      ['Net deposits', w => usd(w.summary.net_flow, { sign: true })],
+      ['First trade', w => (w.summary.first_trade ? date(w.summary.first_trade) : '—')]
+    ];
+    $('table').innerHTML = `<div class="table-wrap"><table class="t compact"><thead><tr><th>Metric</th>${ws.map(col).join('')}</tr></thead><tbody>${rows.map(([label, f]) => `<tr><td class="muted">${label}</td>${ws.map(w => `<td class="n">${w.error ? '—' : f(w)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+    // Cumulative PnL on a shared daily axis.
+    const full = await Promise.all(ws.map(w => (w.error ? null : get(`wallets/${encodeURIComponent(w.account.address)}`, { maxAge: 10000 }).catch(() => null))));
+    if (!alive) return;
+    const days = [...new Set(full.flatMap(f => (f?.pnl_daily ?? []).map(p => p.t)))].sort((a, b) => a - b);
+    const series = full.map((f, i) => { if (!f) return null; const map = new Map(f.pnl_daily.map(p => [p.t, num(p.cumulative)])); let last = null; return { name: short(f.account.address), color: COLORS[i], data: days.map(t => { if (map.has(t)) last = map.get(t); return last; }) }; }).filter(Boolean);
+    $('legend').innerHTML = series.map(s => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join('');
+    if (days.length) lineChart($('chart'), { times: days, series, bucketSeconds: 86400, fmt: v => usd(v, { sign: true }), area: false }); else $('chart').innerHTML = empty('No realized PnL yet');
+  }
+  $('add').addEventListener('submit', e => { e.preventDefault(); const v = $('add-input').value.trim(); if (!/^(0x[0-9a-fA-F]{40}|\d{1,9})$/.test(v)) return; if (!keys.includes(v)) keys = [...keys, v].slice(-5); save(); navigate('/compare', { w: keys.join(',') }); });
+  load().catch(error => { $('table').innerHTML = empty(`Could not load (${error.message})`); });
+  return {
+    onAction(a, t) {
+      if (a === 'remove') { keys = keys.filter(k => k !== t.dataset.key); save(); navigate('/compare', keys.length ? { w: keys.join(',') } : null); }
+      if (a === 'all-watch') navigate('/compare', { w: watch.list().slice(0, 5).map(w => w.key).join(',') });
+    },
+    update(q) { keys = (q.get('w') ?? '').split(',').map(s => s.trim()).filter(Boolean).slice(0, 5); load().catch(() => {}); },
+    destroy() { alive = false; }
+  };
+}

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createReader } from '../src/exchange.js';
-import { readDepth, depthWithin, absorption } from '../src/book.js';
+import { readDepth, depthWithin, absorption, walkedBps, costToTrade } from '../src/book.js';
 import { marketMetrics, stressAt, adlQueue } from '../src/metrics.js';
 import * as m from '../src/math.js';
 import { createFakeExchange, EXCHANGE } from './helpers/fake-exchange.js';
@@ -45,6 +45,34 @@ test('absorption compares liquidation demand with resting depth per side', () =>
   assert.equal(stress.hit[0].accountId, 1n);
   assert.equal(stressAt(x.positions, market, u, 300n).count, 0);
   assert.equal(absorption(x.ladder, null, market.markPNS, u), null);
+});
+
+test('depth beyond a truncated walk is reported as a lower bound', () => {
+  const market = { id: 1, symbol: 'BTC', markPNS: 1000000n, oraclePNS: 1000000n, maintHdths: 2500n, initHdths: 1500n, insuranceBalanceCNS: 1000000000n, positionBalanceCNS: 0n, longOpenInterestLNS: 100000n, shortOpenInterestLNS: 100000n, oiMaxLNS: 30000000n,
+    // The walk stopped at its level cap 1 % below the mark; asks were read to the end of the range.
+    book: { bids: [{ pricePNS: 995000n, lotLNS: 50000n, expiringLNS: 0n }, { pricePNS: 990000n, lotLNS: 50000n, expiringLNS: 0n }], asks: [{ pricePNS: 1050000n, lotLNS: 200000n, expiringLNS: 0n }], truncated: { bids: true, asks: false }, rangeBps: 1500n, block: 1n, at: 0 } };
+  assert.equal(walkedBps(market.book, 'bids', market.markPNS), 100n);
+  assert.equal(walkedBps(market.book, 'asks', market.markPNS), null);
+  const position = (accountId, positionType, depositCNS) => ({ accountId, positionType, pricePNS: 1000000n, lotLNS: 100000n, depositCNS, premiumPnlCNS: 0n, priceResiduePNSQ16: 0n, entryBlock: 1n, deltaPnlCNS: 0n, pnlCNS: 0n, readMarkPNS: 1000000n });
+  const x = marketMetrics(market, [position(1n, 0, 10000000000n), position(2n, 1, 10000000000n)], u);
+  const at = bps => x.liquidity.absorption.find(r => r.bps === bps);
+  assert.equal(at(100n).long.complete, true);
+  assert.equal(at(1000n).long.complete, false, 'bids past 1 % were never read');
+  assert.equal(at(1000n).short.complete, true);
+  assert.equal(stressAt(x.positions, market, u, -1000n).depthComplete, false);
+  assert.equal(stressAt(x.positions, market, u, 1000n).depthComplete, true);
+});
+
+test('market-order cost walks the book from the mid', () => {
+  // Mid 100,000.0; asks 100,100.0 and 100,200.0 with 1 BTC each; one bid.
+  const book = { bids: [{ pricePNS: 999000n, lotLNS: 100000n }], asks: [{ pricePNS: 1001000n, lotLNS: 100000n }, { pricePNS: 1002000n, lotLNS: 100000n }] };
+  assert.deepEqual(costToTrade(book, 'buy', 1000, u), { usd: 1000, filled: true, bps: 10, filledUsd: 1000 });
+  const big = costToTrade(book, 'buy', 150000, u);
+  assert.equal(big.filled, true);
+  assert.ok(Math.abs(big.bps - 13.32) < 0.01, `vwap cost ${big.bps}`);
+  assert.equal(costToTrade(book, 'sell', 50000, u).bps, 10);
+  assert.equal(costToTrade(book, 'buy', 1000000, u).filled, false, 'the book read holds about $200K');
+  assert.equal(costToTrade({ bids: [], asks: book.asks }, 'buy', 1000, u), null, 'no mid without both sides');
 });
 
 test('ADL queue ranks profitable opposing positions by return on deposit', () => {
