@@ -1,10 +1,10 @@
 # Submission: Monad Metropolis hackathon
 
 - **Entry:** one project (the rules allow one per participant, §2.5) in
-  track 01, Onchain Finance & Trading, entered for both Perpl sponsor
-  bounties:
-  - "Best Analytics / Risk Tool": the dashboard and API (this document);
-  - "Best use of Perpl's API": the trading bot, built in this repository.
+  track 01, Onchain Finance & Trading, entered for Perpl's "Best Analytics /
+  Risk Tool" bounty: the dashboard, the API and the Telegram alerts (this
+  document). A trading bot for "Best use of Perpl's API" is planned, not
+  built ([bot.md](bot.md)).
 - **Submissions:** open 2 October 2026 and close 14 October 2026, 06:59
   GMT+3 (13 October, 11:59 PM ET).
 - **Required (rules §4.1, §9):** a public repository with source, README,
@@ -71,6 +71,10 @@ Judging criteria:
     compared with the contract's own counters;
   - the decoder's linking counters and the collector's reconciliation are
     on the status page.
+- **Telegram alerts** (@PlumbPerplBot): watch a wallet for every position
+  change and a warning before liquidation at levels the user picks; see its
+  positions and distance to liquidation on demand; large liquidations,
+  large trades and funding flips. One tap from any wallet page.
 - **Self-hosted on a Monad node:**
   - execution events via Monode: proposed-block trades on the tape within
     milliseconds, finalized data about a second after the block;
@@ -96,7 +100,8 @@ Judging criteria:
    - the PnL curve and the performance panel;
    - the behaviour notes and the trade history, exported as CSV.
 
-   Add it to Compare with a second wallet.
+   Tap **Alerts**: Telegram opens with the wallet watched; show
+   **My positions** and a near-liquidation warning.
 6. **Risk.** Drag the stress slider to −10 % on BTC: positions hit, bad debt,
    insurance and book cover.
 7. **Status page:**
@@ -119,8 +124,7 @@ Judging criteria:
 - [x] Make the repository public.
 - [x] Link the repository in the project profile.
 - [x] Licence file, attribution and AI disclosure in the README.
-- [ ] Trading bot: live on mainnet, with its transactions listed in the
-      README and on the Bot page.
+- [x] Telegram alerts live (@PlumbPerplBot).
 - [ ] Project profile: name "Plumb", one-line description and description.
 
 ## Claims and their evidence

@@ -1,7 +1,7 @@
 # Trading bot
 
-Status: in progress. This page will describe the strategy, the risk limits
-and the onchain record once the bot trades on mainnet.
+Status: planned, not started. This page will describe the strategy, the
+risk limits and the onchain record once the bot trades on mainnet.
 
 The plan:
 - trade through Perpl's official API and SDK, with Plumb's data as the
