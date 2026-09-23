@@ -22,9 +22,13 @@ import { bookOptions, readDepth } from './book.js';
 
 const integer = (value, fallback) => { const n = Number(value ?? fallback); if (!Number.isFinite(n) || n < 0) throw new Error('INVALID_COLLECTOR_OPTION'); return n; };
 
+const BLOCK_TIME_SPAN = 3000n; // about 15 minutes
+
 export function collectorOptions(env = {}) {
   return {
     pollMs: integer(env.POLL_MS, 2000),
+    // wake() (each committed block of the event index) polls sooner, never closer than this.
+    minPollMs: integer(env.MIN_POLL_MS, 500),
     logRange: BigInt(integer(env.LOG_RANGE, 100)),
     maxResumeGap: BigInt(integer(env.MAX_RESUME_GAP, 20000)),
     verifyEveryBlocks: BigInt(integer(env.VERIFY_BLOCKS, 12000)),
@@ -33,6 +37,8 @@ export function collectorOptions(env = {}) {
     checkpointPath: env.CHECKPOINT_PATH || 'data/checkpoint.json',
     checkpointEveryMs: integer(env.CHECKPOINT_MS, 10000),
     staleAfterMs: integer(env.STALE_AFTER_MS, 45000),
+    // A head whose timestamp is this far behind the clock is stale (0: off).
+    maxBlockAgeMs: integer(env.MAX_BLOCK_AGE_MS, 60000),
     finalizedEveryPolls: integer(env.FINALIZED_EVERY_POLLS, 10),
     accountScanBatch: Math.max(1, integer(env.ACCOUNT_SCAN_BATCH, 50)),
     maxAccounts: BigInt(integer(env.MAX_ACCOUNTS, 200000)),
@@ -46,13 +52,15 @@ export function collectorOptions(env = {}) {
 
 export function createCollector({ config, options = collectorOptions(), rpc, reader = createReader({ rpc, exchange: config.exchange }), log = () => {} }) {
   const state = s.createState({ chain: config.chain, exchange: config.exchange });
+  if (options.book?.enabled) state.stats.bookMaxAgeMs = 3 * options.book.refreshMs; // three missed walks
   const pollTopics = topicsFor(WATCHED_EVENTS);
   const listeners = new Set();
+  let wakeUp = null, woken = false;
+  let timeRef = null; // block time is re-measured over each span of BLOCK_TIME_SPAN blocks
   let running = false, lastCheckpointAt = 0, lastVerifyBlock = null, polls = 0, consecutiveErrors = 0, verifying = false, lastBookAt = 0, booking = false;
   let rebuild = null; // why the stored positions must be rebuilt (cleared only by a successful bootstrap)
   let advancedAt = 0; // when the followed head last moved
   state.series.everyBlocks = options.seriesEveryBlocks ?? state.series.everyBlocks;
-  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
   async function fetchLogs(from, to, topics = pollTopics) {
     const logs = [];
@@ -89,6 +97,7 @@ export function createCollector({ config, options = collectorOptions(), rpc, rea
       if (recheck.hash !== head.hash) { if (attempt >= 3) throw new Error('BOOTSTRAP_HASH_UNSTABLE'); continue; }
       // Apply atomically from the API's point of view (no awaits below).
       if (earlier && head.timestamp > earlier.timestamp) state.stats.blockTimeMs = Math.round((head.timestamp - earlier.timestamp) * 1000 / Number(block - earlier.number));
+      timeRef = { number: head.number, timestamp: head.timestamp };
       const books = new Map([...state.markets].map(([id, market]) => [id, market.book ?? null]));
       state.markets.clear();
       s.setBlock(state, head);
@@ -159,10 +168,14 @@ export function createCollector({ config, options = collectorOptions(), rpc, rea
     const positionReads = dirty.length ? await reader.readPositions(dirty, to) : [];
     const refreshed = new Map();
     for (const id of refresh) refreshed.set(id, await reader.readAllPositions(id, to));
-    const finalized = polls % options.finalizedEveryPolls === 1 ? await reader.getBlock('finalized').catch(() => null) : null;
+    const finalized = options.headTag === 'finalized' ? head : polls % options.finalizedEveryPolls === 1 ? await reader.getBlock('finalized').catch(() => null) : null;
     const recheck = await reader.getBlock(to);
     if (recheck.hash !== head.hash) { log('warn', `head hash changed during poll at block ${to}`); return; }
     // Apply atomically.
+    if (timeRef && head.number - timeRef.number >= BLOCK_TIME_SPAN && head.timestamp > timeRef.timestamp) {
+      state.stats.blockTimeMs = Math.round((head.timestamp - timeRef.timestamp) * 1000 / Number(head.number - timeRef.number));
+      timeRef = { number: head.number, timestamp: head.timestamp };
+    } else if (!timeRef) timeRef = { number: head.number, timestamp: head.timestamp };
     s.setBlock(state, head, finalized);
     s.applyExchange(state, exchangeInfo);
     if (removed.length) s.removeMarkets(state, removed);
@@ -250,11 +263,14 @@ export function createCollector({ config, options = collectorOptions(), rpc, rea
 
   function freshness(now = Date.now()) {
     const age = state.stats.lastSuccessAt ? now - state.stats.lastSuccessAt : null;
+    const blockAge = state.block ? Math.max(0, now - state.block.timestamp * 1000) : null;
     let status = !state.block ? 'syncing' : state.status, reason = state.statusReason;
     if (status === 'fresh' && age !== null && age > options.staleAfterMs) { status = 'stale'; reason = 'no-recent-poll'; }
     // Polls that succeed while the provider's head never moves are not fresh either.
     else if (status === 'fresh' && advancedAt && now - advancedAt > options.staleAfterMs) { status = 'stale'; reason = 'head-stalled'; }
-    return { status, reason, ageMs: age };
+    // ...nor are polls of a node that advances but lags the chain.
+    else if (status === 'fresh' && options.maxBlockAgeMs && blockAge !== null && blockAge > options.maxBlockAgeMs) { status = 'stale'; reason = 'head-behind'; }
+    return { status, reason, ageMs: age, blockAgeMs: blockAge };
   }
 
   async function start() {
@@ -284,7 +300,7 @@ export function createCollector({ config, options = collectorOptions(), rpc, rea
         else if (rebuild) await bootstrap(rebuild);
         else await poll();
         consecutiveErrors = 0;
-        refreshBook().catch(error => log('warn', `book refresh failed: ${error.message}`)); // concurrent, like verify()
+        refreshBook().then(depth => { if (depth) state.stats.bookError = null; }).catch(error => { state.stats.bookError = { message: error.message, at: Date.now() }; log('warn', `book refresh failed: ${error.message}`); }); // concurrent, like verify()
         sample();
         if (state.block && (lastVerifyBlock === null || state.block.number - lastVerifyBlock >= options.verifyEveryBlocks)) verify().catch(() => {});
       } catch (error) {
@@ -293,12 +309,27 @@ export function createCollector({ config, options = collectorOptions(), rpc, rea
         log('warn', `poll error: ${error.message}`);
       }
       state.stats.lastPollMs = Math.round(performance.now() - started);
-      const delay = consecutiveErrors ? Math.min(options.pollMs * 2 ** consecutiveErrors, 60000) : options.pollMs;
-      await sleep(delay);
+      if (!running) break;
+      const backoff = consecutiveErrors > 0;
+      const delay = backoff ? Math.min(options.pollMs * 2 ** consecutiveErrors, 60000) : options.pollMs;
+      // Waits for the poll timer, or only until minPollMs after this poll
+      // started once wake() is called (also when it came during the poll).
+      // An error backoff is never shortened.
+      await new Promise(resolve => {
+        const timer = setTimeout(() => { wakeUp = null; resolve(); }, delay);
+        const soon = () => { clearTimeout(timer); wakeUp = null; setTimeout(resolve, Math.max(0, options.minPollMs - (performance.now() - started))); };
+        if (backoff) woken = false;
+        else if (woken) { woken = false; soon(); }
+        else wakeUp = soon;
+      });
     }
   }
 
-  function stop() { running = false; }
+  // Called when the event index commits a new finalized block: contract state
+  // follows it without waiting for the poll timer.
+  function wake() { if (wakeUp) wakeUp(); else woken = true; }
 
-  return { state, options, reader, start, stop, bootstrap, poll, verify, backfillHistory, refreshBook, sample, freshness, metrics: () => s.metrics(state), on: fn => { listeners.add(fn); return () => listeners.delete(fn); }, checkpoint: () => checkpoint(true) };
+  function stop() { running = false; wakeUp?.(); }
+
+  return { state, options, reader, start, stop, wake, bootstrap, poll, verify, backfillHistory, refreshBook, sample, freshness, metrics: () => s.metrics(state), on: fn => { listeners.add(fn); return () => listeners.delete(fn); }, checkpoint: () => checkpoint(true) };
 }

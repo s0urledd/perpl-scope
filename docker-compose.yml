@@ -1,9 +1,9 @@
-# PerplScope on the RPC host: the app, its ClickHouse and (optionally) the
+# Plumb on the RPC host: the app, its ClickHouse and (optionally) the
 # Monode execution-events sidecar. Configure through .env (see .env.example).
 #
 #   docker compose up -d --build                           # app + ClickHouse
 #   docker compose --profile exec-events up -d --build     # + Monode sidecar
-name: perpl-scope
+name: plumb
 
 services:
   clickhouse:
@@ -31,7 +31,7 @@ services:
 
   app:
     build: .
-    image: perpl-scope:latest
+    image: plumb:latest
     restart: unless-stopped
     env_file: .env
     environment:
@@ -60,7 +60,7 @@ services:
   monode:
     profiles: ["exec-events"]
     build: ./deploy/monode
-    image: perpl-scope-monode:latest
+    image: plumb-monode:latest
     restart: unless-stopped
     command: ["--event-ring-path", "/event-rings/monad-exec-events", "--server-addr", "0.0.0.0:8443", "--health-server-addr", "127.0.0.1:7000"]
     environment:

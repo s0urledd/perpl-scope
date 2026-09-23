@@ -69,6 +69,18 @@ export function createRollups({ ch, coverage, log = () => {}, maxHoursPerStateme
     status.hours = done.size;
   }
 
+  // A run that times out (a busy week) is retried as two halves, down to one
+  // hour. Rows written by an attempt the client gave up on collapse on merge.
+  async function rollRange(r) {
+    try { await rollRun(r); }
+    catch (error) {
+      if (!/timeout/i.test(error.message) || r.to - r.from <= HOUR) throw error;
+      const mid = r.from + Math.floor((r.to - r.from) / HOUR / 2) * HOUR;
+      await rollRange({ from: r.from, to: mid });
+      await rollRange({ from: mid, to: r.to });
+    }
+  }
+
   async function run(nowTs) {
     if (running) return running;
     running = (async () => {
@@ -76,7 +88,7 @@ export function createRollups({ ch, coverage, log = () => {}, maxHoursPerStateme
       try {
         if (!loaded) await load();
         const runs = pendingRuns(nowTs);
-        for (const r of runs) await rollRun(r);
+        for (const r of runs) await rollRange(r);
         status.lastRunAt = Date.now(); status.lastRunMs = Date.now() - started; status.lastError = null;
         if (runs.length) log('info', `rolled up ${runs.reduce((a, r) => a + (r.to - r.from) / HOUR, 0)} hours in ${Date.now() - started} ms`);
         return runs.length;

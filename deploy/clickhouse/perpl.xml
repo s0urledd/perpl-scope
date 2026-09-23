@@ -1,4 +1,4 @@
-<!-- ClickHouse server overrides for PerplScope: quiet logging and no
+<!-- ClickHouse server overrides for Plumb: quiet logging and no
      high-volume diagnostic system tables. -->
 <clickhouse>
   <logger>

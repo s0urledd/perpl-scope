@@ -53,7 +53,7 @@ const evColumns = `
 // Flags on ev rows.
 export const FLAG = { ON_BOOK: 1, FORCE_CLOSE: 2, UNLINKED: 4, WITHOUT_PAYMENT: 8 };
 
-export const ROLLUP_VERSION = 1;
+export const ROLLUP_VERSION = 2;
 
 export const DDL = [
   `CREATE TABLE IF NOT EXISTS ev (${evColumns}

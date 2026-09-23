@@ -233,16 +233,17 @@ export function createIngest({ ch, config, liveRpc, archiveRpcs = [], options = 
         log('warn', `live ingest step failed: ${error.message}`);
       }
       const wait = failures ? Math.min(options.livePollMs * 2 ** failures, 30000) : more ? 0 : Math.max(options.livePollMs, options.liveMinCommitMs - (Date.now() - started));
-      await new Promise(resolve => { const t = setTimeout(resolve, wait); wake = () => { clearTimeout(t); resolve(); }; });
+      let woken = null;
+      await new Promise(resolve => { const t = setTimeout(resolve, wait); wake = via => { clearTimeout(t); woken = via; resolve(); }; });
       wake = null;
+      status.live.trigger = woken ?? 'poll'; // what started the next step
     }
   }
   // Called by the execution-events or WebSocket head feed on each new
   // finalized block, so the next step runs as soon as pacing allows.
   function notifyFinalized(number, via = 'feed') {
-    status.live.trigger = via;
     if (number !== undefined && status.live.to !== null && BigInt(number) <= status.live.to) return;
-    if (wake && status.live.lastCommitAt !== null && Date.now() - status.live.lastCommitAt >= options.liveMinCommitMs) wake();
+    if (wake && status.live.lastCommitAt !== null && Date.now() - status.live.lastCommitAt >= options.liveMinCommitMs) wake(via);
   }
 
   // --- backfill ------------------------------------------------------------

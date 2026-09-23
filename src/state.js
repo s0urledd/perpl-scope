@@ -97,7 +97,7 @@ export function sampleSeries(state, computed) {
   const point = { block: state.block.number, ts: state.block.timestamp, totals: { notionalCNS: t.notionalCNS, at500: t.notionalAt500Bps, at1000: t.notionalAt1000Bps, shortfall1000: t.shortfallAt1000Bps, insuranceCNS: t.insuranceCNS, positions: t.positions, liquidatable: t.liquidatable }, markets: {} };
   for (const { market, metrics } of computed.markets) {
     const at10 = metrics.ladder.find(r => r.bps === 1000n);
-    point.markets[market.id] = { markPNS: market.markPNS, notionalCNS: metrics.oi.totalNotionalCNS, at1000: at10?.totalNotionalCNS ?? 0n, shortfall1000: at10?.totalShortfallCNS ?? 0n, insuranceCNS: market.insuranceBalanceCNS, fundingRatePct100k: market.fundingRatePct100k, positions: metrics.positions.length, bidDepth200: metrics.liquidity?.depth?.bids?.[200]?.notionalCNS ?? null, askDepth200: metrics.liquidity?.depth?.asks?.[200]?.notionalCNS ?? null };
+    point.markets[market.id] = { markPNS: market.markPNS, notionalCNS: metrics.oi.totalNotionalCNS, at1000: at10?.worstNotionalCNS ?? 0n, shortfall1000: at10?.worstShortfallCNS ?? 0n, insuranceCNS: market.insuranceBalanceCNS, fundingRatePct100k: market.fundingRatePct100k, positions: metrics.positions.length, bidDepth200: metrics.liquidity?.depth?.bids?.[200]?.notionalCNS ?? null, askDepth200: metrics.liquidity?.depth?.asks?.[200]?.notionalCNS ?? null };
   }
   state.series.points.push(point);
   if (state.series.points.length > SERIES_LIMIT) state.series.points.splice(0, state.series.points.length - SERIES_LIMIT);
@@ -123,12 +123,16 @@ export function applyPositionReads(state, reads) {
   state.metricsCache = null;
 }
 
+// Items already held (same transaction and log index) are skipped: a resumed
+// history and a backfill over the same blocks must not double up.
 export function appendHistory(state, processed) {
+  const id = x => (x.tx && x.logIndex !== undefined ? `${x.tx}:${x.logIndex}` : null);
   for (const key of Object.keys(HISTORY_LIMITS)) {
     const items = processed[key];
     if (!items?.length) continue;
     const list = state.history[key];
-    list.push(...items);
+    const held = new Set(list.map(id).filter(Boolean));
+    list.push(...items.filter(x => { const k = id(x); return k === null || !held.has(k); }));
     if (list.length > HISTORY_LIMITS[key]) list.splice(0, list.length - HISTORY_LIMITS[key]);
   }
 }
@@ -150,7 +154,7 @@ export function metrics(state) {
   if (state.metricsCache?.hash === state.block.hash) return state.metricsCache;
   const markets = [...state.markets.values()].sort((a, b) => a.id - b.id).map(market => {
     const u = m.units(market.priceDecimals, market.lotDecimals, state.exchangeInfo.collateralDecimals);
-    return { market, metrics: marketMetrics(market, [...market.positions.values()], u), units: u };
+    return { market, metrics: marketMetrics(market, [...market.positions.values()], u, { bookMaxAgeMs: state.stats.bookMaxAgeMs ?? null }), units: u };
   });
   state.metricsCache = { hash: state.block.hash, block: state.block, markets, totals: exchangeTotals(markets.map(x => x.metrics)) };
   return state.metricsCache;

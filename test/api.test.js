@@ -13,11 +13,11 @@ const config = { url: 'https://example.invalid', chain: '143', exchange: EXCHANG
 
 async function setup(t) {
   const dir = await mkdtemp(join(tmpdir(), 'perpl-api-'));
-  const webDir = join(dir, 'web'); await mkdir(webDir); await writeFile(join(webDir, 'index.html'), '<!doctype html><title>PerplScope</title>');
+  const webDir = join(dir, 'web'); await mkdir(webDir); await writeFile(join(webDir, 'index.html'), '<!doctype html><title>Plumb</title>');
   const fake = createFakeExchange();
   fake.open(1, 5n, 0, 100000n, 10000000000n); fake.open(1, 6n, 1, 100000n, 3000000000n); fake.open(20, 7n, 0, 5000n); fake.open(20, 8n, 1, 5000n);
   fake.emit('PositionLiquidated', { perpId: 1n, posAccountId: 99n, positionType: 0, markPricePNS: 990000n, liqPricePNS: 989900n, liqLotLNS: 1000n, posLotLNS: 0n, deltaPnlCNS: -5000000n, fundingCNS: 0n, posAmountCNS: 1000n, posDepositCNS: 0n, accAmountCNS: 800n, accBalanceCNS: 1800n, onOrderBook: true }, 990n);
-  const collector = createCollector({ config, options: { ...collectorOptions({ BACKFILL_BLOCKS: 100, FUNDING_HISTORY_EVENTS: 1, HEAD_TAG: 'latest' }), checkpointPath: join(dir, 'cp.json') }, rpc: fake.rpc });
+  const collector = createCollector({ config, options: { ...collectorOptions({ BACKFILL_BLOCKS: 100, FUNDING_HISTORY_EVENTS: 1, HEAD_TAG: 'latest', MAX_BLOCK_AGE_MS: 0 }), checkpointPath: join(dir, 'cp.json') }, rpc: fake.rpc });
   const reference = createReference({ fetcher: async () => new Response(JSON.stringify({ chain: { chain_id: 143 }, markets: [{ perpetual_id: 1, name: 'BTC', config: { is_open: true, price_decimals: 1, size_decimals: 5, initial_margin: 1500, maintenance_margin: 2500 }, state: { mrk: 1000000, oi: 100000, at: { b: 1000 } }, funding: { rate: -40, sum: -35673, feb: 999 } }] })) });
   await reference.refresh();
   const api = createApi({ collector, reference, webDir, version: 'test' });
@@ -89,7 +89,7 @@ test('static dashboard is served and traversal is rejected', async t => {
   const { get } = await setup(t);
   const page = await get('/');
   assert.equal(page.status, 200);
-  assert.match(page.body, /PerplScope/);
+  assert.match(page.body, /Plumb/);
   assert.equal((await get('/../package.json')).status, 404);
   assert.equal((await get('/nope.js')).status, 404);
   assert.equal((await get('/api/v1/nothing')).status, 404);

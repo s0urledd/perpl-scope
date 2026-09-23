@@ -22,7 +22,7 @@ export function mount(el, { query, setQuery }) {
 
   el.innerHTML = `
     <div class="page-head">
-      <div><h1>Perpl protocol</h1><div class="sub">Volume, open interest, fees and flows from Monad chain data, updated every block.</div></div>
+      <div><h1>Perpl protocol</h1><div class="sub">Volume, open interest, fees and flows from finalized Monad blocks, updated about once a second.</div></div>
       <div id="win">${seg('window', WINDOWS, w)}</div>
     </div>
     <div class="stack">
@@ -88,12 +88,12 @@ export function mount(el, { query, setQuery }) {
     const cov = data.meta.coverage;
     const partial = cov && !cov.complete ? ' <span class="tag warn" title="History for this window is still being indexed">partial</span>' : '';
     $('kpis').innerHTML = [
-      kpi({ label: `Volume · ${w === 'all' ? 'all-time' : w}`, value: usd(h.volume.value), delta: h.volume.change_pct, note: `${int(h.trades.value)} trades${partial}`, spark: 'sp-vol' }),
+      kpi({ label: `Volume · ${w === 'all' ? 'all-time' : w}`, value: usd(h.volume.value), delta: h.volume.change_pct, note: `${int(data.markets.reduce((a, m) => a + (m.fills ?? 0), 0))} trades${partial}`, spark: 'sp-vol', tip: 'Notional of every match, counted once (the maker side). A trade is one match between a maker and a taker.' }),
       kpi({ label: 'Open interest', value: usd(c?.open_interest), delta: seriesChange('open_interest'), note: c ? `${int(c.positions)} open positions` : '', spark: 'sp-oi', tip: 'Long notional at the mark price; equal to short notional by construction, so each contract counts once. The change compares the window\'s first and last points of the event-derived series.' }),
       kpi({ label: 'TVL', value: usd(c?.tvl), delta: seriesChange('tvl'), note: `${usd(h.net_flow.value, { sign: true })} net flow`, spark: 'sp-tvl', tip: 'Collateral held by the exchange contract, read from chain state.' }),
-      kpi({ label: 'Fees', value: usd(h.fees.value), delta: h.fees.change_pct, note: `${usd(h.protocol_fees.value)} to protocol`, spark: 'sp-fees', tip: `Maker and taker fees on fills, split between the protocol (${usd(h.protocol_fees.value)}) and the insurance fund (${usd(h.insurance_fees.value)}). Builder fees ${usd(h.builder_fees)}.` }),
+      kpi({ label: 'Fees', value: usd(h.fees.value), delta: h.fees.change_pct, note: `${usd(h.protocol_fees.value)} to protocol`, spark: 'sp-fees', tip: `Fees charged on fills, gross: ${usd(h.insurance_fees.value)} to the insurance fund and ${usd(h.protocol_fees.value)} protocol share, of which ${usd(h.builder_fees)} went to order builders. Rebates and referral shares are paid outside fills and are not deducted.` }),
       kpi({ label: 'Active traders', value: int(h.traders.value), delta: h.traders.change_pct, note: `${int(h.new_accounts.value)} new accounts`, spark: 'sp-tr' }),
-      kpi({ label: 'Liquidations', value: usd(h.liquidated.value), delta: h.liquidated.change_pct, invert: true, note: `${int(h.liquidations.value)} positions`, spark: 'sp-liq' })
+      kpi({ label: 'Liquidations', value: usd(h.liquidated.value), delta: h.liquidated.change_pct, invert: true, note: `${int(h.liquidations.value)} liquidations`, spark: 'sp-liq' })
     ].join('');
     spark('sp-vol', pts.map(p => num(p.volume)));
     spark('sp-oi', pts.map(p => num(p.open_interest)));
@@ -145,9 +145,9 @@ export function mount(el, { query, setQuery }) {
     stackedBars(tr, { times, series: [{ name: 'Active traders', color: COLORS.accent, data: pts.map(p => p.traders) }], bucketSeconds: b, fmt: v => int(v), yFmt: v => compact(v, { digits: 0 }) });
     const fees = $('fees'); fees.innerHTML = '';
     headValue('fees', usd(h.fees.value), `${usd(h.protocol_fees.value)} protocol · ${usd(h.insurance_fees.value)} insurance`);
-    stackedBars(fees, { times, series: [{ name: 'Protocol', color: SLOT_HEX[0], data: pts.map(p => num(p.protocol_fees)) }, { name: 'Insurance fund', color: SLOT_HEX[2], data: pts.map(p => num(p.fees) - num(p.protocol_fees)) }], bucketSeconds: b });
+    stackedBars(fees, { times, series: [{ name: 'Protocol', color: SLOT_HEX[0], data: pts.map(p => num(p.protocol_fees)) }, { name: 'Insurance fund', color: SLOT_HEX[2], data: pts.map(p => num(p.insurance_fees)) }], bucketSeconds: b });
     const liq = $('liq'); liq.innerHTML = '';
-    headValue('liq', usd(h.liquidated.value), `${int(h.liquidations.value)} positions`);
+    headValue('liq', usd(h.liquidated.value), `${int(h.liquidations.value)} liquidations`);
     const liqList = byMarket('liquidated');
     if (liqList.length) stackedBars(liq, { times, series: liqList, bucketSeconds: b }); else liq.innerHTML = empty('No liquidations in this window');
   }
@@ -159,11 +159,11 @@ export function mount(el, { query, setQuery }) {
     { key: 'volume', label: 'Volume', n: true, cls: 'cell-bar', sort: r => num(r.volume), render: r => `${usd(r.volume)}<span class="track"><i style="width:${Math.max(2, Math.min(100, r.share_pct ?? 0))}%"></i></span>` },
     { key: 'share_pct', label: 'Share', n: true, sort: r => r.share_pct ?? 0, render: r => `<span class="muted">${pct(r.share_pct, { digits: 1 })}</span>` },
     { key: 'open_interest', label: 'Open interest', n: true, sort: r => num(r.open_interest) ?? 0, render: r => usd(r.open_interest) },
-    { key: 'funding', label: 'Funding 8h', n: true, sort: r => r.funding?.rate_8h_pct ?? 0, render: r => fundingCell(r.funding) },
-    { key: 'ls', label: 'Long / short', sort: r => r.long_position_share_pct ?? 0, render: r => ratio(r.long_positions, r.short_positions) },
+    { key: 'funding', label: 'Funding 8h', tip: 'Funding is paid every 8,571 blocks (Perpl: “approximately once per hour” at 0.42 s blocks; about 43 min at today’s block time). Shown scaled to 8 hours of clock time; APR over 365 days.', n: true, sort: r => r.funding?.rate_8h_pct ?? 0, render: r => fundingCell(r.funding) },
+    { key: 'ls', label: 'Long / short positions', sort: r => r.long_position_share_pct ?? 0, render: r => ratio(r.long_positions, r.short_positions) },
     { key: 'taker_buy_share_pct', label: 'Taker buys', n: true, sort: r => r.taker_buy_share_pct ?? 0, render: r => (r.taker_buy_share_pct === null || r.taker_buy_share_pct === undefined ? '—' : pct(r.taker_buy_share_pct, { digits: 1 })) },
     { key: 'traders', label: 'Traders', n: true, sort: r => r.traders ?? 0, render: r => int(r.traders) },
-    { key: 'liquidations', label: 'Liquidated', n: true, sort: r => num(r.liquidated) ?? 0, render: r => (r.liquidations ? `${usd(r.liquidated)}<div class="sub">${int(r.liquidations)} pos.</div>` : '<span class="faint">—</span>') }
+    { key: 'liquidations', label: 'Liquidated', n: true, sort: r => num(r.liquidated) ?? 0, render: r => (r.liquidations ? `${usd(r.liquidated)}<div class="sub">${int(r.liquidations)} liq.</div>` : '<span class="faint">—</span>') }
   ];
   function renderMarkets() {
     const rows = data.markets.filter(m => num(m.volume) > 0 || num(m.open_interest) > 0);
@@ -218,6 +218,8 @@ export function mount(el, { query, setQuery }) {
     for (const r of rows.slice().reverse()) { const i = tape.findIndex(x => x.proposed && x.tx === r.tx); if (i >= 0) tape.splice(i, 1); tape.unshift({ ...r, fresh: true }); }
     tape.length = Math.min(tape.length, 400); renderTape();
   }));
+  // A proposed trade still unmatched 10 finalized blocks later never finalized.
+  off.push(stream.on('block', b => { let dropped = false; for (let i = tape.length - 1; i >= 0; i--) if (tape[i].proposed && Number(tape[i].block) <= Number(b.block) - 10) { tape.splice(i, 1); dropped = true; } if (dropped) renderTape(); }));
   off.push(stream.on('proposed', p => { for (const r of p.trades) if (!tape.some(x => x.tx === r.tx)) tape.unshift({ ...r, proposed: true, fresh: true }); tape.length = Math.min(tape.length, 400); $('tape-meta').textContent = 'Proposed + finalized blocks'; renderTape(); }));
   off.push(stream.on('backfill', p => {
     const finished = backfill && !backfill.complete && p.complete;

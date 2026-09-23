@@ -73,6 +73,10 @@ export function createQueries({ ch, rollups, coverage = null }) {
   }
 
   const SORTS = { pnl: 'realized - fees', realized: 'realized', loss: '-(realized - fees)', volume: 'volume', fees: 'fees', trades: 'trades', liquidated: 'liquidated', deposits: 'deposits', withdrawals: 'withdrawals', net_flow: 'deposits - withdrawals' };
+  // Trade sorts rank the accounts that traded in the window, flow sorts also
+  // those that only moved collateral. A rank is 1 + the number of accounts
+  // strictly ahead (ties share it), as on wallet pages.
+  const TRADED = 'trades > 0', FLOW_SORTS = new Set(['deposits', 'withdrawals', 'net_flow']);
   async function accounts(from, to, { sort = 'pnl', limit = 50, offset = 0, market = null, account = null } = {}) {
     if (!Object.hasOwn(SORTS, sort)) throw Object.assign(new Error('INVALID_SORT'), { status: 400 });
     const s = split(from, to);
@@ -83,18 +87,19 @@ export function createQueries({ ch, rollups, coverage = null }) {
     if (s.raw.length) parts.push(`SELECT account, market, ${raw(ACCOUNT)} FROM ev_account WHERE (${cond('ts', s.raw)})${where} GROUP BY account, market`);
     if (!parts.length) return { total: 0, rows: [] };
     const inner = `SELECT account, ${merged(ACCOUNT)}, groupUniqArrayIf(market, trades > 0 AND market != 0) AS markets FROM (${parts.join(' UNION ALL ')}) GROUP BY account`;
-    const rows = await q(`SELECT *, count() OVER () AS total FROM (${inner}) WHERE trades > 0 OR deposits > 0 OR withdrawals > 0 ORDER BY ${SORTS[sort]} DESC, account LIMIT ${int(limit)} OFFSET ${int(offset)}`);
+    const rows = await q(`SELECT *, count() OVER () AS total, rank() OVER (ORDER BY ${SORTS[sort]} DESC) AS rank FROM (${inner}) WHERE ${FLOW_SORTS.has(sort) ? `${TRADED} OR deposits > 0 OR withdrawals > 0` : TRADED} ORDER BY ${SORTS[sort]} DESC, account LIMIT ${int(limit)} OFFSET ${int(offset)}`);
     return { total: rows.length ? Number(rows[0].total) : 0, rows };
   }
 
-  // Net PnL and volume of every account that traded in a window (rank tables).
+  // Net PnL and volume of every account that traded in a window (rank tables:
+  // the leaderboard's population and definitions).
   async function accountScores(from, to) {
     const s = split(from, to);
     const parts = [];
     if (s.rolled.length) parts.push(`SELECT account, ${columns(ACCOUNT)} FROM agg_account_hour FINAL WHERE (${cond('hour', s.rolled)})`);
     if (s.raw.length) parts.push(`SELECT account, ${raw(ACCOUNT)} FROM ev_account WHERE (${cond('ts', s.raw)}) GROUP BY account`);
     if (!parts.length) return [];
-    return q(`SELECT account, toFloat64(realized - fees) AS pnl, toFloat64(volume) AS volume FROM (SELECT account, ${merged(ACCOUNT)} FROM (${parts.join(' UNION ALL ')}) GROUP BY account) WHERE trades > 0`);
+    return q(`SELECT account, toFloat64(${SORTS.pnl}) AS pnl, toFloat64(${SORTS.volume}) AS volume FROM (SELECT account, ${merged(ACCOUNT)} FROM (${parts.join(' UNION ALL ')}) GROUP BY account) WHERE ${TRADED}`);
   }
 
   // One account's totals per market over a window (wallet page).
@@ -180,6 +185,11 @@ export function createQueries({ ch, rollups, coverage = null }) {
     return out;
   }
   async function accountEventCount(accountId) { return Number((await ch.first("SELECT count() AS n FROM ev_account WHERE account = {a:UInt32} AND kind IN ('open','increase','decrease','close','invert','liquidation','deleverage','unwind')", { a: accountId })).n); }
+  // Time of an account's first trade (null before any).
+  async function accountFirstTrade(accountId) {
+    const r = await ch.first(`SELECT toUnixTimestamp(ts) AS ts FROM ev_account WHERE account = {a:UInt32} AND ${ACCOUNT_TRADES} ORDER BY block, log_index LIMIT 1`, { a: accountId }, SQL_SETTINGS);
+    return r ? Number(r.ts) : null;
+  }
 
   // Newest-first page of an account's trades (cursor = "block:log_index").
   async function accountTrades(accountId, { before = null, limit = 100, market = null } = {}) {
@@ -203,8 +213,13 @@ export function createQueries({ ch, rollups, coverage = null }) {
   async function fundingHistory(market, { limit = 500 } = {}) {
     return q(`SELECT market, funding_block, block, toUnixTimestamp(ts) AS ts, tx, specified_rate, actual_rate, price, payment, sum FROM funding FINAL WHERE market = {m:UInt16} ORDER BY funding_block DESC LIMIT ${int(limit)}`, { m: market });
   }
+  // Mean rate per bucket and market, and the mean spacing in seconds between
+  // each of those events and the market's previous one (looked up to a day
+  // before `from`; null when there is none).
   async function fundingSeries(from, to, bucket) {
-    return q(`SELECT toUnixTimestamp(toStartOfInterval(ts, INTERVAL ${int(bucket)} SECOND)) AS t, market, avg(actual_rate) AS rate, count() AS events FROM funding FINAL WHERE ts >= toDateTime(${int(from)}, 'UTC') AND ts < toDateTime(${int(to)}, 'UTC') GROUP BY t, market ORDER BY t, market`);
+    const prev = 'lagInFrame(toInt64(toUnixTimestamp(ts)), 1, 0) OVER w AS prev_ts, lagInFrame(funding_block, 1, 0) OVER w AS prev_block';
+    const events = `SELECT market, ts, funding_block, actual_rate, ${prev} FROM funding FINAL WHERE ts >= toDateTime(${Math.max(0, int(from) - 86400)}, 'UTC') AND ts < toDateTime(${int(to)}, 'UTC') WINDOW w AS (PARTITION BY market ORDER BY funding_block, block, log_index ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)`;
+    return q(`SELECT toUnixTimestamp(toStartOfInterval(ts, INTERVAL ${int(bucket)} SECOND)) AS t, market, avg(actual_rate) AS rate, count() AS events, avgIf(toInt64(toUnixTimestamp(ts)) - prev_ts, prev_block > 0 AND funding_block > prev_block) AS spacing FROM (${events}) WHERE ts >= toDateTime(${int(from)}, 'UTC') GROUP BY t, market ORDER BY t, market`);
   }
 
   async function findAccounts(text, { limit = 10 } = {}) {
@@ -220,5 +235,5 @@ export function createQueries({ ch, rollups, coverage = null }) {
     return new Map(rows.map(r => [Number(r.account), { address: r.address, created: Number(r.ts) }]));
   }
 
-  return { marketTotals, protocolTotals, traders, accounts, accountScores, accountMarkets, accountSeries, cumulativeBefore, cumulativeAtBlock, lastPricesBefore, accountEvents, accountEventCount, accountTrades, accountFlows, recent, fundingHistory, fundingSeries, findAccounts, addresses, split };
+  return { marketTotals, protocolTotals, traders, accounts, accountScores, accountMarkets, accountSeries, cumulativeBefore, cumulativeAtBlock, lastPricesBefore, accountEvents, accountEventCount, accountFirstTrade, accountTrades, accountFlows, recent, fundingHistory, fundingSeries, findAccounts, addresses, split };
 }

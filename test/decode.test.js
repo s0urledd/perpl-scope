@@ -113,3 +113,31 @@ test('flows, accounts and funding go to their own rows', () => {
   assert.equal(out.funding[0].actual_rate, -4n);
   assert.equal(out.funding[0].sum, -99n);
 });
+
+test('increases carry the funding the contract settles when the lot changes', () => {
+  const b = logBuilder();
+  b.tx().add(...ev.increase(1, 7, LONG, 1000000n, 10000n, 12000n, { premiumPnlSettledCNS: -2500000n })).add(...ev.takerFill(1000000n, 2000n, 0n));
+  const [inc] = byKind(rowsFromLogs(b.logs, { unitsOf }).ev, 'increase');
+  assert.equal(inc.funding, -2500000n, 'funding paid is realized at the increase');
+  assert.equal(inc.pnl, 0n);
+});
+
+test('a liquidation keeps the returned share of the margin; the rest is its fee', () => {
+  // ZEC liquidation at block 107,162,461: deposit 266.804273, loss 157.104665,
+  // 80 % of the 109.699608 left returned to the trader.
+  const b = logBuilder();
+  b.tx().add(...ev.takerFill(1000000n, 2000n, 0n))
+    .add(...ev.liquidation(1, 9, SHORT, 1000000n, 2000n, 0n, -157104665n, { posAmountCNS: -266804273n, accAmountCNS: 87759686n }));
+  const [liq] = byKind(rowsFromLogs(b.logs, { unitsOf }).ev, 'liquidation');
+  assert.equal(liq.pnl, -157104665n);
+  assert.equal(liq.fee, 21939922n);
+  assert.equal(liq.pnl + liq.funding - liq.fee, 87759686n - 266804273n, 'net = amount returned - deposit removed');
+});
+
+test('a liquidation past bankruptcy loses the deposit, not more', () => {
+  const b = logBuilder();
+  b.tx().add(...ev.liquidation(1, 9, LONG, 1000000n, 2000n, 0n, -300000000n, { fundingCNS: -1000000n, posAmountCNS: -200000000n, accAmountCNS: 0n }));
+  const [liq] = byKind(rowsFromLogs(b.logs, { unitsOf }).ev, 'liquidation');
+  assert.equal(liq.pnl + liq.funding, -200000000n);
+  assert.equal(liq.fee, 0n);
+});

@@ -1,4 +1,4 @@
-/* PerplScope design system. Tokens follow Perpl's dark app theme (surfaces,
+/* Plumb design system. Tokens follow Perpl's dark app theme (surfaces,
    indigo accent, long/short colours, Geist); the categorical chart palette is
    brand-tinted and validated for colour-vision deficiency on the chart
    surface (see docs/design.md). */
@@ -66,7 +66,6 @@ button, input, select { font: inherit; color: inherit; }
 .brand:hover { color: var(--text); }
 .brand-mark { width: 22px; height: 22px; color: var(--accent); }
 .brand-name { font-weight: 600; font-size: 15px; letter-spacing: -0.02em; }
-.brand-name span { color: var(--text-2); font-weight: 500; }
 .nav { display: flex; gap: 2px; }
 .nav a { padding: 7px 11px; border-radius: var(--radius-sm); color: var(--text-2); font-weight: 500; font-size: 13.5px; }
 .nav a:hover { color: var(--text); background: rgba(255, 255, 255, 0.04); }
@@ -208,6 +207,7 @@ table.t { width: 100%; border-collapse: collapse; font-size: 13px; }
 /* ---------- small components ---------- */
 .mkt { display: inline-flex; align-items: center; gap: 8px; font-weight: 500; }
 .mkt .sw { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.mkt .tk { border-radius: 50%; flex: none; box-shadow: 0 0 0 1px var(--line-2); }
 .mkt .nm { color: var(--text-3); font-weight: 400; font-size: 12px; }
 .side { font-size: 11.5px; font-weight: 600; padding: 2px 6px; border-radius: 3px; letter-spacing: 0.02em; }
 .side.long { color: var(--long); background: var(--long-soft); }

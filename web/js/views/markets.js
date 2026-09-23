@@ -23,12 +23,12 @@ export function mount(el, { query, setQuery }) {
     { key: 'change_pct', label: 'Change', n: true, sort: r => num(r.change_pct) ?? -1e9, render: r => pctCell(r.change_pct) },
     { key: 'range', label: 'Low – High', n: true, render: r => r.low ? `<span class="muted">${price(r.low)} – ${price(r.high)}</span>` : '—' },
     { key: 'volume', label: 'Volume', n: true, sort: r => num(r.volume), render: r => usd(r.volume) },
-    { key: 'trades', label: 'Trades', n: true, sort: r => r.trades ?? 0, render: r => int(r.trades) },
+    { key: 'trades', label: 'Trades', tip: 'Matches between a maker and a taker, each counted once', n: true, sort: r => r.fills ?? 0, render: r => int(r.fills) },
     { key: 'fees', label: 'Fees', n: true, sort: r => num(r.fees) ?? 0, render: r => usd(r.fees) },
     { key: 'open_interest', label: 'Open interest', n: true, sort: r => num(r.open_interest) ?? 0, render: r => `${usd(r.open_interest)}${r.oi_cap_pct !== null && r.oi_cap_pct !== undefined ? `<div class="sub">${pct(r.oi_cap_pct, { digits: 1 })} of cap</div>` : ''}` },
-    { key: 'funding', label: 'Funding 8h', n: true, sort: r => r.funding?.rate_8h_pct ?? 0, render: r => fundingCell(r.funding) },
-    { key: 'cost', label: 'Cost $10K', n: true, tip: 'Average cost of buying and of selling $10K at market against the mid, from the on-chain order book (spread included)', sort: r => r.cost_10k_bps ?? 1e9, render: r => (r.cost_10k_bps === null || r.cost_10k_bps === undefined ? '<span class="faint">—</span>' : `${r.cost_10k_bps.toFixed(1)} bps${r.spread_bps !== null && r.spread_bps !== undefined ? `<div class="sub">spread ${r.spread_bps.toFixed(r.spread_bps < 1 ? 2 : 1)}</div>` : ''}`) },
-    { key: 'ls', label: 'Long / short', sort: r => r.long_position_share_pct ?? 0, render: r => ratio(r.long_positions, r.short_positions) },
+    { key: 'funding', label: 'Funding 8h', tip: 'Funding is paid every 8,571 blocks (Perpl: “approximately once per hour” at 0.42 s blocks; about 43 min at today’s block time). Shown scaled to 8 hours of clock time; APR over 365 days.', n: true, sort: r => r.funding?.rate_8h_pct ?? 0, render: r => fundingCell(r.funding) },
+    { key: 'cost', label: 'Cost $10K', n: true, tip: 'Average cost of buying and of selling $10K at market against the mid, from the on-chain order book (half the spread included)', sort: r => r.cost_10k_bps ?? 1e9, render: r => (r.cost_10k_bps === null || r.cost_10k_bps === undefined ? '<span class="faint">—</span>' : `${r.cost_10k_bps.toFixed(1)} bps${r.spread_bps !== null && r.spread_bps !== undefined ? `<div class="sub">spread ${r.spread_bps.toFixed(r.spread_bps < 1 ? 2 : 1)}</div>` : ''}`) },
+    { key: 'ls', label: 'Long / short positions', sort: r => r.long_position_share_pct ?? 0, render: r => ratio(r.long_positions, r.short_positions) },
     { key: 'lev', label: 'Avg lev. L / S', n: true, render: r => r.long_leverage || r.short_leverage ? `${r.long_leverage ? r.long_leverage.toFixed(1) + 'x' : '—'} / ${r.short_leverage ? r.short_leverage.toFixed(1) + 'x' : '—'}` : '—' },
     { key: 'max_leverage', label: 'Max lev.', n: true, sort: r => r.max_leverage ?? 0, render: r => (r.max_leverage ? `${r.max_leverage}x` : '—') },
     { key: 'insurance', label: 'Insurance', n: true, sort: r => num(r.insurance) ?? 0, render: r => usd(r.insurance) }
@@ -44,10 +44,10 @@ export function mount(el, { query, setQuery }) {
     const all = f.series.flatMap(s => s.points.map(p => p.t));
     if (!all.length) { node.innerHTML = empty('No funding events in this window'); return; }
     const times = []; for (let t = Math.min(...all); t <= Math.max(...all); t += b) times.push(t);
-    const perYear = new Map(f.markets.map(m => [m.id, m.interval_seconds ? 365 * 86400 / m.interval_seconds : null]));
+    // Each bucket is annualised with the funding interval of its own time (the API's apr_pct).
     const oi = new Map(f.markets.map(m => [m.id, num(m.open_interest) ?? 0]));
-    const rows = f.series.filter(s => perYear.get(s.id)).sort((a, b2) => (oi.get(b2.id) ?? 0) - (oi.get(a.id) ?? 0)).map(s => {
-      const at = new Map(s.points.map(p => [p.t, p.rate_pct * perYear.get(s.id)]));
+    const rows = f.series.filter(s => s.points.some(p => p.apr_pct !== null && p.apr_pct !== undefined)).sort((a, b2) => (oi.get(b2.id) ?? 0) - (oi.get(a.id) ?? 0)).map(s => {
+      const at = new Map(s.points.filter(p => p.apr_pct !== null && p.apr_pct !== undefined).map(p => [p.t, p.apr_pct]));
       return { name: s.symbol, values: times.map(t => at.get(t) ?? null) };
     });
     node.style.height = `${Math.max(180, rows.length * 30 + 70)}px`;

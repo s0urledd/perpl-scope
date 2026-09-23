@@ -13,7 +13,8 @@
 //   * PositionInverted.positionType is the side AFTER the inversion;
 //   * volume counts every match once: the sum of maker-fill notional;
 //   * fees charged = maker + taker fill fees (= insurance + protocol fee on
-//     the position event); builder fees are separate.
+//     the position event); a builder's share is included in the fill fee and
+//     in the protocol fee (perpl-sdk: "must not add it on top").
 import { toEventSelector } from 'viem';
 import { eventsAbi, decodeLog } from './abi.js';
 import * as m from './math.js';
@@ -110,7 +111,8 @@ export function rowsFromLogs(logs, { unitsOf, collateralDecimals = 6 } = {}) {
       }
       case 'PositionIncreased': case 'PositionIncreasedV2': {
         row = blank(b, 'increase');
-        Object.assign(row, { market: n(a.perpId), account: n(a.accountId), side: n(a.positionType), price: a.pricePNS, start_lot: a.startLotLNS, end_lot: a.endLotLNS, lot: a.endLotLNS - a.startLotLNS, deposit: a.endDepositCNS, leverage: n(a.leverageHdths), ins_fee: a.insFeeCNS, prot_fee: a.protFeeCNS });
+        // Changing the lot realizes the funding accrued so far (premium PnL).
+        Object.assign(row, { market: n(a.perpId), account: n(a.accountId), side: n(a.positionType), price: a.pricePNS, start_lot: a.startLotLNS, end_lot: a.endLotLNS, lot: a.endLotLNS - a.startLotLNS, deposit: a.endDepositCNS, leverage: n(a.leverageHdths), funding: a.premiumPnlSettledCNS, ins_fee: a.insFeeCNS, prot_fee: a.protFeeCNS });
         row.buy = row.side === LONG ? 1 : 0;
         oiDelta(row, row.side, row.lot);
         break;
@@ -145,6 +147,14 @@ export function rowsFromLogs(logs, { unitsOf, collateralDecimals = 6 } = {}) {
         row.buy = row.side === SHORT ? 1 : 0;
         row.notional = notional(row, row.price, row.lot);
         oiDelta(row, row.side, -row.lot);
+        // The event's deltaPnl is what closing at the exit price would give. The
+        // trader gets back only part of the margin left (accAmount; 80 % by
+        // default), the rest goes to the insurance fund and protocol: that part
+        // is the liquidation fee. A loss beyond the removed deposit
+        // (posAmount = -deposit) falls on the insurance fund, not the trader.
+        const residual = a.deltaPnlCNS + a.fundingCNS - a.posAmountCNS;
+        if (residual > 0n) row.fee = residual > a.accAmountCNS ? residual - a.accAmountCNS : 0n;
+        else row.pnl = a.posAmountCNS - a.fundingCNS;
         break;
       }
       case 'PositionDeleveraged': case 'PositionDeleveragedV2': {
@@ -228,7 +238,7 @@ export function rowsFromLogs(logs, { unitsOf, collateralDecimals = 6 } = {}) {
   function linkForced(liq, fill) {
     fill.market = liq.market; fill.account = liq.account; fill.buy = liq.buy;
     fill.notional = notional(fill, fill.price, fill.lot);
-    liq.role = 'taker'; liq.fee = fill.fee; liq.builder_fee = fill.builder_fee;
+    liq.role = 'taker'; liq.fee += fill.fee; liq.builder_fee = fill.builder_fee;
     if (fill.lot !== liq.lot) out.stats.forcedLotMismatch++;
     out.stats.forcedLinked++;
   }

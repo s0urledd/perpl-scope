@@ -2,7 +2,7 @@
 // liquidation ladder from live positions, top traders and recent trades.
 import { get, stream } from '../api.js';
 import { usd, int, price, pct, num, esc, timeOnly, dateTime, duration } from '../format.js';
-import { kpi, seg, table, mkt, sideTag, addr, ratio, pnl, pctCell, fundingCell, tradeAction, skeleton, skChart, empty, colorOf, chartTools } from '../ui.js';
+import { kpi, seg, table, mkt, sideTag, addr, ratio, pnl, pctCell, fundingCell, tradeAction, skeleton, skChart, empty, colorOf, chartTools, logo } from '../ui.js';
 import { candles, signedBars, mirrored } from '../charts.js';
 
 const WINDOWS = [['24h', '24H'], ['7d', '7D'], ['30d', '30D'], ['all', 'All']];
@@ -38,13 +38,13 @@ export function mount(el, { params, query, setQuery }) {
     if (!alive) return;
     row = p.markets.find(m => m.id === id) ?? null;
     if (!row) { el.querySelector('.stack').innerHTML = empty('Market not found'); return; }
-    $('title').innerHTML = `<span class="mkt" style="gap:10px"><i class="sw" style="width:12px;height:12px;border-radius:3px;background:${colorOf(id)}"></i>${esc(row.symbol)}<span class="muted" style="font-size:14px;font-weight:400;margin-left:2px">${esc(row.name && row.name !== row.symbol ? row.name : 'Perpetual')}</span></span>`;
+    $('title').innerHTML = `<span class="mkt" style="gap:10px">${logo(id, row.symbol, 24)}${esc(row.symbol)}<span class="muted" style="font-size:14px;font-weight:400;margin-left:2px">${esc(row.name && row.name !== row.symbol ? row.name : 'Perpetual')}</span></span>`;
     $('subtitle').innerHTML = `Mark <b class="num" style="color:var(--text)">${price(row.mark ?? row.close)}</b> · ${pctCell(row.change_pct)} ${w} · max leverage ${row.max_leverage ?? '—'}x`;
     $('kpis').innerHTML = [
       kpi({ label: `Volume ${w}`, value: usd(row.volume), note: `${pct(row.share_pct, { digits: 1 })} of exchange` }),
       kpi({ label: 'Open interest', value: usd(row.open_interest), note: row.oi_cap_pct !== undefined && row.oi_cap_pct !== null ? `${pct(row.oi_cap_pct, { digits: 1 })} of cap` : '' }),
-      kpi({ label: 'Funding 8h', value: row.funding ? fundingCell(row.funding, { apr: false }) : '—', note: !row.funding ? '' : num(row.funding.rate_8h_pct) === 0 ? 'flat · no payments this interval' : `${pct(row.funding.apr_pct, { digits: 1, sign: true })} APR · ${row.funding.rate_8h_pct > 0 ? 'longs pay' : 'shorts pay'}` }),
-      kpi({ label: 'Traders', value: int(row.traders), note: `${int(row.trades)} trades` }),
+      kpi({ label: 'Funding 8h', tip: 'Funding is paid every 8,571 blocks (Perpl: “approximately once per hour” at 0.42 s blocks; about 43 min at today’s block time). Shown scaled to 8 hours of clock time; APR over 365 days.', value: row.funding ? fundingCell(row.funding, { apr: false }) : '—', note: !row.funding ? '' : num(row.funding.rate_8h_pct) === 0 ? 'flat · no payments this interval' : `${pct(row.funding.apr_pct, { digits: 1, sign: true })} APR · ${row.funding.rate_8h_pct > 0 ? 'longs pay' : 'shorts pay'}` }),
+      kpi({ label: 'Traders', value: int(row.traders), note: `${int(row.fills)} trades` }),
       kpi({ label: 'Taker buy share', value: pct(row.taker_buy_share_pct, { digits: 1 }), note: `${usd(row.taker_buy)} bought · ${usd(row.taker_sell)} sold` }),
       kpi({ label: 'Liquidated', value: usd(row.liquidated), note: `${int(row.liquidations)} events` })
     ].join('');
@@ -70,7 +70,7 @@ export function mount(el, { params, query, setQuery }) {
         <div class="stat"><span>Long notional</span><span>${usd(L.notional)}</span></div><div class="stat"><span>Short notional</span><span>${usd(S.notional)}</span></div>
         <div class="stat"><span>Long avg lev.</span><span>${L.average_leverage ? L.average_leverage.toFixed(1) + 'x' : '—'}</span></div><div class="stat"><span>Short avg lev.</span><span>${S.average_leverage ? S.average_leverage.toFixed(1) + 'x' : '—'}</span></div>
         <div class="stat"><span>Long uPnL</span><span>${pnl(num(L.delta_pnl) + num(L.premium_pnl))}</span></div><div class="stat"><span>Short uPnL</span><span>${pnl(num(S.delta_pnl) + num(S.premium_pnl))}</span></div>
-        <div class="stat"><span>Near liquidation</span><span>${int(risk.positions.liquidatable)}</span></div><div class="stat"><span>Insurance fund</span><span>${usd(risk.insurance.balance)}</span></div>
+        <div class="stat"><span>Liquidatable now</span><span>${int(risk.positions.liquidatable)}</span></div><div class="stat"><span>Insurance fund</span><span>${usd(risk.insurance.balance)}</span></div>
         <div class="stat"><span>Largest position</span><span>${usd(risk.concentration?.largest?.notional)}</span></div><div class="stat"><span>Top 5 share</span><span>${pct(risk.concentration?.top5_pct, { digits: 1 })}</span></div>
       </div>${costTable(risk.liquidity)}`;
     const ladder = risk.ladder ?? [];
@@ -98,7 +98,7 @@ export function mount(el, { params, query, setQuery }) {
     const cutoff = Date.now() / 1000 - 7 * 86400;
     const rows = (f.history ?? []).filter(r => r.ts >= cutoff).slice().reverse();
     const node = $('funding'); node.innerHTML = '';
-    $('f-meta').textContent = f.current ? `Now ${num(f.current.rate_per_interval_pct) === 0 ? '0%' : pct(f.current.rate_per_interval_pct, { digits: 4, sign: true })} per ${duration(f.current.interval_seconds)} · next in ${duration(f.current.seconds_to_next)}` : '';
+    $('f-meta').textContent = f.current ? `Last 7 days · now ${num(f.current.rate_per_interval_pct) === 0 ? '0%' : pct(f.current.rate_per_interval_pct, { digits: 4, sign: true })} per ${f.current.interval_blocks ? `${int(f.current.interval_blocks)} blocks (${duration(f.current.interval_seconds)})` : duration(f.current.interval_seconds)} · next in ${duration(f.current.seconds_to_next)}` : 'Last 7 days';
     if (rows.length) signedBars(node, { times: rows.map(r => r.ts), values: rows.map(r => r.rate_pct), bucketSeconds: 3600, dayTicks: true, name: 'Funding rate', fmt: v => pct(v, { digits: 4, sign: true }), yFmt: v => `${Number(v).toFixed(3)}%` });
     else node.innerHTML = empty('No funding events indexed yet');
   }

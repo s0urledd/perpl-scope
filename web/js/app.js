@@ -62,7 +62,7 @@ document.addEventListener('click', async event => {
   if (!t) return;
   if (t.dataset.export) {
     const w = parseHash().query.get('window');
-    const node = document.getElementById(t.dataset.chart), file = `perplscope-${t.dataset.name || 'chart'}${w ? `-${w}` : ''}-${new Date().toISOString().slice(0, 10)}`;
+    const node = document.getElementById(t.dataset.chart), file = `plumb-${t.dataset.name || 'chart'}${w ? `-${w}` : ''}-${new Date().toISOString().slice(0, 10)}`;
     if (t.dataset.export === 'csv') { const csv = chartCsv(node); if (csv) download(`${file}.csv`, csv); else toast('Nothing to export yet'); }
     else { const url = chartPng(node); if (url) Object.assign(document.createElement('a'), { href: url, download: `${file}.png` }).click(); else toast('Nothing to export yet'); }
     return;

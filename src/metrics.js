@@ -60,9 +60,12 @@ export function liquidationLadder(positions, market, u, shocks = SHOCKS_BPS) {
         if (fmv < 0n) bucket.shortfallCNS += -fmv;
       }
     }
-    row.totalNotionalCNS = row.long.notionalCNS + row.short.notionalCNS;
-    row.totalShortfallCNS = row.long.shortfallCNS + row.short.shortfallCNS;
-    row.insuranceCoverageBps = row.totalShortfallCNS > 0n ? m.floorDiv(BigInt(market.insuranceBalanceCNS) * 10000n, row.totalShortfallCNS) : null;
+    // Longs are hit by a fall and shorts by a rise, never both at once: each
+    // side keeps its own cover, and the row reports the worse direction.
+    for (const bucket of [row.long, row.short]) bucket.insuranceCoverageBps = bucket.shortfallCNS > 0n ? m.floorDiv(BigInt(market.insuranceBalanceCNS) * 10000n, bucket.shortfallCNS) : null;
+    row.worstNotionalCNS = m.maxBig(row.long.notionalCNS, row.short.notionalCNS);
+    row.worstShortfallCNS = m.maxBig(row.long.shortfallCNS, row.short.shortfallCNS);
+    row.insuranceCoverageBps = row.worstShortfallCNS > 0n ? m.floorDiv(BigInt(market.insuranceBalanceCNS) * 10000n, row.worstShortfallCNS) : null;
     return row;
   });
 }
@@ -141,8 +144,9 @@ export function stressAt(positions, market, u, signedBps) {
   const bookSide = side === 'long' ? 'bids' : 'asks';
   const depth = inRange ? depthWithin(market.book[bookSide], bookSide, market.markPNS, bps, u) : null;
   const walked = inRange ? walkedBps(market.book, bookSide, market.markPNS) : null;
-  const totalNotional = sum(positions, p => p.markNotionalCNS);
-  return { bps: BigInt(signedBps), side, pricePNS: bucket.pricePNS, count: bucket.count, notionalCNS: bucket.notionalCNS, shortfallCNS: bucket.shortfallCNS, insuranceCoverageBps: bucket.shortfallCNS > 0n ? m.floorDiv(BigInt(market.insuranceBalanceCNS) * 10000n, bucket.shortfallCNS) : null, remainingNotionalCNS: totalNotional - bucket.notionalCNS, shareBps: shareBps(bucket.notionalCNS, totalNotional), depthCNS: depth?.notionalCNS ?? null, depthLevels: depth?.levels ?? null, depthComplete: depth ? walked === null || bps <= walked : null, absorptionBps: depth && bucket.notionalCNS > 0n ? m.floorDiv(depth.notionalCNS * 10000n, bucket.notionalCNS) : null, hit };
+  // Open interest is one side: the share is of the side that is hit.
+  const sideNotional = sum(positions.filter(p => p.side === side), p => p.markNotionalCNS);
+  return { bps: BigInt(signedBps), side, pricePNS: bucket.pricePNS, count: bucket.count, notionalCNS: bucket.notionalCNS, shortfallCNS: bucket.shortfallCNS, insuranceCoverageBps: bucket.shortfallCNS > 0n ? m.floorDiv(BigInt(market.insuranceBalanceCNS) * 10000n, bucket.shortfallCNS) : null, remainingNotionalCNS: sideNotional - bucket.notionalCNS, shareBps: shareBps(bucket.notionalCNS, sideNotional), depthCNS: depth?.notionalCNS ?? null, depthLevels: depth?.levels ?? null, depthComplete: depth ? walked === null || bps <= walked : null, absorptionBps: depth && bucket.notionalCNS > 0n ? m.floorDiv(depth.notionalCNS * 10000n, bucket.notionalCNS) : null, hit };
 }
 
 export function sideSummary(positions) {
@@ -160,7 +164,8 @@ export function sideSummary(positions) {
 }
 
 // market: { id, symbol, markPNS, oraclePNS, lastPNS, maintHdths, initHdths, insuranceBalanceCNS, longOpenInterestLNS, shortOpenInterestLNS, ... }
-export function marketMetrics(market, rawPositions, u) {
+// A book walked longer ago than bookMaxAgeMs (a failing walk) is not used.
+export function marketMetrics(market, rawPositions, u, { bookMaxAgeMs = null, now = Date.now() } = {}) {
   const positions = rawPositions.map(p => enrichPosition(p, market, u));
   const longs = positions.filter(p => p.side === 'long'), shorts = positions.filter(p => p.side === 'short');
   const long = sideSummary(longs), short = sideSummary(shorts);
@@ -175,11 +180,12 @@ export function marketMetrics(market, rawPositions, u) {
   const pnlAgreement = { checked: pnlChecked.length, agree: pnlChecked.filter(p => p.contractAgrees).length };
   const totalMmr = long.mmrCNS + short.mmrCNS;
   const ladder = liquidationLadder(positions, market, u);
+  const bookStale = Boolean(market.book && bookMaxAgeMs !== null && now - market.book.at > bookMaxAgeMs);
   return {
     id: market.id, symbol: market.symbol,
     positions, long, short, oi,
     ladder,
-    liquidity: liquiditySummary(market, ladder, u),
+    liquidity: bookStale ? null : liquiditySummary(market, ladder, u), bookStale,
     adl: adlQueue(positions),
     map: liquidationMap(positions, market),
     concentration: { all: concentration(positions), long: concentration(longs), short: concentration(shorts) },
@@ -195,7 +201,12 @@ export function marketMetrics(market, rawPositions, u) {
 }
 
 export function exchangeTotals(marketsMetrics) {
-  const totals = { markets: marketsMetrics.length, positions: 0, liquidatable: 0, bankrupt: 0, notionalCNS: 0n, depositCNS: 0n, fmvCNS: 0n, insuranceCNS: 0n, shortfallAt1000Bps: 0n, notionalAt1000Bps: 0n, notionalAt500Bps: 0n, allReconciled: true };
+  const totals = { markets: marketsMetrics.length, positions: 0, liquidatable: 0, bankrupt: 0, notionalCNS: 0n, depositCNS: 0n, fmvCNS: 0n, insuranceCNS: 0n, allReconciled: true };
+  // Market-wide moves: every market falls (longs liquidated) or rises (shorts
+  // liquidated) by the same amount. Each market's insurance fund covers only
+  // that market's shortfall.
+  const move = () => ({ notionalCNS: 0n, shortfallCNS: 0n, coveredCNS: 0n });
+  totals.moves = { 500: { down: move(), up: move() }, 1000: { down: move(), up: move() } };
   for (const x of marketsMetrics) {
     totals.positions += x.positions.length;
     totals.liquidatable += x.long.liquidatable + x.short.liquidatable;
@@ -204,10 +215,23 @@ export function exchangeTotals(marketsMetrics) {
     totals.depositCNS += x.long.depositCNS + x.short.depositCNS;
     totals.fmvCNS += x.long.fmvCNS + x.short.fmvCNS;
     totals.insuranceCNS += x.insurance.balanceCNS;
-    const at10 = x.ladder.find(r => r.bps === 1000n), at5 = x.ladder.find(r => r.bps === 500n);
-    if (at10) { totals.shortfallAt1000Bps += at10.totalShortfallCNS; totals.notionalAt1000Bps += at10.totalNotionalCNS; }
-    if (at5) totals.notionalAt500Bps += at5.totalNotionalCNS;
+    for (const bps of [500n, 1000n]) {
+      const row = x.ladder.find(r => r.bps === bps);
+      if (!row) continue;
+      for (const [dir, bucket] of [['down', row.long], ['up', row.short]]) {
+        const t = totals.moves[bps][dir];
+        t.notionalCNS += bucket.notionalCNS; t.shortfallCNS += bucket.shortfallCNS; t.coveredCNS += m.minBig(bucket.shortfallCNS, x.insurance.balanceCNS);
+      }
+    }
     if (!x.oi.reconciled) totals.allReconciled = false;
   }
+  // Headlines take the worse direction of each measure.
+  const worse = (bps, key) => (totals.moves[bps].up[key] > totals.moves[bps].down[key] ? 'up' : 'down');
+  totals.notionalAt500Bps = totals.moves[500][worse(500, 'notionalCNS')].notionalCNS;
+  totals.directionAt1000Bps = worse(1000, 'notionalCNS');
+  totals.notionalAt1000Bps = totals.moves[1000][totals.directionAt1000Bps].notionalCNS;
+  const shortfall = totals.moves[1000][worse(1000, 'shortfallCNS')];
+  totals.shortfallAt1000Bps = shortfall.shortfallCNS;
+  totals.coveredAt1000Bps = shortfall.coveredCNS;
   return totals;
 }

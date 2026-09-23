@@ -1,4 +1,4 @@
-// ECharts (self-hosted) with the PerplScope theme. Every chart has one value
+// ECharts (self-hosted) with the Plumb theme. Every chart has one value
 // axis, thin marks, a recessive grid and a hover tooltip; colours come from
 // the validated categorical palette or the long/short pair.
 import { usd, compact, dateTime, date, num, esc } from './format.js';
