@@ -1,0 +1,12 @@
+[
+  { "event_name": "BlockStart" },
+  { "event_name": "BlockEnd" },
+  { "event_name": "BlockReject" },
+  { "event_name": "BlockFinalized" },
+  {
+    "event_name": "TxnLog",
+    "field_filters": [
+      { "field": "address", "filter": { "values": ["0x34b6552d57a35a1d042ccae1951bd1c370112a6f"] } }
+    ]
+  }
+]

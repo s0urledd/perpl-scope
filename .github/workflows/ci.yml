@@ -17,8 +17,36 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm test
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:26.8
+        env:
+          CLICKHOUSE_USER: perpl
+          CLICKHOUSE_PASSWORD: ci
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "wget -qO- http://127.0.0.1:8123/ping || exit 1"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:integration
+        env:
+          CLICKHOUSE_URL: http://127.0.0.1:8123
+          CLICKHOUSE_USER: perpl
+          CLICKHOUSE_PASSWORD: ci
   docker:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: touch .env && CLICKHOUSE_PASSWORD=ci docker compose config -q
       - run: docker build -t perpl-scope:ci .

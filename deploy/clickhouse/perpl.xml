@@ -1,0 +1,15 @@
+<!-- ClickHouse server overrides for PerplScope: quiet logging and no
+     high-volume diagnostic system tables. -->
+<clickhouse>
+  <logger>
+    <level>warning</level>
+  </logger>
+  <trace_log remove="1"/>
+  <text_log remove="1"/>
+  <metric_log remove="1"/>
+  <asynchronous_metric_log remove="1"/>
+  <query_thread_log remove="1"/>
+  <query_views_log remove="1"/>
+  <processors_profile_log remove="1"/>
+  <opentelemetry_span_log remove="1"/>
+</clickhouse>

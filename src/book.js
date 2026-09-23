@@ -62,16 +62,30 @@ export function depthWithin(levelsList, side, markPNS, bps, u) {
   return { lotLNS: lot, notionalCNS: notional, levels: count };
 }
 
+// How far from the mark (bps) one side's depth is fully known: null when the
+// walk reached the end of the range, else the distance of the last level read
+// (the level cap stopped it; deeper resting orders were not read).
+export function walkedBps(book, side, markPNS) {
+  if (!book?.truncated?.[side]) return null;
+  const last = book[side].at(-1), mark = BigInt(markPNS);
+  if (!last || mark <= 0n) return 0n;
+  const distance = side === 'bids' ? mark - last.pricePNS : last.pricePNS - mark;
+  return distance > 0n ? m.floorDiv(distance * 10000n, mark) : 0n;
+}
+
 // Liquidation demand versus resting depth at each shock. Long liquidations
 // sell into bids below the mark; short liquidations buy from asks above it.
+// Depth past a truncated walk is a lower bound (`complete: false`).
 export function absorption(ladder, book, markPNS, u) {
   if (!book) return null;
   const range = book.rangeBps === undefined ? null : BigInt(book.rangeBps);
+  const walked = { bids: walkedBps(book, 'bids', markPNS), asks: walkedBps(book, 'asks', markPNS) };
+  const known = (side, bps) => walked[side] === null || bps <= walked[side];
   return ladder.map(row => {
     // Beyond the walked range the book is unknown, not empty.
-    if (range !== null && row.bps > range) return { bps: row.bps, beyondRange: true, long: { demandCNS: row.long.notionalCNS, depthCNS: null, levels: null, coverageBps: null }, short: { demandCNS: row.short.notionalCNS, depthCNS: null, levels: null, coverageBps: null } };
+    if (range !== null && row.bps > range) return { bps: row.bps, beyondRange: true, long: { demandCNS: row.long.notionalCNS, depthCNS: null, levels: null, coverageBps: null, complete: false }, short: { demandCNS: row.short.notionalCNS, depthCNS: null, levels: null, coverageBps: null, complete: false } };
     const bidDepth = depthWithin(book.bids, 'bids', markPNS, row.bps, u), askDepth = depthWithin(book.asks, 'asks', markPNS, row.bps, u);
     const ratio = (depth, demand) => demand > 0n ? m.floorDiv(depth * 10000n, demand) : null;
-    return { bps: row.bps, beyondRange: false, long: { demandCNS: row.long.notionalCNS, depthCNS: bidDepth.notionalCNS, levels: bidDepth.levels, coverageBps: ratio(bidDepth.notionalCNS, row.long.notionalCNS) }, short: { demandCNS: row.short.notionalCNS, depthCNS: askDepth.notionalCNS, levels: askDepth.levels, coverageBps: ratio(askDepth.notionalCNS, row.short.notionalCNS) } };
+    return { bps: row.bps, beyondRange: false, long: { demandCNS: row.long.notionalCNS, depthCNS: bidDepth.notionalCNS, levels: bidDepth.levels, coverageBps: ratio(bidDepth.notionalCNS, row.long.notionalCNS), complete: known('bids', row.bps) }, short: { demandCNS: row.short.notionalCNS, depthCNS: askDepth.notionalCNS, levels: askDepth.levels, coverageBps: ratio(askDepth.notionalCNS, row.short.notionalCNS), complete: known('asks', row.bps) } };
   });
 }

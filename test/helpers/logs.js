@@ -5,6 +5,8 @@ import { eventsAbi } from '../../src/abi.js';
 export const EXCHANGE = '0x34b6552d57a35a1d042ccae1951bd1c370112a6f';
 const hex = v => '0x' + BigInt(v).toString(16);
 const hash = n => '0x' + BigInt(n).toString(16).padStart(64, '0');
+// Synthetic block times: one block per second from a fixed epoch.
+export const BLOCK_TS = block => 1790000000 + Number(block);
 
 // Builds a log for `name` at `block`; logs sharing `tx` belong to one transaction.
 export function makeLog(name, values, { block, tx, logIndex }) {
@@ -12,7 +14,7 @@ export function makeLog(name, values, { block, tx, logIndex }) {
   if (!item) throw new Error('UNKNOWN_EVENT:' + name);
   const indexed = item.inputs.filter(i => i.indexed), plain = item.inputs.filter(i => !i.indexed);
   const topics = encodeEventTopics({ abi: [item], eventName: name, args: Object.fromEntries(indexed.map(i => [i.name, values[i.name]])) });
-  return { address: EXCHANGE, blockNumber: hex(block), blockHash: hash(1000000n + BigInt(block)), transactionHash: hash(tx), transactionIndex: '0x0', logIndex: hex(logIndex), topics, data: encodeAbiParameters(plain, plain.map(i => { if (values[i.name] === undefined) throw new Error(`MISSING:${name}.${i.name}`); return values[i.name]; })), removed: false };
+  return { address: EXCHANGE, blockNumber: hex(block), blockHash: hash(1000000n + BigInt(block)), blockTimestamp: hex(BLOCK_TS(block)), transactionHash: hash(tx), transactionIndex: hex(tx), logIndex: hex(logIndex), topics, data: encodeAbiParameters(plain, plain.map(i => { if (values[i.name] === undefined) throw new Error(`MISSING:${name}.${i.name}`); return values[i.name]; })), removed: false };
 }
 
 // A sequential log builder: `tx()` starts a transaction, `add(name, values)` appends.

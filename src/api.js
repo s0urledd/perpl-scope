@@ -1,15 +1,27 @@
-// HTTP API and static dashboard. Every JSON response carries the snapshot
-// block, hash and freshness it was computed from, so consumers can tell
-// exactly which chain state a number describes.
+// HTTP API and static dashboard. Risk endpoints answer from the collector's
+// contract snapshot and carry the block, hash and freshness they describe;
+// analytics endpoints answer from the ClickHouse index (analytics-api.js).
 import { readFile, stat } from 'node:fs/promises';
 import { extname, normalize, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+import { gzipSync } from 'node:zlib';
+import { existsSync } from 'node:fs';
 import * as m from './math.js';
 import { metrics as computeMetrics } from './state.js';
 import { stressAt } from './metrics.js';
-import { createStats, TRADE_COLUMNS } from './stats.js';
 
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json; charset=utf-8', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json' };
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json; charset=utf-8', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json', '.woff2': 'font/woff2' };
+// Third-party assets served from node_modules (self-hosted, no CDN).
+const require = createRequire(import.meta.url);
+const nodeModules = fileURLToPath(new URL('../node_modules/', import.meta.url));
+// Packages with an "exports" map hide their asset files from require.resolve.
+const vendorFile = spec => { try { return require.resolve(spec); } catch { const file = join(nodeModules, spec); return existsSync(file) ? file : null; } };
+export const VENDOR = {
+  '/vendor/echarts.min.js': vendorFile('echarts/dist/echarts.min.js'),
+  '/vendor/fonts/geist.woff2': vendorFile('geist/dist/fonts/geist-sans/Geist-Variable.woff2'),
+  '/vendor/fonts/geist-mono.woff2': vendorFile('geist/dist/fonts/geist-mono/GeistMono-Variable.woff2')
+};
 const json = (_, value) => typeof value === 'bigint' ? value.toString() : value;
 const dec = (value, decimals) => value === null || value === undefined ? null : m.toDecimalString(value, decimals);
 const pct = bps => bps === null || bps === undefined ? null : Number(bps) / 100;
@@ -23,13 +35,13 @@ export const LIQUIDATION_COLUMNS = ['block', 'tx', 'log_index', 'market_id', 'sy
 const safeName = value => String(value ?? '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40) || 'market';
 const errorCode = error => error ? { code: error.message === 'RPC_UNAVAILABLE_OR_INVALID' ? 'RPC_UNAVAILABLE' : 'INTERNAL_ERROR', at: error.at } : null;
 const SECURITY_HEADERS = { 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'x-frame-options': 'DENY' };
-const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 const ACCOUNT_CACHE_MS = 15000;
 const ACCOUNT_MAX_INFLIGHT = 4;
+const ACCOUNT_MAX_QUEUED = 64;
 
-export function createApi({ collector, reference = null, webDir = fileURLToPath(new URL('../web/', import.meta.url)), version = '0.2.0', now = () => Date.now() }) {
+export function createApi({ collector, analytics = null, sse = null, statusOf = () => ({}), onError = () => {}, reference = null, webDir = fileURLToPath(new URL('../web/', import.meta.url)), version = '0.2.0', now = () => Date.now() }) {
   const { state } = collector;
-  const stats = createStats({ collector, reference, now });
   const cd = () => state.exchangeInfo?.collateralDecimals ?? 6;
   const accountCache = new Map();
   const accountInflight = new Map();
@@ -66,13 +78,6 @@ export function createApi({ collector, reference = null, webDir = fileURLToPath(
     return { market_id: f.perpId, symbol: market?.symbol ?? null, funding_event_block: f.fundingEventBlock.toString(), emitted_block: f.block.toString(), tx: f.tx, rate_pct: m.fundingRateFraction(f.actualRatePct100k) * 100, specified_rate_pct: m.fundingRateFraction(f.specifiedRatePct100k) * 100, funding_price: market ? dec(f.fundingPricePNS, market.priceDecimals) : f.fundingPricePNS.toString(), payment_per_unit: market ? dec(f.fundingPaymentPNS, scale) : f.fundingPaymentPNS.toString(), funding_sum: market ? dec(f.fundingSumPNS, scale) : f.fundingSumPNS.toString(), overwrite: f.allowOverwrite };
   }
 
-  // Feed entry from an index record (same shape as the event-history entry).
-  function indexLiquidationEntry(r) {
-    const market = state.markets.get(r.perpId);
-    const pd = market?.priceDecimals ?? 0, ld = market?.lotDecimals ?? 0, c = cd();
-    const price = BigInt(r.pricePNS), lot = BigInt(r.lotLNS);
-    return { block: String(r.block), timestamp: stats.tsOf(r.block), tx: r.tx, log_index: r.logIndex, market_id: r.perpId, symbol: market?.symbol ?? null, account_id: String(r.accountId), side: r.side === 0 ? 'long' : 'short', mark_price: dec(BigInt(r.markPNS), pd), exit_price: dec(price, pd), liquidated_size: dec(lot, ld), remaining_size: dec(BigInt(r.endLotLNS), ld), liquidated_notional: market ? dec(m.notionalCNS(price, lot, m.units(pd, ld, c)), c) : null, delta_pnl: dec(BigInt(r.pnlCNS), c), funding: dec(BigInt(r.fundingCNS), c), position_amount: dec(BigInt(r.amountCNS ?? 0), c), remaining_deposit: dec(BigInt(r.depositCNS), c), on_order_book: Boolean(r.onOrderBook), full: r.endLotLNS === 0 };
-  }
   function liquidationEntry(l) {
     const market = state.markets.get(l.perpId);
     const pd = market?.priceDecimals ?? 0, ld = market?.lotDecimals ?? 0;
@@ -92,11 +97,13 @@ export function createApi({ collector, reference = null, webDir = fileURLToPath(
     const c = cd(), pd = priceDec(market), L = x.liquidity;
     const band = table => Object.fromEntries(Object.entries(table).map(([bps, d]) => [String(Number(bps) / 100), { notional: dec(d.notionalCNS, c), size: dec(d.lotLNS, market.lotDecimals), levels: d.levels }]));
     const at = bps => L.absorption?.find(r => r.bps === bps);
-    const cover = row => row ? { long_pct: pct(row.long.coverageBps), short_pct: pct(row.short.coverageBps), min_pct: pct([row.long.coverageBps, row.short.coverageBps].filter(v => v !== null).sort((a, b) => (a < b ? -1 : 1))[0] ?? null) } : null;
+    // `complete: false` means the walk hit its level cap first: cover is a lower bound.
+    const cover = row => row ? { long_pct: pct(row.long.coverageBps), short_pct: pct(row.short.coverageBps), min_pct: pct([row.long.coverageBps, row.short.coverageBps].filter(v => v !== null).sort((a, b) => (a < b ? -1 : 1))[0] ?? null), complete: row.long.complete && row.short.complete } : null;
     const spread = L.bestBidPNS && L.bestAskPNS && L.bestBidPNS > 0n ? Number((L.bestAskPNS - L.bestBidPNS) * 10000n / L.bestBidPNS) : null;
     const view = { book_block: L.block.toString(), age_blocks: state.block ? (state.block.number - L.block).toString() : null, truncated: L.truncated, levels: L.levels, best_bid: dec(L.bestBidPNS, pd), best_ask: dec(L.bestAskPNS, pd), spread_bps: spread, depth: { bids: band(L.depth.bids), asks: band(L.depth.asks) }, cover_at_2pct: cover(at(200n)), cover_at_5pct: cover(at(500n)), cover_at_10pct: cover(at(1000n)) };
     view.range_pct = L.rangeBps === null || L.rangeBps === undefined ? null : pct(L.rangeBps);
-    if (full) view.absorption = L.absorption.map(r => ({ shock_pct: pct(r.bps), beyond_range: Boolean(r.beyondRange), long: { demand: dec(r.long.demandCNS, c), depth: dec(r.long.depthCNS, c), levels: r.long.levels, cover_pct: pct(r.long.coverageBps) }, short: { demand: dec(r.short.demandCNS, c), depth: dec(r.short.depthCNS, c), levels: r.short.levels, cover_pct: pct(r.short.coverageBps) } }));
+    view.walked_pct = { bids: L.walkedBps?.bids === null || L.walkedBps?.bids === undefined ? null : pct(L.walkedBps.bids), asks: L.walkedBps?.asks === null || L.walkedBps?.asks === undefined ? null : pct(L.walkedBps.asks) };
+    if (full) view.absorption = L.absorption.map(r => ({ shock_pct: pct(r.bps), beyond_range: Boolean(r.beyondRange), long: { demand: dec(r.long.demandCNS, c), depth: dec(r.long.depthCNS, c), levels: r.long.levels, cover_pct: pct(r.long.coverageBps), complete: r.long.complete }, short: { demand: dec(r.short.demandCNS, c), depth: dec(r.short.depthCNS, c), levels: r.short.levels, cover_pct: pct(r.short.coverageBps), complete: r.short.complete } }));
     return view;
   }
   function adlView(x) { const c = cd(); const row = p => ({ rank: p.rank, account_id: p.accountId.toString(), side: p.side, roe_pct: pct(p.roeBps), pnl: dec(p.pnlCNS, c), notional: dec(p.markNotionalCNS, c), leverage: lev(p.leverageBps) }); return { method: 'Opposing positions ranked by unrealised return on deposit, most profitable first, as Perpl documents for auto-deleveraging.', long: x.adl.long.map(row), short: x.adl.short.map(row) }; }
@@ -115,41 +122,49 @@ export function createApi({ collector, reference = null, webDir = fileURLToPath(
     if (bps === 0n) throw Object.assign(new Error('INVALID_MOVE'), { status: 400 });
     const r = stressAt(x.positions, market, units, bps);
     const c = cd(), pd = priceDec(market);
-    return { market_id: market.id, symbol: market.symbol, price_decimals: pd, lot_decimals: market.lotDecimals, block: state.block.number.toString(), move_pct: move, side: r.side, price: dec(r.pricePNS, pd), mark: dec(market.markPNS, pd), liquidated: { count: r.count, notional: dec(r.notionalCNS, c), share_of_oi_pct: pct(r.shareBps) }, shortfall: dec(r.shortfallCNS, c), insurance_coverage_pct: pct(r.insuranceCoverageBps), remaining_notional: dec(r.remainingNotionalCNS, c), liquidity: r.depthCNS === null ? null : { depth: dec(r.depthCNS, c), levels: r.depthLevels, absorption_pct: pct(r.absorptionBps) }, positions_hit: r.hit.slice(0, 20).map(p => positionView(p, market)) };
+    return { market_id: market.id, symbol: market.symbol, price_decimals: pd, lot_decimals: market.lotDecimals, block: state.block.number.toString(), move_pct: move, side: r.side, price: dec(r.pricePNS, pd), mark: dec(market.markPNS, pd), liquidated: { count: r.count, notional: dec(r.notionalCNS, c), share_of_oi_pct: pct(r.shareBps) }, shortfall: dec(r.shortfallCNS, c), insurance_coverage_pct: pct(r.insuranceCoverageBps), remaining_notional: dec(r.remainingNotionalCNS, c), liquidity: r.depthCNS === null ? null : { depth: dec(r.depthCNS, c), levels: r.depthLevels, absorption_pct: pct(r.absorptionBps), complete: r.depthComplete }, positions_hit: r.hit.slice(0, 20).map(p => positionView(p, market)) };
   }
-  async function accountLookup(key, query = new URLSearchParams()) {
-    const address = /^0x[0-9a-fA-F]{40}$/.test(key) ? key : null;
-    const id = !address && /^[1-9]\d{0,9}$/.test(key) ? BigInt(key) : null;
-    if (!address && id === null) throw Object.assign(new Error('INVALID_ACCOUNT'), { status: 400 });
-    const cacheKey = (address ?? key).toLowerCase();
-    let cached = accountCache.get(cacheKey);
-    if (!cached || now() - cached.at >= ACCOUNT_CACHE_MS) {
+  // Contract reads for account balances run a few at a time; the rest wait
+  // their turn (a compare page asks for several at once) up to a bounded queue.
+  let accountActive = 0;
+  const accountWaiting = [];
+  async function withAccountSlot(fn) {
+    if (accountActive >= ACCOUNT_MAX_INFLIGHT) {
+      if (accountWaiting.length >= ACCOUNT_MAX_QUEUED) throw Object.assign(new Error('BUSY'), { status: 503 });
+      await new Promise(resolve => accountWaiting.push(resolve));
+    }
+    accountActive++;
+    try { return await fn(); } finally { accountActive--; accountWaiting.shift()?.(); }
+  }
+  // Balances and open positions of one account at the snapshot block.
+  async function accountState(accountId) {
+    const key = String(accountId);
+    let cached = accountCache.get(key);
+    if (!cached || now() - cached.at >= ACCOUNT_CACHE_MS || cached.block !== state.block?.number) {
       if (accountCache.size > 500) accountCache.clear();
-      let pending = accountInflight.get(cacheKey);
+      let pending = accountInflight.get(key);
       if (!pending) {
-        if (accountInflight.size >= ACCOUNT_MAX_INFLIGHT) throw Object.assign(new Error('BUSY'), { status: 503 });
         const block = state.block.number;
-        pending = (address ? collector.reader.call('getAccountByAddr', [cacheKey], block) : collector.reader.call('getAccountById', [id], block))
+        pending = withAccountSlot(() => collector.reader.call('getAccountById', [BigInt(accountId)], block))
           .then(info => ({ at: now(), block, id: BigInt(info.accountId), address: info.accountAddr, balanceCNS: BigInt(info.balanceCNS), lockedBalanceCNS: BigInt(info.lockedBalanceCNS), frozen: Number(info.frozen) }))
-          .finally(() => accountInflight.delete(cacheKey));
-        accountInflight.set(cacheKey, pending);
+          .finally(() => accountInflight.delete(key));
+        accountInflight.set(key, pending);
       }
       cached = await pending;
-      accountCache.set(cacheKey, cached); // misses are cached too, so unknown keys cannot amplify RPC traffic
+      accountCache.set(key, cached);
     }
-    if (cached.id === 0n) throw Object.assign(new Error('ACCOUNT_NOT_FOUND'), { status: 404 });
-    const info = { accountId: cached.id, accountAddr: cached.address, balanceCNS: cached.balanceCNS, lockedBalanceCNS: cached.lockedBalanceCNS, frozen: cached.frozen };
-    const block = cached.block;
-    const accountId = cached.id, c = cd();
+    const c = cd(), id = BigInt(accountId);
     const positions = [];
-    for (const entry of computeMetrics(state).markets) { const p = entry.metrics.positions.find(q => q.accountId === accountId); if (p) positions.push({ market_id: entry.market.id, symbol: entry.market.symbol, mark: dec(entry.market.markPNS, entry.market.priceDecimals), ...positionView(p, entry.market) }); }
-    const total = (field) => positions.reduce((a, p) => a + Number(p[field] ?? 0), 0);
+    for (const entry of computeMetrics(state).markets) { const p = entry.metrics.positions.find(q => q.accountId === id); if (p) positions.push({ market: entry.market.id, symbol: entry.market.symbol, mark: dec(entry.market.markPNS, entry.market.priceDecimals), ...positionView(p, entry.market) }); }
+    const sum = f => positions.reduce((a, p) => a + Number(p[f] ?? 0), 0);
     const closest = positions.filter(p => p.liquidation_distance_pct !== null).sort((a, b) => a.liquidation_distance_pct - b.liquidation_distance_pct)[0] ?? null;
-    // Positions are rebuilt from the current snapshot on every request; only the on-chain account record is cached.
-    const analytics = stats.account(accountId, { limit: clamp(query.get('limit'), 200, 2000) });
-    const equity = Number(dec(info.balanceCNS + info.lockedBalanceCNS, c)) + total('equity');
-    const notional = total('notional');
-    return { account: { id: accountId.toString(), address: info.accountAddr, balance: dec(info.balanceCNS, c), locked_balance: dec(info.lockedBalanceCNS, c), frozen: Number(info.frozen) }, account_read_block: block.toString(), positions, totals: { positions: positions.length, notional: notional.toFixed(c), equity: total('equity').toFixed(c), pnl: total('pnl').toFixed(c), deposit: total('deposit').toFixed(c), account_value: equity.toFixed(c), margin_usage_pct: equity > 0 ? Number((total('deposit') / equity * 100).toFixed(2)) : null, effective_leverage: equity > 0 ? Number((notional / equity).toFixed(2)) : null }, closest_liquidation: closest ? { market_id: closest.market_id, symbol: closest.symbol, side: closest.side, distance_pct: closest.liquidation_distance_pct, liquidation_price: closest.liquidation_price } : null, ...analytics };
+    const free = Number(dec(cached.balanceCNS, c)), locked = Number(dec(cached.lockedBalanceCNS, c));
+    const value = free + locked + sum('equity'), notional = sum('notional');
+    return {
+      block: cached.block.toString(),
+      portfolio: { balance: dec(cached.balanceCNS, c), locked_balance: dec(cached.lockedBalanceCNS, c), frozen: cached.frozen !== 0, positions: positions.length, position_margin: sum('deposit').toFixed(c), unrealized_pnl: sum('pnl').toFixed(c), account_value: value.toFixed(c), notional: notional.toFixed(c), margin_usage_pct: value > 0 ? Number((sum('deposit') / value * 100).toFixed(2)) : null, leverage: value > 0 ? Number((notional / value).toFixed(2)) : null, closest_liquidation: closest ? { market: closest.market, symbol: closest.symbol, side: closest.side, distance_pct: closest.liquidation_distance_pct, liquidation_price: closest.liquidation_price } : null },
+      positions
+    };
   }
   function seriesView(query) {
     const hours = Math.min(Math.max(Number(query.get('hours')) || 24, 1), 168);
@@ -191,7 +206,7 @@ export function createApi({ collector, reference = null, webDir = fileURLToPath(
     const { market, metrics: x } = entry;
     const limit = clamp(query.get('limit'), 25, 500);
     const sorted = [...x.positions].sort((a, b) => (b.markNotionalCNS > a.markNotionalCNS ? 1 : b.markNotionalCNS < a.markNotionalCNS ? -1 : 0));
-    return { ...marketSummary(entry), ladder: ladderView(x.ladder, market), liquidation_map: mapView(x.map), liquidity: liquidityView(x, market, true), adl_queue: adlView(x), health: x.health.map(h => ({ from_pct: pct(h.fromBps), to_pct: pct(h.toBps), count: h.count, notional: dec(h.notionalCNS, cd()) })), concentration_by_side: { long: concentrationView(x.concentration.long), short: concentrationView(x.concentration.short) }, top_positions: sorted.slice(0, limit).map(p => positionView(p, market)), funding_history: state.history.funding.filter(f => f.perpId === market.id).slice(-48).map(f => fundingEntry(f, market)), recent_liquidations: collector.index.size ? collector.index.recentLiquidations(25, market.id).map(indexLiquidationEntry) : state.history.liquidations.filter(l => l.perpId === market.id).slice(-25).reverse().map(liquidationEntry) };
+    return { ...marketSummary(entry), ladder: ladderView(x.ladder, market), liquidation_map: mapView(x.map), liquidity: liquidityView(x, market, true), adl_queue: adlView(x), health: x.health.map(h => ({ from_pct: pct(h.fromBps), to_pct: pct(h.toBps), count: h.count, notional: dec(h.notionalCNS, cd()) })), concentration_by_side: { long: concentrationView(x.concentration.long), short: concentrationView(x.concentration.short) }, top_positions: sorted.slice(0, limit).map(p => positionView(p, market)), funding_history: state.history.funding.filter(f => f.perpId === market.id).slice(-48).map(f => fundingEntry(f, market)), recent_liquidations: state.history.liquidations.filter(l => l.perpId === market.id).slice(-25).reverse().map(liquidationEntry) };
   }
 
   function positionsList(entry, query, { defaultLimit = 50, maxLimit = 1000 } = {}) {
@@ -206,21 +221,18 @@ export function createApi({ collector, reference = null, webDir = fileURLToPath(
   }
   function overviewLiquidity(computed) {
     const c = cd();
-    let demand = 0n, depth = 0n, markets = 0;
-    for (const { metrics: x } of computed.markets) { const row = x.liquidity?.absorption?.find(r => r.bps === 1000n); if (!row) continue; markets++; demand += row.long.demandCNS + row.short.demandCNS; depth += row.long.depthCNS + row.short.depthCNS; }
-    return { markets_with_book: markets, demand_at_10pct: dec(demand, c), depth_at_10pct: dec(depth, c), cover_at_10pct_pct: demand > 0n ? pct(m.floorDiv(depth * 10000n, demand)) : null };
+    let demand = 0n, depth = 0n, markets = 0, complete = true;
+    for (const { metrics: x } of computed.markets) { const row = x.liquidity?.absorption?.find(r => r.bps === 1000n); if (!row || row.beyondRange) continue; markets++; demand += row.long.demandCNS + row.short.demandCNS; depth += row.long.depthCNS + row.short.depthCNS; complete &&= row.long.complete && row.short.complete; }
+    return { markets_with_book: markets, demand_at_10pct: dec(demand, c), depth_at_10pct: dec(depth, c), cover_at_10pct_pct: demand > 0n ? pct(m.floorDiv(depth * 10000n, demand)) : null, complete };
   }
 
   function overview() {
     const computed = computeMetrics(state);
     const t = computed.totals, c = cd();
-    const liq24 = state.history.liquidations.filter(l => state.block && state.block.number - l.block <= 24n * 3600n * 1000n / BigInt(state.stats.blockTimeMs || 400));
-    let liqNotional = 0n; for (const l of liq24) { const mk = state.markets.get(l.perpId); if (mk) liqNotional += m.notionalCNS(l.exitPricePNS, l.liquidatedLotLNS, m.units(mk.priceDecimals, mk.lotDecimals, c)); }
     return {
       exchange: { version: state.exchangeInfo.version, halted: state.exchangeInfo.halted, accounts: state.exchangeInfo.numberOfAccounts.toString(), collateral_token: state.exchangeInfo.collateralToken, collateral_decimals: c, exchange_balance: dec(state.exchangeInfo.balanceCNS, c), protocol_balance: dec(state.exchangeInfo.protocolBalanceCNS, c), funding_interval_blocks: state.exchangeInfo.fundingInterval.toString(), block_time_ms: state.stats.blockTimeMs ?? null },
-      totals: { markets: t.markets, positions: t.positions, liquidatable: t.liquidatable, bankrupt: t.bankrupt, total_notional: dec(t.notionalCNS, c), total_deposit: dec(t.depositCNS, c), total_equity: dec(t.fmvCNS, c), insurance_total: dec(t.insuranceCNS, c), notional_at_5pct: dec(t.notionalAt500Bps, c), notional_at_10pct: dec(t.notionalAt1000Bps, c), shortfall_at_10pct: dec(t.shortfallAt1000Bps, c), insurance_coverage_at_10pct: t.shortfallAt1000Bps > 0n ? pct(m.floorDiv(t.insuranceCNS * 10000n, t.shortfallAt1000Bps)) : null, all_reconciled: t.allReconciled, liquidations_24h: liq24.length, liquidated_notional_24h: dec(liqNotional, c), liquidity: overviewLiquidity(computed) },
+      totals: { markets: t.markets, positions: t.positions, liquidatable: t.liquidatable, bankrupt: t.bankrupt, total_notional: dec(t.notionalCNS, c), total_deposit: dec(t.depositCNS, c), total_equity: dec(t.fmvCNS, c), insurance_total: dec(t.insuranceCNS, c), notional_at_5pct: dec(t.notionalAt500Bps, c), notional_at_10pct: dec(t.notionalAt1000Bps, c), shortfall_at_10pct: dec(t.shortfallAt1000Bps, c), insurance_coverage_at_10pct: t.shortfallAt1000Bps > 0n ? pct(m.floorDiv(t.insuranceCNS * 10000n, t.shortfallAt1000Bps)) : null, all_reconciled: t.allReconciled, liquidity: overviewLiquidity(computed) },
       series_points: state.series.points.length,
-      index: stats.indexStatus(),
       markets: computed.markets.map(marketSummary)
     };
   }
@@ -249,31 +261,40 @@ export function createApi({ collector, reference = null, webDir = fileURLToPath(
 
   function referenceView() {
     if (!reference) return { enabled: false };
-    const day = stats.stats(new URLSearchParams('window=24h')).markets;
-    return { enabled: true, error: reference.error, fetched_at: reference.last?.at ?? null, chain_id: reference.last?.chainId ?? null, markets: [...state.markets.values()].map(market => ({ id: market.id, symbol: market.symbol, chain_volume_24h: day.find(x => x.id === market.id)?.chain_volume_24h ?? null, comparison: reference.compare(market, latestFunding(market.id)?.fundingSumPNS ?? null) })) };
+    return { enabled: true, error: reference.error, fetched_at: reference.last?.at ?? null, chain_id: reference.last?.chainId ?? null, markets: [...state.markets.values()].map(market => ({ id: market.id, symbol: market.symbol, comparison: reference.compare(market, latestFunding(market.id)?.fundingSumPNS ?? null) })) };
   }
 
+  const risk = true;
+  const A = name => { if (!analytics) throw Object.assign(new Error('ANALYTICS_UNAVAILABLE'), { status: 503 }); return analytics[name]; };
   const routes = [
-    ['GET', /^\/api\/v1\/health$/, () => ({ ok: true, version, snapshot: snapshot(), collector: { polls: state.stats.polls, errors: state.stats.errors, last_error: errorCode(state.stats.lastError), last_poll_ms: state.stats.lastPollMs, uptime_ms: now() - state.stats.startedAt, rpc_requests: collector.reader.stats.requests, index_records: collector.index.size, backfilling: collector.backfilling }, memory: { rss_mb: Math.round(process.memoryUsage().rss / 1048576), heap_mb: Math.round(process.memoryUsage().heapUsed / 1048576) } })],
-    ['GET', /^\/api\/v1\/overview$/, () => ({ snapshot: snapshot(), ...overview() })],
-    ['GET', /^\/api\/v1\/markets$/, () => ({ snapshot: snapshot(), markets: computeMetrics(state).markets.map(marketSummary) })],
-    ['GET', /^\/api\/v1\/markets\/(\d+)$/, (match, query) => ({ snapshot: snapshot(), market: marketDetail(entryFor(match[1]), query) })],
-    ['GET', /^\/api\/v1\/markets\/(\d+)\/positions$/, (match, query) => { const csv = query.get('format') === 'csv'; const body = { snapshot: snapshot(), ...positionsList(entryFor(match[1]), query, csv ? { defaultLimit: 5000, maxLimit: 5000 } : {}) }; return csv ? { csv: toCsv(body.positions, POSITION_COLUMNS), filename: `perplscope-${safeName(body.symbol)}-positions-${body.snapshot.block}.csv` } : body; }],
-    ['GET', /^\/api\/v1\/markets\/(\d+)\/stress$/, (match, query) => ({ snapshot: snapshot(), ...stressView(entryFor(match[1]), query) })],
-    ['GET', /^\/api\/v1\/markets\/(\d+)\/book$/, match => ({ snapshot: snapshot(), ...bookView(entryFor(match[1])) })],
-    ['GET', /^\/api\/v1\/accounts\/([0-9a-zA-Zx]{1,42})$/, async (match, query) => ({ snapshot: snapshot(), ...(await accountLookup(match[1], query)) })],
-    ['GET', /^\/api\/v1\/accounts\/([0-9a-zA-Zx]{1,42})\/trades$/, async (match, query) => { const a = await accountLookup(match[1], new URLSearchParams({ limit: '2000' })); if (query.get('format') === 'csv') return { csv: toCsv(a.history.map(e => ({ ...e, timestamp: e.timestamp })), TRADE_COLUMNS), filename: `perplscope-account-${a.account.id}-trades-${state.block.number}.csv` }; return { snapshot: snapshot(), account: a.account, coverage: a.coverage, trades: a.history }; }],
-    ['GET', /^\/api\/v1\/stats$/, (_, query) => ({ snapshot: snapshot(), ...stats.stats(query) })],
-    ['GET', /^\/api\/v1\/stats\/series$/, (_, query) => ({ snapshot: snapshot(), ...stats.series(query) })],
-    ['GET', /^\/api\/v1\/leaderboard$/, (_, query) => ({ snapshot: snapshot(), ...stats.leaderboard(query) })],
-    ['GET', /^\/api\/v1\/index$/, () => ({ snapshot: snapshot(), ...stats.indexStatus() })],
-    ['GET', /^\/api\/v1\/series$/, (_, query) => ({ snapshot: snapshot(), ...seriesView(query) })],
-    ['GET', /^\/api\/v1\/markets\/(\d+)\/ladder$/, match => { const e = entryFor(match[1]); return { snapshot: snapshot(), market_id: e.market.id, symbol: e.market.symbol, ladder: ladderView(e.metrics.ladder, e.market), liquidation_map: mapView(e.metrics.map) }; }],
-    ['GET', /^\/api\/v1\/markets\/(\d+)\/funding$/, (match, query) => { const e = entryFor(match[1]); const limit = clamp(query.get('limit'), 48, 1000); return { snapshot: snapshot(), market_id: e.market.id, symbol: e.market.symbol, current: fundingView(e.market), history: state.history.funding.filter(f => f.perpId === e.market.id).slice(-limit).map(f => fundingEntry(f, e.market)) }; }],
-    ['GET', /^\/api\/v1\/liquidations$/, (_, query) => { const limit = clamp(query.get('limit'), 100, 1000); const market = query.get('market'); const fromIndex = collector.index.size > 0; const list = fromIndex ? collector.index.recentLiquidations(limit, market ? Number(market) : null).map(indexLiquidationEntry) : state.history.liquidations.filter(l => !market || String(l.perpId) === market).slice(-limit).reverse().map(liquidationEntry); if (query.get('format') === 'csv') return { csv: toCsv(list, LIQUIDATION_COLUMNS), filename: `perplscope-liquidations-${state.block?.number ?? 'unknown'}.csv` }; return { snapshot: snapshot(), source: fromIndex ? 'index' : 'history', total: list.length, liquidations: list, deleverages: state.history.deleverages.slice(-limit).reverse().map(d => ({ block: d.block.toString(), tx: d.tx, market_id: d.perpId, account_id: d.accountId.toString(), side: d.positionType === 0 ? 'long' : 'short', force_close: d.forceClose, deleverage_price: d.deleveragePricePNS.toString(), start_size: d.startLotLNS.toString(), end_size: d.endLotLNS.toString() })) }; }],
-    ['GET', /^\/api\/v1\/validation$/, () => ({ snapshot: snapshot(), ...validation() })],
-    ['GET', /^\/api\/v1\/reference$/, () => ({ snapshot: snapshot(), ...referenceView() })],
-    ['GET', /^\/api\/v1\/events$/, () => ({ snapshot: snapshot(), parameter_changes: state.history.params.slice(-100).reverse().map(p => ({ ...p, block: p.block.toString() })), unwinds: state.history.unwinds.slice(-50).reverse().map(u => ({ ...u, block: u.block.toString() })), diagnostics: state.history.validation.slice(-50).reverse().map(v => ({ ...v, block: v.block.toString(), accountId: v.accountId.toString(), markPricePNS: v.markPricePNS.toString(), liqPricePNS: v.liqPricePNS?.toString() ?? null, bankruptcyPricePNS: v.bankruptcyPricePNS?.toString() ?? null })) })]
+    ['GET', /^\/api\/v1\/health$/, () => ({ ok: true, version, snapshot: snapshot(), collector: { polls: state.stats.polls, errors: state.stats.errors, last_error: errorCode(state.stats.lastError), last_poll_ms: state.stats.lastPollMs, uptime_ms: now() - state.stats.startedAt, rpc_requests: collector.reader.stats.requests }, ...statusOf(), memory: { rss_mb: Math.round(process.memoryUsage().rss / 1048576), heap_mb: Math.round(process.memoryUsage().heapUsed / 1048576) } })],
+    // Protocol analytics (ClickHouse index + live contract state).
+    ['GET', /^\/api\/v1\/protocol$/, (_, q) => A('protocol')(q)],
+    ['GET', /^\/api\/v1\/protocol\/series$/, (_, q) => A('series')(q)],
+    ['GET', /^\/api\/v1\/trades$/, (_, q) => A('trades')(q)],
+    ['GET', /^\/api\/v1\/liquidations$/, async (_, q) => { const body = await A('liquidations')(q); return q.get('format') === 'csv' ? { csv: toCsv(body.rows), filename: `perplscope-liquidations-${body.meta.block ?? 'unknown'}.csv` } : body; }],
+    ['GET', /^\/api\/v1\/funding$/, (_, q) => A('fundingOverview')(q)],
+    ['GET', /^\/api\/v1\/flows$/, (_, q) => A('flows')(q)],
+    ['GET', /^\/api\/v1\/leaderboard$/, async (_, q) => { const body = await A('leaderboard')(q); return q.get('format') === 'csv' ? { csv: toCsv(body.rows.map(r => ({ ...r, markets: r.markets.join(' ') }))), filename: `perplscope-leaderboard-${body.meta.window}-${body.meta.sort}.csv` } : body; }],
+    ['GET', /^\/api\/v1\/search$/, (_, q) => A('search')(q)],
+    ['GET', /^\/api\/v1\/wallets\/(0x[0-9a-fA-F]{40}|[1-9]\d{0,8})$/, match => A('profile')(match[1])],
+    ['GET', /^\/api\/v1\/wallets\/(0x[0-9a-fA-F]{40}|[1-9]\d{0,8})\/analytics$/, match => A('walletAnalytics')(match[1])],
+    ['GET', /^\/api\/v1\/wallets\/(0x[0-9a-fA-F]{40}|[1-9]\d{0,8})\/trades$/, async (match, q) => { const body = await A('walletTrades')(match[1], q); return q.get('format') === 'csv' ? { csv: toCsv(body.rows), filename: `perplscope-wallet-${body.account.id}-trades.csv` } : body; }],
+    ['GET', /^\/api\/v1\/compare$/, (_, q) => A('compare')(q)],
+    ['GET', /^\/api\/v1\/integrity$/, () => A('integrity')()],
+    // Risk (contract snapshot).
+    ['GET', /^\/api\/v1\/overview$/, () => ({ snapshot: snapshot(), ...overview() }), risk],
+    ['GET', /^\/api\/v1\/markets$/, () => ({ snapshot: snapshot(), markets: computeMetrics(state).markets.map(marketSummary) }), risk],
+    ['GET', /^\/api\/v1\/markets\/(\d+)$/, (match, query) => ({ snapshot: snapshot(), market: marketDetail(entryFor(match[1]), query) }), risk],
+    ['GET', /^\/api\/v1\/markets\/(\d+)\/positions$/, (match, query) => { const csv = query.get('format') === 'csv'; const body = { snapshot: snapshot(), ...positionsList(entryFor(match[1]), query, csv ? { defaultLimit: 5000, maxLimit: 5000 } : {}) }; return csv ? { csv: toCsv(body.positions, POSITION_COLUMNS), filename: `perplscope-${safeName(body.symbol)}-positions-${body.snapshot.block}.csv` } : body; }, risk],
+    ['GET', /^\/api\/v1\/markets\/(\d+)\/stress$/, (match, query) => ({ snapshot: snapshot(), ...stressView(entryFor(match[1]), query) }), risk],
+    ['GET', /^\/api\/v1\/markets\/(\d+)\/book$/, match => ({ snapshot: snapshot(), ...bookView(entryFor(match[1])) }), risk],
+    ['GET', /^\/api\/v1\/markets\/(\d+)\/ladder$/, match => { const e = entryFor(match[1]); return { snapshot: snapshot(), market_id: e.market.id, symbol: e.market.symbol, ladder: ladderView(e.metrics.ladder, e.market), liquidation_map: mapView(e.metrics.map) }; }, risk],
+    ['GET', /^\/api\/v1\/markets\/(\d+)\/funding$/, async (match, query) => { const e = entryFor(match[1]); const history = analytics ? await analytics.funding(e.market.id, query) : null; return { snapshot: snapshot(), market_id: e.market.id, symbol: e.market.symbol, current: fundingView(e.market), history: history?.rows ?? state.history.funding.filter(f => f.perpId === e.market.id).slice(-48).map(f => fundingEntry(f, e.market)) }; }, risk],
+    ['GET', /^\/api\/v1\/series$/, (_, query) => ({ snapshot: snapshot(), ...seriesView(query) }), risk],
+    ['GET', /^\/api\/v1\/validation$/, async () => ({ snapshot: snapshot(), ...validation(), integrity: analytics ? await analytics.integrity().catch(() => null) : null }), risk],
+    ['GET', /^\/api\/v1\/reference$/, () => ({ snapshot: snapshot(), ...referenceView() }), risk],
+    ['GET', /^\/api\/v1\/events$/, () => ({ snapshot: snapshot(), parameter_changes: state.history.params.slice(-100).reverse().map(p => ({ ...p, block: p.block.toString() })), unwinds: state.history.unwinds.slice(-50).reverse().map(u => ({ ...u, block: u.block.toString() })), diagnostics: state.history.validation.slice(-50).reverse().map(v => ({ ...v, block: v.block.toString(), accountId: v.accountId.toString(), markPricePNS: v.markPricePNS.toString(), liqPricePNS: v.liqPricePNS?.toString() ?? null, bankruptcyPricePNS: v.bankruptcyPricePNS?.toString() ?? null })) }), risk]
   ];
 
   function entryFor(id) {
@@ -282,39 +303,52 @@ export function createApi({ collector, reference = null, webDir = fileURLToPath(
     return entry;
   }
 
-  async function serveStatic(pathname, res) {
+  async function serveStatic(pathname, req, res) {
+    if (Object.hasOwn(VENDOR, pathname)) {
+      const file = VENDOR[pathname];
+      if (!file) return send(res, 404, { error: 'NOT_FOUND' });
+      const body = await readFile(file);
+      res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream', 'cache-control': 'public, max-age=86400, immutable', 'content-length': body.length, 'access-control-allow-origin': '*', ...SECURITY_HEADERS });
+      return res.end(body);
+    }
     const relative = pathname === '/' ? 'index.html' : normalize(pathname).replace(/^(\.\.[/\\])+/, '').replace(/^[/\\]+/, '');
     const file = join(webDir, relative);
     if (!file.startsWith(webDir) || relative.includes('..')) return send(res, 404, { error: 'NOT_FOUND' });
     try {
       const info = await stat(file);
       if (!info.isFile()) return send(res, 404, { error: 'NOT_FOUND' });
-      const body = await readFile(file);
-      res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream', 'cache-control': 'public, max-age=60', 'content-length': body.length, ...SECURITY_HEADERS, ...(extname(file) === '.html' ? { 'content-security-policy': CSP } : {}) });
+      const raw = await readFile(file);
+      const zip = /\.(html|js|css|svg|json)$/.test(file) && /\bgzip\b/.test(req.headers['accept-encoding'] ?? '') && raw.length > 1024;
+      const body = zip ? gzipSync(raw) : raw;
+      res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream', 'cache-control': extname(file) === '.html' ? 'no-cache' : 'public, max-age=300', 'content-length': body.length, ...(zip ? { 'content-encoding': 'gzip', vary: 'accept-encoding' } : {}), ...SECURITY_HEADERS, ...(extname(file) === '.html' ? { 'content-security-policy': CSP } : {}) });
       res.end(body);
     } catch { send(res, 404, { error: 'NOT_FOUND' }); }
   }
 
-  function send(res, status, body, extra = {}) {
+  function send(res, status, body, extra = {}, req = null) {
     if (body && typeof body.csv === 'string') { res.writeHead(status, { 'content-type': 'text/csv; charset=utf-8', 'cache-control': 'no-store', 'access-control-allow-origin': '*', 'content-disposition': `attachment; filename="${body.filename}"`, 'x-snapshot-block': state.block?.number?.toString() ?? '', ...SECURITY_HEADERS }); return res.end(body.csv); }
     const text = JSON.stringify(body, json);
-    res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'access-control-allow-origin': '*', 'x-snapshot-block': state.block?.number?.toString() ?? '', ...SECURITY_HEADERS, ...extra });
-    res.end(text);
+    const zip = req && text.length > 2048 && /\bgzip\b/.test(req.headers['accept-encoding'] ?? '');
+    const payload = zip ? gzipSync(text) : text;
+    res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'access-control-allow-origin': '*', 'x-snapshot-block': state.block?.number?.toString() ?? '', ...(zip ? { 'content-encoding': 'gzip', vary: 'accept-encoding' } : {}), ...SECURITY_HEADERS, ...extra });
+    res.end(payload);
   }
 
   async function handle(req, res) {
     const url = new URL(req.url, 'http://localhost');
-    if (!url.pathname.startsWith('/api/')) return req.method === 'GET' || req.method === 'HEAD' ? serveStatic(url.pathname, res) : send(res, 405, { error: 'METHOD_NOT_ALLOWED' });
+    if (!url.pathname.startsWith('/api/')) return req.method === 'GET' || req.method === 'HEAD' ? serveStatic(url.pathname, req, res) : send(res, 405, { error: 'METHOD_NOT_ALLOWED' });
+    if (url.pathname === '/api/v1/stream' && req.method === 'GET') return sse ? sse.open(req, res, SECURITY_HEADERS) : send(res, 503, { error: 'STREAM_UNAVAILABLE' });
     const route = routes.find(([method, pattern]) => method === req.method && pattern.test(url.pathname));
     if (!route) return send(res, 404, { error: 'NOT_FOUND' });
     try {
-      if (!state.block || !state.exchangeInfo) { if (url.pathname !== '/api/v1/health') return send(res, 503, { error: 'SYNCING', snapshot: snapshot() }, { 'retry-after': '5' }); }
-      send(res, 200, await route[2](url.pathname.match(route[1]), url.searchParams));
+      if (route[3] && (!state.block || !state.exchangeInfo)) return send(res, 503, { error: 'SYNCING', snapshot: snapshot() }, { 'retry-after': '5' });
+      send(res, 200, await route[2](url.pathname.match(route[1]), url.searchParams), {}, req);
     } catch (error) {
       const status = error.status ?? (error.message === 'RPC_UNAVAILABLE_OR_INVALID' ? 503 : 500);
+      if (status === 500) onError(error, url.pathname);
       send(res, status, { error: error.status ? error.message : status === 503 ? 'RPC_UNAVAILABLE' : 'INTERNAL_ERROR' });
     }
   }
 
-  return { handle, routes: routes.map(([method, pattern]) => `${method} ${pattern.source}`) };
+  return { handle, accountState, routes: routes.map(([method, pattern]) => `${method} ${pattern.source}`) };
 }

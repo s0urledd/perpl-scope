@@ -17,7 +17,7 @@ async function setup(t) {
   const fake = createFakeExchange();
   fake.open(1, 5n, 0, 100000n, 10000000000n); fake.open(1, 6n, 1, 100000n, 3000000000n); fake.open(20, 7n, 0, 5000n); fake.open(20, 8n, 1, 5000n);
   fake.emit('PositionLiquidated', { perpId: 1n, posAccountId: 99n, positionType: 0, markPricePNS: 990000n, liqPricePNS: 989900n, liqLotLNS: 1000n, posLotLNS: 0n, deltaPnlCNS: -5000000n, fundingCNS: 0n, posAmountCNS: 1000n, posDepositCNS: 0n, accAmountCNS: 800n, accBalanceCNS: 1800n, onOrderBook: true }, 990n);
-  const collector = createCollector({ config, options: { ...collectorOptions({ BACKFILL_BLOCKS: 100, FUNDING_HISTORY_EVENTS: 1 }), checkpointPath: join(dir, 'cp.json'), indexPath: join(dir, 'index.json'), indexBlocks: 500n, indexBucketBlocks: 100n, indexLogRange: 100n }, rpc: fake.rpc });
+  const collector = createCollector({ config, options: { ...collectorOptions({ BACKFILL_BLOCKS: 100, FUNDING_HISTORY_EVENTS: 1, HEAD_TAG: 'latest' }), checkpointPath: join(dir, 'cp.json') }, rpc: fake.rpc });
   const reference = createReference({ fetcher: async () => new Response(JSON.stringify({ chain: { chain_id: 143 }, markets: [{ perpetual_id: 1, name: 'BTC', config: { is_open: true, price_decimals: 1, size_decimals: 5, initial_margin: 1500, maintenance_margin: 2500 }, state: { mrk: 1000000, oi: 100000, at: { b: 1000 } }, funding: { rate: -40, sum: -35673, feb: 999 } }] })) });
   await reference.refresh();
   const api = createApi({ collector, reference, webDir, version: 'test' });
@@ -74,8 +74,8 @@ test('market detail, positions, ladder, funding and liquidations endpoints', asy
   assert.equal(ladder.body.ladder[0].shock_pct, 0.5);
   const funding = await get('/api/v1/markets/1/funding');
   assert.equal(funding.body.current.interval_blocks, '8571');
-  const liquidations = await get('/api/v1/liquidations?market=1');
-  assert.equal(liquidations.body.total, 1);
+  // Analytics endpoints need the ClickHouse index (covered by the integration test).
+  assert.equal((await get('/api/v1/liquidations?market=1')).status, 503);
   const validation = await get('/api/v1/validation');
   assert.equal(validation.body.reconciliation.ok, true);
   assert.equal(validation.body.metrics.delta_pnl.status, 'validated');
@@ -95,8 +95,8 @@ test('static dashboard is served and traversal is rejected', async t => {
   assert.equal((await get('/api/v1/nothing')).status, 404);
 });
 
-test('stress, book, account lookup, series and CSV endpoints', async t => {
-  const { fake, collector, get, base } = await setup(t);
+test('stress, book, account state, series and CSV endpoints', async t => {
+  const { fake, collector, api, get, base } = await setup(t);
   fake.setBook(1, [[990000n, 100000n], [960000n, 300000n]], [[1010000n, 100000n], [1040000n, 300000n]]);
   await collector.bootstrap('test');
   await collector.refreshBook(true);
@@ -115,14 +115,10 @@ test('stress, book, account lookup, series and CSV endpoints', async t => {
   const summary = (await get('/api/v1/markets/1')).body.market;
   assert.equal(summary.liquidity.cover_at_10pct.long_pct > 0, true);
   assert.equal(summary.adl_queue.short.length, 0); // account 6 short sits at its entry price: zero PnL, excluded
-  const account = await get('/api/v1/accounts/5');
-  assert.equal(account.status, 200);
-  assert.equal(account.body.positions.length, 1);
-  assert.equal(account.body.closest_liquidation.symbol, 'BTC');
-  const byAddress = await get('/api/v1/accounts/0x0000000000000000000000000000000000000005');
-  assert.equal(byAddress.body.account.id, '5');
-  assert.equal((await get('/api/v1/accounts/999999')).status, 404);
-  assert.equal((await get('/api/v1/accounts/zz')).status, 400);
+  const account = await api.accountState(5);
+  assert.equal(account.positions.length, 1);
+  assert.equal(account.portfolio.closest_liquidation.symbol, 'BTC');
+  assert.equal((await get('/api/v1/wallets/zz')).status, 404, 'wallet keys are validated by the route');
   const series = await get('/api/v1/series?hours=24');
   assert.equal(series.body.points.length, 1);
   assert.equal(series.body.points[0].positions, 4);
@@ -133,36 +129,29 @@ test('stress, book, account lookup, series and CSV endpoints', async t => {
   const text = await csv.text();
   assert.match(text.split('\r\n')[0], /^account_id,side,size/);
   assert.equal(text.trim().split('\r\n').length, 3);
-  const liqCsv = await fetch(base + '/api/v1/liquidations?format=csv');
-  assert.equal(liqCsv.headers.get('content-disposition')?.startsWith('attachment'), true);
 });
 
-test('audit fixes: address case, cached account record, csv headers, sort validation, headers', async t => {
-  const { fake, collector, get, base } = await setup(t);
+test('audit fixes: cached account record, csv headers, sort validation, headers', async t => {
+  const { fake, collector, api, get, base } = await setup(t);
   fake.setBook(1, [[990000n, 100000n]], [[1010000n, 100000n]]);
   await collector.bootstrap('test');
   await collector.refreshBook(true);
-  // Mixed-case (non-checksummed) addresses are accepted by lowercasing before ABI encoding.
-  fake.state.accounts = 200n; // account 0xab = 171 exists in the fake
-  const upper = await get('/api/v1/accounts/' + '0x00000000000000000000000000000000000000ab'.toUpperCase().replace('0X', '0x'));
-  assert.equal(upper.status, 200);
-  // Unknown accounts are cached as misses: a second lookup makes no further RPC call.
-  await get('/api/v1/accounts/777777');
+  // The on-chain account record is cached per block: a repeat read makes no RPC call.
+  const first = await api.accountState(5);
   const before = fake.stats.requests;
-  assert.equal((await get('/api/v1/accounts/777777')).status, 404);
+  await api.accountState(5);
   assert.equal(fake.stats.requests, before);
-  // Positions are rebuilt from the current snapshot even when the account record is cached.
-  const first = await get('/api/v1/accounts/5');
-  assert.equal(first.body.positions.length, 1);
+  assert.equal(first.positions.length, 1);
+  // Positions come from the current snapshot and the record is re-read at a new block.
   fake.advance(); fake.close(1, 5n);
   await collector.poll();
-  const second = await get('/api/v1/accounts/5');
-  assert.equal(second.body.positions.length, 0);
-  assert.equal(second.body.account_read_block, first.body.account_read_block);
+  const second = await api.accountState(5);
+  assert.equal(second.positions.length, 0);
+  assert.notEqual(second.block, first.block);
   // CSV keeps its header when there are no rows and escapes formula-leading cells.
   const empty = await fetch(base + '/api/v1/markets/20/positions?format=csv');
   assert.match((await empty.text()).split('\r\n')[0], /^account_id,side/);
-  assert.equal((await fetch(base + '/api/v1/liquidations?format=csv')).headers.get('x-content-type-options'), 'nosniff');
+  assert.equal((await fetch(base + '/api/v1/markets/1/positions?format=csv')).headers.get('x-content-type-options'), 'nosniff');
   const { toCsv } = await import('../src/api.js');
   assert.equal(toCsv([{ a: '=SUM(1)', b: '-5.25', c: 'x,y' }]), "a,b,c\r\n'=SUM(1),-5.25,\"x,y\"\r\n");
   // Sort and side are validated against an allowlist.
@@ -177,59 +166,4 @@ test('audit fixes: address case, cached account record, csv headers, sort valida
   assert.equal(book.body.liquidity.absorption.find(r => r.shock_pct === 10).beyond_range, false);
   const page = await fetch(base + '/');
   assert.match(page.headers.get('content-security-policy'), /script-src 'self'/);
-});
-
-test('stats windows, series, leaderboard, index status and wallet analytics', async t => {
-  const { fake, collector, get } = await setup(t);
-  fake.chain.head = 700n; fake.emit('CollateralDeposit', { accountId: 5n, amountCNS: 400000000n, balanceCNS: 400000000n }); fake.chain.head = 1000n;
-  await collector.bootstrap('test');
-  await collector.backfillIndex();
-  fake.advance(); fake.emit('CollateralWithdrawal', { accountId: 5n, amountCNS: 100000000n, balanceCNS: 300000000n }); fake.close(1, 5n);
-  await collector.poll();
-  const stats = await get('/api/v1/stats?window=24h');
-  assert.equal(stats.status, 200);
-  assert.equal(stats.body.window, '24h');
-  assert.equal(stats.body.coverage.partial, true, 'the fake chain is younger than the window');
-  assert.equal(stats.body.activity.opens, 4); assert.equal(stats.body.activity.closes, 1);
-  assert.equal(stats.body.activity.active_traders, 5, 'four openers plus the liquidated account');
-  assert.equal(stats.body.flows.deposits, '400.000000'); assert.equal(stats.body.flows.withdrawals, '100.000000'); assert.equal(stats.body.flows.net, '300.000000');
-  assert.equal(stats.body.liquidations.count, 1);
-  assert.equal(stats.body.current.tvl, '0.000000'); assert.equal(stats.body.current.accounts, '8');
-  assert.equal(stats.body.current.withdrawal_limit.allowance, '250000.000000');
-  assert.ok(stats.body.markets.length === 2 && stats.body.markets[0].skew.long_positions !== undefined);
-  assert.equal(stats.body.activity.taker_buy, '0.000000', 'fake fills are not linked to takers');
-  assert.equal(stats.body.venue.note.startsWith('Perpl API'), true);
-  assert.equal((await get('/api/v1/stats?window=1y')).status, 400);
-  const all = await get('/api/v1/stats?window=all');
-  assert.equal(all.body.coverage.partial, true);
-  const series = await get('/api/v1/stats/series?window=all');
-  assert.equal(series.status, 200);
-  assert.ok(series.body.points.length >= 5);
-  assert.equal(series.body.points.at(-1).open_interest !== null, true, 'snapshot joined to the bucket');
-  assert.equal(series.body.points.reduce((a, p) => a + p.liquidations, 0), 1);
-  const market = await get('/api/v1/stats/series?window=all&market=1');
-  assert.equal(market.body.market_id, 1); assert.equal(market.body.points.at(-1).mark, '100000.0');
-  const board = await get('/api/v1/leaderboard?window=all&by=liquidated&limit=5');
-  assert.equal(board.status, 200);
-  assert.equal(board.body.rows[0].account_id, '99'); assert.equal(board.body.rows[0].liquidations, 1);
-  assert.equal((await get('/api/v1/leaderboard?by=nope')).status, 400);
-  const byFlow = await get('/api/v1/leaderboard?window=all&by=deposits');
-  assert.equal(byFlow.body.rows[0].account_id, '5'); assert.equal(byFlow.body.rows[0].net_flow, '300.000000');
-  const index = await get('/api/v1/index');
-  assert.equal(index.body.backfill.done, true); assert.equal(index.body.covered_from_block, '500');
-  const account = await get('/api/v1/accounts/5');
-  assert.equal(account.status, 200);
-  assert.equal(account.body.summary.deposits, '400.000000'); assert.equal(account.body.summary.withdrawals, '100.000000');
-  assert.equal(account.body.history.length, 2, 'open and close');
-  assert.equal(account.body.history[0].type, 'close'); assert.equal(account.body.history[0].symbol, 'BTC');
-  assert.equal(account.body.performance.closed_trips, 1);
-  assert.equal(account.body.trips[0].complete, true); assert.equal(account.body.flows.length, 2);
-  assert.equal(typeof account.body.totals.account_value, 'string');
-  assert.ok(Array.isArray(account.body.observations));
-  const csv = await get('/api/v1/accounts/5/trades?format=csv');
-  assert.equal(csv.status, 200);
-  assert.equal(csv.body.split('\r\n')[0], 'block,timestamp,tx,type,role,market_id,symbol,side,price,size,notional,realized_pnl,delta_pnl,funding,fee,leverage');
-  assert.equal(csv.body.split('\r\n').filter(Boolean).length, 3);
-  const trades = await get('/api/v1/accounts/5/trades');
-  assert.equal(trades.body.trades.length, 2);
 });

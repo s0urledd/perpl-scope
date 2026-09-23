@@ -13,7 +13,7 @@
 //    SDK formula for positions unchanged across it; the funding sum getter
 //    must match the emitted sum.
 import { mkdir, writeFile } from 'node:fs/promises';
-import { configuration, rpcClient } from '../src/gate.js';
+import { configuration, rpcClient } from '../src/rpc.js';
 import { createReader } from '../src/exchange.js';
 import { processLogs } from '../src/events.js';
 import { topicsFor } from '../src/abi.js';

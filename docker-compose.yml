@@ -1,0 +1,83 @@
+# PerplScope on the RPC host: the app, its ClickHouse and (optionally) the
+# Monode execution-events sidecar. Configure through .env (see .env.example).
+#
+#   docker compose up -d --build                           # app + ClickHouse
+#   docker compose --profile exec-events up -d --build     # + Monode sidecar
+name: perpl-scope
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.8
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: perpl
+      CLICKHOUSE_USER: perpl
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?set CLICKHOUSE_PASSWORD in .env}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 0
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - clickhouse-logs:/var/log/clickhouse-server
+      - ./deploy/clickhouse/perpl.xml:/etc/clickhouse-server/config.d/perpl.xml:ro
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    deploy:
+      resources:
+        limits: { cpus: "${CLICKHOUSE_CPUS:-4}", memory: "${CLICKHOUSE_MEMORY:-8g}" }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ping | grep -q Ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  app:
+    build: .
+    image: perpl-scope:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: perpl
+      CLICKHOUSE_DB: perpl
+      HOST: 0.0.0.0
+      PORT: 8787
+    # Reach a node that listens on the host itself as host.docker.internal.
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    # Published on loopback only; put a TLS reverse proxy in front.
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${PUBLISH_PORT:-8787}:8787"
+    volumes:
+      - app-data:/data
+    depends_on:
+      clickhouse: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { memory: "${APP_MEMORY:-3g}" }
+
+  # Execution events straight from the node's shared-memory ring: new blocks
+  # and Perpl logs within milliseconds. Needs `--exec-event-ring` on
+  # monad-execution (docs/runbook.md) and MONODE_WS_URL=ws://monode:8443.
+  monode:
+    profiles: ["exec-events"]
+    build: ./deploy/monode
+    image: perpl-scope-monode:latest
+    restart: unless-stopped
+    command: ["--event-ring-path", "/event-rings/monad-exec-events", "--server-addr", "0.0.0.0:8443", "--health-server-addr", "127.0.0.1:7000"]
+    environment:
+      RUST_LOG: warn
+    volumes:
+      # The directory, not the file: execution replaces the ring on restart.
+      - ${EVENT_RING_DIR:-/var/lib/hugetlbfs/user/monad/pagesize-2MB/event-rings}:/event-rings:ro
+    # Monode exits when no event arrived for 30 s at a health probe, so the
+    # probe also makes it reopen a replaced ring.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:7000/health | grep -q '\"success\": true'"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  clickhouse-data:
+  clickhouse-logs:
+  app-data:

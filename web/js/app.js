@@ -1,0 +1,126 @@
+// Shell: hash router, header (search, live status), event delegation, the
+// server-sent event stream and the indexing banner.
+import { get, stream } from './api.js';
+import { esc, short, int, dateTime } from './format.js';
+import { watch, toast, ICON, assignColors } from './ui.js';
+import { disposeAll } from './charts.js';
+
+const routes = [
+  [/^\/?$/, () => import('./views/overview.js')],
+  [/^\/markets\/?$/, () => import('./views/markets.js')],
+  [/^\/markets\/(\d+)$/, () => import('./views/market.js')],
+  [/^\/traders\/?$/, () => import('./views/traders.js')],
+  [/^\/liquidations\/?$/, () => import('./views/liquidations.js')],
+  [/^\/risk\/?$/, () => import('./views/risk.js')],
+  [/^\/wallet\/([0-9a-zA-Zx]{1,42})$/, () => import('./views/wallet.js')],
+  [/^\/compare\/?$/, () => import('./views/compare.js')],
+  [/^\/watchlist\/?$/, () => import('./views/watchlist.js')],
+  [/^\/status\/?$/, () => import('./views/status.js')]
+];
+
+const view = document.getElementById('view');
+let current = null; // { key, mod, instance }
+
+function parseHash() {
+  const raw = location.hash.replace(/^#/, '') || '/';
+  const [path, qs = ''] = raw.split('?');
+  return { path: path || '/', query: new URLSearchParams(qs) };
+}
+export function navigate(path, query = null) {
+  const qs = query ? `?${new URLSearchParams(Object.entries(query).filter(([, v]) => v !== null && v !== undefined && v !== '')).toString()}` : '';
+  location.hash = `#${path}${qs === '?' ? '' : qs}`;
+}
+export function setQuery(patch) {
+  const { path, query } = parseHash();
+  for (const [k, v] of Object.entries(patch)) { if (v === null || v === undefined || v === '') query.delete(k); else query.set(k, v); }
+  const qs = query.toString();
+  history.replaceState(null, '', `#${path}${qs ? `?${qs}` : ''}`);
+  route(true);
+}
+
+async function route(queryOnly = false) {
+  const { path, query } = parseHash();
+  const hit = routes.find(([re]) => re.test(path));
+  document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.getAttribute('href') === `#${path.match(/^\/[a-z]*/)?.[0] ?? '/'}` || (path === '/' && a.dataset.nav === 'overview') || (path.startsWith('/wallet') && a.dataset.nav === 'traders') || (path.startsWith('/markets') && a.dataset.nav === 'markets')));
+  if (!hit) { view.innerHTML = '<div class="empty-state">Page not found. <a href="#/">Back to overview</a></div>'; return; }
+  const params = path.match(hit[0]).slice(1);
+  const key = `${hit[0]}:${params.join('/')}`;
+  if (queryOnly && current?.key === key && current.instance?.update) { current.instance.update(query); return; }
+  current?.instance?.destroy?.();
+  disposeAll();
+  const mod = await hit[1]();
+  view.innerHTML = '';
+  window.scrollTo({ top: 0 });
+  const instance = mod.mount(view, { params, query, navigate, setQuery });
+  current = { key, mod, instance };
+}
+window.addEventListener('hashchange', () => route(false));
+
+// --- delegated interactions -------------------------------------------------------------
+document.addEventListener('click', async event => {
+  const t = event.target.closest('[data-copy],[data-watch],[data-seg],[data-tab],[data-sort],tr[data-href],[data-action]');
+  if (!t) return;
+  if (t.dataset.copy) { event.preventDefault(); try { await navigator.clipboard.writeText(t.dataset.copy); toast('Address copied'); } catch { toast('Copy failed'); } return; }
+  if (t.dataset.watch) { event.preventDefault(); event.stopPropagation(); const on = watch.toggle(t.dataset.watch); t.classList.toggle('on', on); t.innerHTML = on ? ICON.star : ICON.starOff; toast(on ? 'Added to watchlist' : 'Removed from watchlist'); return; }
+  if (t.dataset.seg) { current?.instance?.onSeg?.(t.dataset.seg, t.dataset.v); return; }
+  if (t.dataset.tab) { current?.instance?.onTab?.(t.dataset.tab, t.dataset.v); return; }
+  if (t.dataset.sort) { const [id, key] = t.dataset.sort.split(':'); current?.instance?.onSort?.(id, key); return; }
+  if (t.dataset.action) { current?.instance?.onAction?.(t.dataset.action, t, event); return; }
+  if (t.dataset.href && !event.target.closest('a,button')) { location.hash = t.dataset.href; }
+});
+
+// --- search ------------------------------------------------------------------------------
+const input = document.getElementById('search'), results = document.getElementById('search-results');
+let searchTimer = null, selected = -1;
+function openResult(key) { results.hidden = true; input.value = ''; input.blur(); navigate(`/wallet/${key}`); }
+input.addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  const q = input.value.trim();
+  if (!q) { results.hidden = true; return; }
+  searchTimer = setTimeout(async () => {
+    if (!/^(0x[0-9a-fA-F]{1,40}|\d{1,9})$/.test(q)) { results.innerHTML = '<div class="empty">Enter a 0x address (or prefix) or an account ID</div>'; results.hidden = false; return; }
+    try {
+      const r = await get(`search?q=${encodeURIComponent(q)}`, { maxAge: 10000 });
+      selected = -1;
+      results.innerHTML = r.rows.length ? r.rows.map(x => `<a href="#/wallet/${esc(x.address)}" data-key="${esc(x.address)}"><span class="mono">${esc(short(x.address))}</span><span class="faint">#${esc(x.account)}</span></a>`).join('') : '<div class="empty">No Perpl account found</div>';
+      results.hidden = false;
+    } catch { results.innerHTML = '<div class="empty">Search unavailable</div>'; results.hidden = false; }
+  }, 160);
+});
+input.addEventListener('keydown', e => {
+  const items = [...results.querySelectorAll('a')];
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); selected = Math.max(0, Math.min(items.length - 1, selected + (e.key === 'ArrowDown' ? 1 : -1))); items.forEach((a, i) => a.classList.toggle('sel', i === selected)); }
+  else if (e.key === 'Enter') { const q = input.value.trim(); if (items[selected]) openResult(items[selected].dataset.key); else if (/^0x[0-9a-fA-F]{40}$/.test(q) || /^\d{1,9}$/.test(q)) openResult(q); else if (items[0]) openResult(items[0].dataset.key); }
+  else if (e.key === 'Escape') { results.hidden = true; input.blur(); }
+});
+results.addEventListener('click', e => { const a = e.target.closest('a[data-key]'); if (a) { e.preventDefault(); openResult(a.dataset.key); } });
+document.addEventListener('click', e => { if (!e.target.closest('.search')) results.hidden = true; });
+document.addEventListener('keydown', e => { if (e.key === '/' && !['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) { e.preventDefault(); input.focus(); } });
+
+// --- live status + banner -----------------------------------------------------------------
+const live = document.getElementById('live'), liveText = document.getElementById('live-text'), banner = document.getElementById('banner');
+let lastBlock = null, lastBlockAt = 0;
+function setLive(state, text) { live.className = `live ${state}`; liveText.textContent = text; }
+stream.on('block', b => { lastBlock = b; lastBlockAt = Date.now(); setLive('ok', `Live · #${int(b.block)}`); });
+stream.on('status', s => { if (s !== 'open') setLive('warn', 'Reconnecting…'); });
+setInterval(() => { if (lastBlockAt && Date.now() - lastBlockAt > 15000) setLive('warn', `Delayed · #${int(lastBlock?.block)}`); }, 3000);
+function showBanner(p) {
+  if (!p || (!p.running && !(p.pct < 100 && p.total_blocks !== '0'))) { banner.hidden = true; return; }
+  const eta = p.eta_s ? (p.eta_s > 3600 ? `${Math.floor(p.eta_s / 3600)}h ${Math.round(p.eta_s % 3600 / 60)}m` : `${Math.max(1, Math.round(p.eta_s / 60))}m`) : '—';
+  banner.hidden = false;
+  banner.innerHTML = `<div class="banner-inner"><b>Indexing Perpl history</b><div class="bar"><i style="width:${Math.min(100, p.pct ?? 0)}%"></i></div><span class="num">${(p.pct ?? 0).toFixed(1)}% · ETA ${eta}</span><span class="faint">Recent windows are complete; longer windows fill in as blocks are indexed.</span></div>`;
+}
+stream.on('backfill', showBanner);
+async function poll() {
+  try {
+    const h = await get('health', { maxAge: 0 });
+    showBanner(h.index?.backfill);
+    if (!lastBlockAt && h.index?.live?.to) setLive('ok', `Live · #${int(h.index.live.to)}`);
+  } catch { setLive('bad', 'Offline'); }
+}
+poll(); setInterval(poll, 30000);
+stream.connect();
+// Market colours follow all-time volume rank, assigned once per browser
+// before the first view renders (bounded wait).
+Promise.race([get('protocol?window=all', { maxAge: 60000 }).then(p => assignColors([...p.markets].sort((a, b) => Number(b.volume) - Number(a.volume)).map(m => m.id))).catch(() => {}), new Promise(resolve => setTimeout(resolve, 1500))]).then(() => route());
+export { lastBlock, dateTime };

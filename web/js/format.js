@@ -1,0 +1,65 @@
+// Formatting helpers. API amounts are exact decimal strings; they become
+// floats only here, for display.
+export const num = v => { if (v === null || v === undefined || v === '') return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
+
+const units = [[1e12, 'T'], [1e9, 'B'], [1e6, 'M'], [1e3, 'K']];
+export function compact(v, { digits = 2, sign = false } = {}) {
+  const n = num(v);
+  if (n === null) return '—';
+  const a = Math.abs(n), s = n < 0 ? '-' : sign && n > 0 ? '+' : '';
+  for (const [k, u] of units) if (a >= k) return `${s}${(a / k).toFixed(a / k >= 100 ? 1 : digits)}${u}`;
+  return `${s}${a.toFixed(a >= 100 ? 0 : a >= 1 ? digits : a === 0 ? 0 : 4)}`;
+}
+export const usd = (v, opts = {}) => { const t = compact(v, opts); return t === '—' ? t : t.startsWith('-') ? `-$${t.slice(1)}` : t.startsWith('+') ? `+$${t.slice(1)}` : `$${t}`; };
+export function usdFull(v, digits = 2) {
+  const n = num(v);
+  if (n === null) return '—';
+  return `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+}
+export function int(v) { const n = num(v); return n === null ? '—' : Math.round(n).toLocaleString('en-US'); }
+export function price(v) {
+  const n = num(v);
+  if (n === null) return '—';
+  const a = Math.abs(n);
+  const d = a >= 1000 ? 1 : a >= 100 ? 2 : a >= 1 ? 3 : a >= 0.01 ? 5 : 7;
+  return n.toLocaleString('en-US', { minimumFractionDigits: Math.min(d, 2), maximumFractionDigits: d });
+}
+export function pct(v, { digits = 2, sign = false } = {}) {
+  const n = num(v);
+  if (n === null) return '—';
+  return `${sign && n > 0 ? '+' : ''}${n.toFixed(Math.abs(n) >= 100 ? 0 : digits)}%`;
+}
+export function size(v) { const n = num(v); if (n === null) return '—'; const a = Math.abs(n); return n.toLocaleString('en-US', { maximumFractionDigits: a >= 100 ? 2 : a >= 1 ? 4 : 6 }); }
+export const signClass = v => { const n = num(v); return n === null || n === 0 ? '' : n > 0 ? 'pos' : 'neg'; };
+// invert: a rise is bad (liquidations, losses), so it takes the negative colour.
+export function deltaHtml(change, invert = false) {
+  const n = num(change);
+  if (n === null) return '<span class="delta flat">—</span>';
+  const good = invert ? n < 0 : n > 0, bad = invert ? n > 0 : n < 0;
+  const cls = good ? 'up' : bad ? 'down' : 'flat';
+  return `<span class="delta ${cls}">${n > 0 ? '▲' : n < 0 ? '▼' : ''} ${Math.abs(n).toFixed(Math.abs(n) >= 100 ? 0 : 1)}%</span>`;
+}
+export function ago(ts) {
+  if (!ts) return '—';
+  const s = Math.max(0, Math.round(Date.now() / 1000 - Number(ts)));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+export function duration(sec) {
+  const s = num(sec);
+  if (s === null) return '—';
+  if (s < 60) return `${Math.round(s)}s`;
+  if (s < 3600) return `${Math.round(s / 60)}m`;
+  if (s < 86400) return `${(s / 3600).toFixed(s < 36000 ? 1 : 0)}h`;
+  return `${(s / 86400).toFixed(s < 864000 ? 1 : 0)}d`;
+}
+const pad = n => String(n).padStart(2, '0');
+export function dateTime(ts) { if (!ts) return '—'; const d = new Date(Number(ts) * 1000); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`; }
+export function date(ts) { if (!ts) return '—'; const d = new Date(Number(ts) * 1000); return `${d.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' })} ${d.getUTCDate()}, ${d.getUTCFullYear()}`; }
+export function timeOnly(ts) { const d = new Date(Number(ts) * 1000); return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`; }
+export function multiple(pctValue) { const n = num(pctValue); if (n === null) return '—'; return n >= 1000 ? `${(n / 100).toFixed(n >= 10000 ? 0 : 1)}×` : `${n.toFixed(0)}%`; }
+export const short = a => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '—');
+const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+export const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ESC[c]);
