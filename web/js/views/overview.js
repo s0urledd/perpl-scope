@@ -3,7 +3,7 @@
 // latest liquidations and flows.
 import { get, stream } from '../api.js';
 import { usd, compact, int, price, pct, num, esc, timeOnly, ago, duration } from '../format.js';
-import { kpi, seg, table, mkt, sideTag, addr, ratio, pctCell, fundingCell, fundingTip, tradeAction, chartTools, skeleton, skChart, empty, assignColors, colorOf, hasColor, OTHER_HEX, SLOT_HEX } from '../ui.js';
+import { kpi, seg, table, mkt, sideTag, addr, ratio, pctCell, fundingCell, fundingTip, tradeAction, chartTools, skeleton, skChart, empty, assignColors, colorOf, hasColor, logo, OTHER_HEX, SLOT_HEX } from '../ui.js';
 import { sparkline, stackedBars, lineChart, signedBars, toggleSeries, COLORS } from '../charts.js';
 
 const WINDOWS = [['24h', '24H'], ['7d', '7D'], ['30d', '30D'], ['all', 'All']];
@@ -68,6 +68,9 @@ export function mount(el, { query, setQuery }) {
       </div>
     </div>`;
   const $ = id => el.querySelector(`#${id}`);
+  // Every figure says which period it covers: the window, or "now" for state.
+  const windowLabel = () => (w === 'all' ? 'all-time' : w);
+  const BUCKET_NAMES = { 3600: 'hourly', 14400: '4-hour', 86400: 'daily', 604800: 'weekly' };
 
   async function load() {
     const [p, s] = await Promise.all([get(`protocol?window=${w}`), get(`protocol/series?window=${w}`)]);
@@ -93,15 +96,15 @@ export function mount(el, { query, setQuery }) {
   function spark(key, values, color = COLORS.accent) { const node = $(key); if (node && values.some(v => v !== null && v !== undefined)) sparkline(node, values, { color }); }
   function renderKpis() {
     const h = data.headline, c = data.current, pts = series.points;
-    const cov = data.meta.coverage;
+    const cov = data.meta.coverage, wl = windowLabel();
     const partial = cov && !cov.complete ? ' <span class="tag warn" title="History for this window is still being indexed">partial</span>' : '';
     $('kpis').innerHTML = [
-      kpi({ label: `Volume · ${w === 'all' ? 'all-time' : w}`, value: usd(h.volume.value), delta: h.volume.change_pct, note: `${int(data.markets.reduce((a, m) => a + (m.fills ?? 0), 0))} trades${partial}`, spark: 'sp-vol', tip: 'Notional of every match, counted once (the maker side). A trade is one match between a maker and a taker.' }),
-      kpi({ label: 'Open interest', value: usd(c?.open_interest), delta: seriesChange('open_interest'), note: c ? `${int(c.positions)} open positions` : '', spark: 'sp-oi', tip: 'Long notional at the mark price; equal to short notional by construction, so each contract counts once. The change compares the window\'s first and last points of the event-derived series.' }),
-      kpi({ label: 'TVL', value: usd(c?.tvl), delta: seriesChange('tvl'), note: `${usd(h.net_flow.value, { sign: true })} net flow`, spark: 'sp-tvl', tip: 'Collateral held by the exchange contract, read from chain state.' }),
-      kpi({ label: 'Fees', value: usd(h.fees.value), delta: h.fees.change_pct, note: `${usd(h.protocol_fees.value)} to protocol`, spark: 'sp-fees', tip: `Fees charged on fills, gross: ${usd(h.insurance_fees.value)} to the insurance fund and ${usd(h.protocol_fees.value)} protocol share, of which ${usd(h.builder_fees)} went to order builders. Rebates and referral shares are paid outside fills and are not deducted.` }),
-      kpi({ label: 'Active traders', value: int(h.traders.value), delta: h.traders.change_pct, note: `${int(h.new_accounts.value)} new accounts`, spark: 'sp-tr' }),
-      kpi({ label: 'Liquidations', value: usd(h.liquidated.value), delta: h.liquidated.change_pct, invert: true, note: `${int(h.liquidations.value)} liquidations`, spark: 'sp-liq' })
+      kpi({ label: `Volume · ${wl}`, value: usd(h.volume.value), delta: h.volume.change_pct, note: `${int(data.markets.reduce((a, m) => a + (m.fills ?? 0), 0))} trades${partial}`, spark: 'sp-vol', tip: 'Notional of every match, counted once (the maker side). A trade is one match between a maker and a taker.' }),
+      kpi({ label: 'Open interest · now', value: usd(c?.open_interest), delta: seriesChange('open_interest'), note: c ? `${int(c.positions)} open positions` : '', spark: 'sp-oi', tip: 'Long notional at the mark price; equal to short notional by construction, so each contract counts once. The change compares the window\'s first and last points of the event-derived series.' }),
+      kpi({ label: 'TVL · now', value: usd(c?.tvl), delta: seriesChange('tvl'), note: `${usd(h.net_flow.value, { sign: true })} net flow · ${wl}`, spark: 'sp-tvl', tip: 'Collateral held by the exchange contract, read from chain state.' }),
+      kpi({ label: `Fees · ${wl}`, value: usd(h.fees.value), delta: h.fees.change_pct, note: `${usd(h.protocol_fees.value)} to protocol`, spark: 'sp-fees', tip: `Fees charged on fills, gross: ${usd(h.insurance_fees.value)} to the insurance fund and ${usd(h.protocol_fees.value)} protocol share, of which ${usd(h.builder_fees)} went to order builders. Rebates and referral shares are paid outside fills and are not deducted.` }),
+      kpi({ label: `Active traders · ${wl}`, value: int(h.traders.value), delta: h.traders.change_pct, note: `${int(h.new_accounts.value)} new accounts`, spark: 'sp-tr' }),
+      kpi({ label: `Liquidations · ${wl}`, value: usd(h.liquidated.value), delta: h.liquidated.change_pct, invert: true, note: `${int(h.liquidations.value)} liquidations`, spark: 'sp-liq' })
     ].join('');
     spark('sp-vol', pts.map(p => num(p.volume)));
     spark('sp-oi', pts.map(p => num(p.open_interest)));
@@ -115,18 +118,20 @@ export function mount(el, { query, setQuery }) {
   function byMarket(metric) {
     const all = (series.by_market ?? []).filter(m => m[metric].some(v => num(v) > 0));
     const top = all.filter(m => hasColor(m.id)), rest = all.filter(m => !hasColor(m.id));
-    const list = top.map(m => ({ name: m.symbol, color: colorOf(m.id), data: m[metric].map(num) }));
+    const list = top.map(m => ({ id: m.id, name: m.symbol, color: colorOf(m.id), data: m[metric].map(num) }));
     if (rest.length) list.push({ name: 'Other', color: OTHER_HEX, data: series.times.map((_, i) => rest.reduce((a, m) => a + num(m[metric][i]), 0)) });
     return list;
   }
+  // The swatch keeps the series colour; the logo (when the asset has one) names it.
+  const legendLogo = s => { if (s.id === undefined) return ''; const html = logo(s.id, s.name, 14); return html.startsWith('<img') ? html : ''; };
   function renderVolume() {
     const node = $('main-chart'), b = series.meta.bucket_seconds;
     node.innerHTML = '';
-    $('chart-meta').textContent = `${series.meta.bucket} periods · UTC`;
+    $('chart-meta').textContent = `${w === 'all' ? 'All-time' : `Last ${w}`} · ${BUCKET_NAMES[b] ?? `${series.meta.bucket}`} bars · UTC`;
     const list = byMarket('volume');
     const shown = volMode === 'bars' ? list : list.map(s => { let run = 0; return { ...s, data: s.data.map(v => (run += v || 0)) }; });
     stackedBars(node, { times: series.times, series: shown, bucketSeconds: b });
-    $('legend').innerHTML = list.map(s => `<button class="lg" data-action="toggle" data-name="${esc(s.name)}"><i style="background:${s.color}"></i>${esc(s.name)}</button>`).join('');
+    $('legend').innerHTML = list.map(s => `<button class="lg" data-action="toggle" data-name="${esc(s.name)}"><i style="background:${s.color}"></i>${legendLogo(s)}${esc(s.name)}</button>`).join('');
   }
   // Open interest and TVL are running sums from launch, so they wait for the backfill.
   let backfill = null;
@@ -241,7 +246,7 @@ export function mount(el, { query, setQuery }) {
     if (!alive) return;
     const src = `<a href="${esc(l.source.url)}" target="_blank" rel="noopener noreferrer">${esc(l.source.name)}</a>, ${ago(Math.round(l.fetched_at / 1000))}`;
     const bar = (v, share) => `${usd(v)}<span class="track"><i style="width:${Math.max(2, Math.min(100, share ?? 0))}%"></i></span>`;
-    const name = r => (r.self || r.name === 'Perpl' ? `<b>${esc(r.name)}</b> <span class="tag accent">this</span>` : esc(r.name));
+    const name = r => (r.self || r.name === 'Perpl' ? `<span class="mkt"><img class="tk" src="img/venues/perpl.png" alt="" width="16" height="16"><b>${esc(r.name)}</b></span>` : esc(r.name));
     const top = [...l.top];
     if (l.perpl && l.perpl.rank > top.length) top.push({ rank: l.perpl.rank, name: 'Perpl', oi: l.perpl.oi, share_pct: l.perpl.share_pct });
     $('ls-meta').innerHTML = l.perpl ? `Perpl #${int(l.perpl.rank)} of ${int(l.venues)} · ${pct(l.perpl.share_pct, { digits: 2 })} · ${src}` : src;
