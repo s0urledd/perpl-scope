@@ -71,7 +71,7 @@ same host the client is the last `X-Forwarded-For` entry.
 | `/api/v1/validation` | | Reconciliation, independent verification, PnL agreement and the integrity check |
 | `/api/v1/events` | | Recent parameter changes and unwinds |
 | `/api/v1/reference` | | Perpl public API figures next to the contract's (only with `REFERENCE_ENABLED=1`) |
-| `/api/v1/landscape` | | Market-share context: open interest of perp venues from DefiLlama's public overview, Perpl's rank and share overall and on Monad (cached 10 min; external data, never used for Plumb's own metrics; off with `LANDSCAPE_ENABLED=0`) |
+| `/api/v1/landscape` | | Market-share context: open interest of perp venues (category Derivatives; front-ends and prediction markets excluded) from DefiLlama's public overview, Perpl's rank and share overall and on Monad (cached 10 min; external data, never used for Plumb's own metrics; off with `LANDSCAPE_ENABLED=0`) |
 
 ## Examples
 

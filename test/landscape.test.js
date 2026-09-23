@@ -2,18 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { summarize, createLandscape } from '../src/landscape.js';
 
+const D = 'Derivatives';
 const body = { protocols: [
-  { name: 'Big Perps', total24h: 900, chains: ['Arbitrum'] },
-  { name: 'Perpl', total24h: 60, chains: ['Monad'] },
-  { name: 'Other Monad', total24h: 40, chains: ['Monad'] },
-  { name: 'Dead', total24h: 0, chains: ['Monad'] },
-  { name: 'Broken', total24h: null }
+  { name: 'Big Perps', total24h: 900, chains: ['Arbitrum'], category: D },
+  { name: 'Perpl', total24h: 60, chains: ['Monad'], category: D },
+  { name: 'Other Monad', total24h: 40, chains: ['Monad'], category: D },
+  { name: 'Dead', total24h: 0, chains: ['Monad'], category: D },
+  { name: 'Broken', total24h: null, category: D },
+  { name: 'Front-end on Big Perps', total24h: 500, chains: ['Arbitrum'], category: 'Interface' },
+  { name: 'Event contracts', total24h: 700, chains: ['Off Chain'], category: 'Prediction Market' }
 ] };
 
 test('ranks Perpl among venues and within its chain', () => {
   const s = summarize(body, { top: 2 });
   assert.equal(s.total_oi, 1000);
-  assert.equal(s.venues, 3, 'zero and missing open interest are left out');
+  assert.equal(s.venues, 3, 'zero and missing open interest, front-ends and prediction markets are left out');
   assert.deepEqual(s.perpl, { oi: 60, rank: 2, share_pct: 6, share_of_chain_pct: 60 });
   assert.equal(s.chain.total_oi, 100);
   assert.deepEqual(s.chain.venues.map(v => [v.name, v.self]), [['Perpl', true], ['Other Monad', false]]);

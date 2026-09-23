@@ -5,9 +5,14 @@
 export const DEFAULT_LANDSCAPE_URL = 'https://api.llama.fi/overview/open-interest?excludeTotalDataChart=true&excludeTotalDataChartBreakdown=true';
 const SOURCE = { name: 'DefiLlama', url: 'https://defillama.com/open-interest' };
 
+// Venues only: front-ends built on another venue ('Interface') would count its
+// open interest twice, and prediction markets are not perps.
+const CATEGORIES = new Set(['Derivatives']);
+
 export function summarize(body, { top = 10, self = 'Perpl', chain = 'Monad' } = {}) {
   if (!Array.isArray(body?.protocols)) throw new Error('LANDSCAPE_SHAPE');
   const rows = body.protocols
+    .filter(p => CATEGORIES.has(p.category))
     .map(p => ({ name: String(p.displayName || p.name || ''), oi: Number(p.total24h), chains: Array.isArray(p.chains) ? p.chains.map(String) : [] }))
     .filter(p => p.name && Number.isFinite(p.oi) && p.oi > 0)
     .sort((a, b) => b.oi - a.oi);
