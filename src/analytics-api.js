@@ -287,11 +287,13 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
   async function liquidations(query) {
     const limit = Math.min(Math.max(Number(query.get('limit')) || 100, 1), 500);
     const market = /^\d{1,5}$/.test(query.get('market') ?? '') ? Number(query.get('market')) : null;
-    // With a window, also the largest liquidation inside it (not just among the rows returned).
+    // With a window, the rows stay inside it (newest first, up to the limit) and
+    // the largest liquidation of the whole window comes along.
     const w = query.get('window') ? windowOf(query) : null;
+    const sinceTs = w && w !== 'all' ? rangeOf(w).from : null;
     return cache.get(`liq:${limit}:${market}:${w}`, 3000, async () => {
-      const rows = await queries.recent(['liquidation', 'deleverage'], { limit, market });
-      const largestRow = w ? (await queries.recent(['liquidation'], { limit: 1, market, sinceTs: w === 'all' ? null : rangeOf(w).from, order: 'size' }))[0] ?? null : null;
+      const rows = await queries.recent(['liquidation', 'deleverage'], { limit, market, sinceTs });
+      const largestRow = w ? (await queries.recent(['liquidation'], { limit: 1, market, sinceTs, order: 'size' }))[0] ?? null : null;
       const addr = await addresses([...new Set(rows.map(r => Number(r.account)))]);
       const { from, to } = rangeOf('24h');
       const day = sumMarkets(await queries.marketTotals(from, to));

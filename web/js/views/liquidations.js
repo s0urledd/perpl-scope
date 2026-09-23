@@ -15,11 +15,13 @@ export function mount(el, { query, setQuery }) {
     <div class="page-head"><div><h1>Liquidations</h1><div class="sub">Forced closes from exchange events: liquidations on the order book and auto-deleveraging.</div></div><div id="win">${seg('window', WINDOWS, w)}</div></div>
     <div class="stack"><div class="kpis k4" id="kpis"></div>
       <section class="panel"><div class="panel-head"><h2>Liquidated notional</h2><div class="head-right"><div class="legend" id="legend"></div>${chartTools('chart', 'liquidations')}</div></div><div class="panel-body"><div class="chart" id="chart">${skChart()}</div></div></section>
-      <section class="panel"><div class="panel-head"><h2>Feed</h2><div style="display:flex;gap:10px;align-items:center"><select id="mf" class="btn ghost" aria-label="Market filter"><option value="">All markets</option></select><a class="btn ghost" id="csv">${ICON.download} CSV</a></div></div><div class="panel-body flush" id="feed">${skeleton(10)}</div></section></div>`;
+      <section class="panel"><div class="panel-head"><h2>Feed</h2><div style="display:flex;gap:10px;align-items:center"><span class="meta" id="feed-meta"></span><select id="mf" class="btn ghost" aria-label="Market filter"><option value="">All markets</option></select><a class="btn ghost" id="csv">${ICON.download} CSV</a></div></div><div class="panel-body flush" id="feed">${skeleton(10)}</div></section></div>`;
   const $ = s => el.querySelector(`#${s}`);
+  // The feed lists the window's events, newest first, up to FEED_LIMIT.
+  const FEED_LIMIT = 500;
   async function load() {
     const mq = market ? `&market=${market}` : '';
-    const [p, s, l] = await Promise.all([get(`protocol?window=${w}`), get(`protocol/series?window=${w}${mq}`), get(`liquidations?limit=200&window=${w}${mq}`)]);
+    const [p, s, l] = await Promise.all([get(`protocol?window=${w}`), get(`protocol/series?window=${w}${mq}`), get(`liquidations?limit=${FEED_LIMIT}&window=${w}${mq}`)]);
     if (!alive) return;
     markets = p.markets;
     assignColors([...p.markets].sort((a, b) => num(b.volume) - num(a.volume)).map(m => ({ id: m.id, symbol: m.symbol })));
@@ -46,7 +48,9 @@ export function mount(el, { query, setQuery }) {
     if (list.length) stackedBars(node, { times: s.times, series: list, bucketSeconds: s.meta.bucket_seconds, cumulative: true, zoom: true }); else node.innerHTML = empty('No liquidations in this window');
     // The delisted original and its relisting share a name: the old one says so.
     $('mf').innerHTML = `<option value="">All markets</option>${markets.filter(m => m.liquidations || m.id === Number(market)).map(m => `<option value="${m.id}" ${String(m.id) === market ? 'selected' : ''}>${esc(m.symbol)}${m.active === false ? ' (inactive)' : ''}</option>`).join('')}`;
-    $('csv').href = `/api/v1/liquidations?limit=500&format=csv${mq}`;
+    $('csv').href = `/api/v1/liquidations?limit=${FEED_LIMIT}&window=${w}&format=csv${mq}`;
+    const total = num(count) + (row ? 0 : num(h.deleverages) || 0);
+    $('feed-meta').textContent = l.rows.length >= FEED_LIMIT && total > l.rows.length ? `Latest ${int(l.rows.length)} of ${int(total)} · ${w}` : `${int(l.rows.length)} events · ${w === 'all' ? 'all-time' : w}`;
     renderFeed(l.rows);
   }
   function renderFeed(rows) {
@@ -65,7 +69,7 @@ export function mount(el, { query, setQuery }) {
     ], rows, rowAttrs: r => `class="link ${r.fresh ? 'flash' : ''}" data-href="#/wallet/${esc(r.address || r.account)}"`, emptyText: 'No liquidations indexed in this range' });
   }
   $('mf').addEventListener('change', e => setQuery({ market: e.target.value || null }));
-  const off = stream.on('liquidations', () => get(`liquidations?limit=200${market ? `&market=${market}` : ''}`, { maxAge: 0 }).then(l => alive && renderFeed(l.rows.map((r, i) => ({ ...r, fresh: i === 0 })))).catch(() => {}));
+  const off = stream.on('liquidations', () => get(`liquidations?limit=${FEED_LIMIT}&window=${w}${market ? `&market=${market}` : ''}`, { maxAge: 0 }).then(l => alive && renderFeed(l.rows.map((r, i) => ({ ...r, fresh: i === 0 })))).catch(() => {}));
   load().catch(error => { $('feed').innerHTML = empty(error.message); });
   return {
     onSeg(name, v) { if (name === 'window') setQuery({ window: v === '7d' ? null : v }); },
