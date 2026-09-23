@@ -12,7 +12,7 @@ place:
 It needs no Perpl API: it reads a Monad node, plus archive endpoints once
 for the history older than the node keeps.
 
-[![ci](https://github.com/s0urledd/perpl-scope/actions/workflows/ci.yml/badge.svg)](https://github.com/s0urledd/perpl-scope/actions/workflows/ci.yml)
+[![ci](https://github.com/s0urledd/plumb/actions/workflows/ci.yml/badge.svg)](https://github.com/s0urledd/plumb/actions/workflows/ci.yml)
 
 ![Plumb overview](docs/images/overview.png)
 
