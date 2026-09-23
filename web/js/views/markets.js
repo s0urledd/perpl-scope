@@ -35,7 +35,7 @@ export function mount(el, { query, setQuery }) {
   ];
   function render() { if (data) el.querySelector('#list').innerHTML = table({ id: 'm', columns: COLS, rows: data.markets, sortKey: sort.key, sortDir: sort.dir, rowAttrs: r => `class="link${!num(r.volume) && !num(r.open_interest) ? ' inactive' : ''}" data-href="#/markets/${r.id}"` }); }
   async function load() { data = await get(`protocol?window=${w}`); if (!alive) return; assignColors([...data.markets].sort((a, b) => num(b.volume) - num(a.volume)).map(m => ({ id: m.id, symbol: m.symbol }))); render(); }
-  // Funding across markets and time: APR per bucket, orange when longs pay.
+  // Funding across markets and time: APR per bucket, green when longs pay.
   async function loadFunding() {
     const f = await get(`funding?window=${w}`, { maxAge: 30000 });
     if (!alive) return;
@@ -51,7 +51,7 @@ export function mount(el, { query, setQuery }) {
       return { name: s.symbol, values: times.map(t => at.get(t) ?? null) };
     });
     node.style.height = `${Math.max(180, rows.length * 30 + 70)}px`;
-    el.querySelector('#f-desc').textContent = `Annualised rate per market, ${b >= 86400 ? 'daily' : b >= 14400 ? '4-hour' : 'hourly'} averages · orange: longs pay shorts, blue: shorts pay longs`;
+    el.querySelector('#f-desc').textContent = `Annualised rate per market, ${b >= 86400 ? 'daily' : b >= 14400 ? '4-hour' : 'hourly'} averages · green: longs pay shorts, red: shorts pay longs`;
     // Scale to the data: the 95th percentile of |APR|, rounded up to a step.
     const mags = rows.flatMap(r => r.values).filter(v => v !== null).map(Math.abs).sort((a, b2) => a - b2);
     const p95 = mags.length ? mags[Math.min(mags.length - 1, Math.floor(mags.length * 0.95))] : 0;

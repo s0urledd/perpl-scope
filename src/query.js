@@ -203,11 +203,12 @@ export function createQueries({ ch, rollups, coverage = null }) {
   }
 
   // Latest rows of given kinds across the exchange (feeds).
-  async function recent(kinds, { limit = 100, market = null, sinceTs = null } = {}) {
+  // order 'size': largest notional first (the biggest liquidation in a window).
+  async function recent(kinds, { limit = 100, market = null, sinceTs = null, order = 'recent' } = {}) {
     const k = kinds.map(x => `'${x.replace(/[^a-z_]/g, '')}'`).join(',');
     const m = market !== null ? ` AND market = ${int(market)}` : '';
     const since = sinceTs !== null ? ` AND ts >= toDateTime(${int(sinceTs)}, 'UTC')` : '';
-    return q(`SELECT ${EV_COLUMNS} FROM ev WHERE kind IN (${k})${m}${since} ORDER BY block DESC, log_index DESC LIMIT ${int(limit)}`);
+    return q(`SELECT ${EV_COLUMNS} FROM ev WHERE kind IN (${k})${m}${since} ORDER BY ${order === 'size' ? 'notional DESC, block DESC' : 'block DESC, log_index DESC'} LIMIT ${int(limit)}`);
   }
 
   async function fundingHistory(market, { limit = 500 } = {}) {

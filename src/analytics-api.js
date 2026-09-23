@@ -223,7 +223,9 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
     const marketFilter = /^\d{1,5}$/.test(query.get('market') ?? '') ? Number(query.get('market')) : null;
     return cache.get(`series:${w}:${bucket.name}:${marketFilter}`, w === '24h' ? 3000 : 15000, async () => {
       const range = rangeOf(w);
-      const from = Math.floor(range.from / bucket.seconds) * bucket.seconds, to = range.to;
+      // Buckets are labelled on the bucket grid, but the data starts at the window's
+      // own start: the first bucket is partial, so chart sums equal the headline.
+      const start = Math.floor(range.from / bucket.seconds) * bucket.seconds, from = range.from, to = range.to;
       const [rows, flows, traderRows, base, lastPrices] = await Promise.all([
         queries.marketTotals(from, to, { bucket: bucket.seconds }),
         queries.protocolTotals(from, to, { bucket: bucket.seconds }),
@@ -234,7 +236,7 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
       const c = cd();
       const baseComplete = ingest.coverage.contiguousTs() !== null && ingest.coverage.contiguousTs() >= from;
       const times = [];
-      for (let t = from; t < to; t += bucket.seconds) times.push(t);
+      for (let t = start; t < to; t += bucket.seconds) times.push(t);
       const byT = new Map(times.map(t => [t, []]));
       for (const r of rows) { const list = byT.get(Number(r.t)); if (list) list.push(r); }
       const flowT = new Map(flows.map(r => [Number(r.t), r]));
@@ -285,12 +287,15 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
   async function liquidations(query) {
     const limit = Math.min(Math.max(Number(query.get('limit')) || 100, 1), 500);
     const market = /^\d{1,5}$/.test(query.get('market') ?? '') ? Number(query.get('market')) : null;
-    return cache.get(`liq:${limit}:${market}`, 3000, async () => {
+    // With a window, also the largest liquidation inside it (not just among the rows returned).
+    const w = query.get('window') ? windowOf(query) : null;
+    return cache.get(`liq:${limit}:${market}:${w}`, 3000, async () => {
       const rows = await queries.recent(['liquidation', 'deleverage'], { limit, market });
+      const largestRow = w ? (await queries.recent(['liquidation'], { limit: 1, market, sinceTs: w === 'all' ? null : rangeOf(w).from, order: 'size' }))[0] ?? null : null;
       const addr = await addresses([...new Set(rows.map(r => Number(r.account)))]);
       const { from, to } = rangeOf('24h');
       const day = sumMarkets(await queries.marketTotals(from, to));
-      return { meta: metaOf(), last_24h: { count: day.liquidations, notional: dec(day.liquidated, cd()), deleverages: day.deleverages }, rows: rows.map(r => tradeView(r, addr)) };
+      return { meta: metaOf(), last_24h: { count: day.liquidations, notional: dec(day.liquidated, cd()), deleverages: day.deleverages }, rows: rows.map(r => tradeView(r, addr)), ...(w ? { window: w, largest: largestRow ? tradeView(largestRow, await addresses([Number(largestRow.account)])) : null } : {}) };
     });
   }
   async function trades(query) {
@@ -549,7 +554,9 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
 
   // Traders in a window at a glance: how many traded, how many are up after
   // fees, the total, and the median PnL per unit of volume (from the shared
-  // per-window score table, refreshed each minute).
+  // per-window score table, refreshed each minute). Every fill has a maker and
+  // a taker account, so the traders' summed volume is halved to match the
+  // exchange volume elsewhere.
   async function traderSummary(query) {
     const w = windowOf(query);
     const table = await scores(w);
@@ -561,7 +568,7 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
     return {
       meta: metaOf({ window: w, from, to, coverage: coverageOf(from, to) }),
       traders: rows.length, profitable, profitable_pct: rows.length ? Math.round(profitable / rows.length * 10000) / 100 : null,
-      net_pnl: (rows.reduce((a, r) => a + r.pnl, 0) / scale).toFixed(2), volume: (rows.reduce((a, r) => a + r.volume, 0) / scale).toFixed(2),
+      net_pnl: (rows.reduce((a, r) => a + r.pnl, 0) / scale).toFixed(2), volume: (rows.reduce((a, r) => a + r.volume, 0) / scale / 2).toFixed(2),
       median_pnl_per_volume_bps: median === null ? null : Math.round(median * 1e6) / 100
     };
   }

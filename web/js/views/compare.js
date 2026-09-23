@@ -55,7 +55,7 @@ export function mount(el, { query, navigate }) {
       ['Median hold', w => duration(w.performance.median_hold_seconds)],
       ['Long / short trips', w => `${int(w.performance.long.trips)} / ${int(w.performance.short.trips)}`],
       ['Best market', w => (w.performance.best_market ? esc(w.performance.best_market.symbol) : '—')],
-      ['Worst market', w => (w.performance.worst_market ? esc(w.performance.worst_market.symbol) : '—')],
+      ['Weakest market', w => (w.performance.worst_market ? esc(w.performance.worst_market.symbol) : '—')],
       ['Liquidations', w => int(w.summary.liquidations)],
       ['Net deposits', w => usd(w.summary.net_flow, { sign: true })],
       ['First trade', w => (w.summary.first_trade ? date(w.summary.first_trade) : '—')]
@@ -64,7 +64,9 @@ export function mount(el, { query, navigate }) {
     // Cumulative PnL on a shared daily axis.
     const full = await Promise.all(ws.map(w => (w.error ? null : get(`wallets/${encodeURIComponent(w.account.address)}`, { maxAge: 10000 }).catch(() => null))));
     if (!alive) return;
-    const days = [...new Set(full.flatMap(f => (f?.pnl_daily ?? []).map(p => p.t)))].sort((a, b) => a - b);
+    // Every calendar day from the first to the last, so quiet days keep their width.
+    const seen = full.flatMap(f => (f?.pnl_daily ?? []).map(p => p.t)), days = [];
+    if (seen.length) for (let t = Math.min(...seen); t <= Math.max(...seen); t += 86400) days.push(t);
     const series = full.map((f, i) => { if (!f) return null; const map = new Map(f.pnl_daily.map(p => [p.t, num(p.cumulative)])); let last = null; return { name: short(f.account.address), color: COLORS[i], data: days.map(t => { if (map.has(t)) last = map.get(t); return last; }) }; }).filter(Boolean);
     $('legend').innerHTML = series.map(s => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join('');
     if (days.length) lineChart($('chart'), { times: days, series, bucketSeconds: 86400, fmt: v => usd(v, { sign: true }), area: false }); else $('chart').innerHTML = empty('No realized PnL yet');

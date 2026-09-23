@@ -172,7 +172,7 @@ export function signedBars(el, { times, values, bucketSeconds, name = 'Value', f
     // The first point is labelled only when the next day starts far enough away not to collide with it.
     const firstBreak = times.findIndex((t, i) => i > 0 && day(times[i - 1]) !== day(t));
     const labelFirst = firstBreak === -1 || firstBreak >= times.length / 14;
-    xAxis.axisLabel = { ...xAxis.axisLabel, interval: 0, hideOverlap: false, formatter: (v, i) => ((i === 0 && labelFirst) || (i > 0 && day(times[i - 1]) !== day(v)) ? timeLabel(day(v) * 86400, 86400) : '') };
+    xAxis.axisLabel = { ...xAxis.axisLabel, interval: 0, hideOverlap: true, formatter: (v, i) => ((i === 0 && labelFirst) || (i > 0 && day(times[i - 1]) !== day(v)) ? timeLabel(day(v) * 86400, 86400) : '') };
   }
   chart.setOption({
     ...base(), xAxis, yAxis: valueAxis(yFmt),
@@ -200,8 +200,9 @@ export function twoSided(el, { times, up, down, net = 'Net', bucketSeconds, fmt 
 }
 
 // Rows (markets) × time buckets on a diverging scale centred on zero: two
-// hues and a grey midpoint; values beyond ±clamp take the end colours.
-export const DIVERGING = { neg: '#0098de', mid: '#2c2b33', pos: '#d36c00' };
+// hues and a grey midpoint; values beyond ±clamp take the end colours. The
+// hues are the site's positive/negative ones, so a cell reads like a rate.
+export const DIVERGING = { neg: '#f65a6e', mid: '#2c2b33', pos: '#81c784' };
 export function divergingHeatmap(el, { times, rows, bucketSeconds, clamp, fmt = v => String(v), labels = ['', ''] }) {
   const chart = init(el);
   if (!chart) return;
