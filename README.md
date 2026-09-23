@@ -1,17 +1,18 @@
 # Plumb
 
-**Real-time protocol, wallet and risk analytics for [Perpl](https://perpl.xyz)
-on Monad, read straight from the chain.**
+**Onchain analytics, risk data and trading automation for
+[Perpl](https://perpl.xyz) on Monad.**
 
 Plumb indexes every event the Perpl exchange has emitted since launch and
-reads live positions, the order book and funding from the contract. One
+reads live positions, the order book and funding from the contract. The
 dashboard answers three questions:
 - **the protocol view**: what is happening on the exchange;
 - **the wallet view**: how a given trader is doing;
 - **the risk view**: what a price move would do to the open positions.
 
-It needs no Perpl API and no third-party indexer: it reads our own Monad node,
-plus public archive endpoints once for history older than the node keeps.
+The same data is served as an open API, and a trading bot built on it is
+next. Everything is indexed directly from Monad: no Perpl API and no
+third-party indexer sit in between.
 
 **Live:** [plumb.huginn.tech](https://plumb.huginn.tech) ·
 **API:** [docs/api.md](docs/api.md) ·
@@ -125,7 +126,7 @@ measured instead of estimated:
 | Multicall3 | `0xca11bde05977b3631167028862be2a173976ca11` |
 | History since | block 54,773,010 (11 February 2026), about 67 million events |
 
-What Plumb reads, all from our own Monad node:
+What Plumb reads, all from a self-hosted Monad mainnet node:
 - **exchange events** with `eth_getLogs` over finalized block ranges: fills,
   position changes, funding, liquidations, deposits and withdrawals;
 - **contract state** with `eth_call` at explicit blocks, batched through
@@ -179,7 +180,7 @@ Details: [methodology](docs/methodology.md) · [architecture](docs/architecture.
 ## Architecture
 
 ```
-  Monad node (ours)                               Plumb (docker compose)
+  Monad node (self-hosted)                        Plumb (docker compose)
   ----------------------------                    ----------------------------------
   monad-execution                                 ingest     events -> ClickHouse
     shared-memory event ring --> Monode sidecar -->  (wake-up on new blocks)
@@ -207,7 +208,7 @@ Details: [methodology](docs/methodology.md) · [architecture](docs/architecture.
 
 | Layer | Used |
 | --- | --- |
-| Chain access | Own Monad mainnet node (monad-rpc, execution event ring), [Monode](https://github.com/monad-developers/monode) sidecar, [viem](https://viem.sh) for ABI decoding |
+| Chain access | Self-hosted Monad mainnet node (monad-rpc, execution event ring), [Monode](https://github.com/monad-developers/monode) sidecar, [viem](https://viem.sh) for ABI decoding |
 | Server | Node.js 22+, no framework |
 | Storage | ClickHouse 26.8 |
 | Dashboard | Plain JavaScript modules, [Apache ECharts](https://echarts.apache.org), [Geist](https://vercel.com/font) font; all served from the app, no CDN |
