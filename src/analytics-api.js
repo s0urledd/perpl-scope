@@ -6,6 +6,7 @@ import * as m from './math.js';
 import { WINDOWS, BUCKETS, DEFAULT_BUCKET } from './query.js';
 import { roundTrips, performance, insights, activityGrid } from './analytics.js';
 import { metrics as computeMetrics } from './state.js';
+import { cohortTable } from './cohorts.js';
 
 const bad = (message, status = 400) => Object.assign(new Error(message), { status });
 const HOUR = 3600, DAY = 86400, YEAR = 365 * DAY; // funding is annualised over 365 days
@@ -546,5 +547,22 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
     });
   }
 
-  return { protocol, series, liquidations, trades, funding, fundingOverview, flows, leaderboard, search, profile, walletAnalytics, walletPeriods, walletTrades, compare, integrity, cache, tradeView, tradeViews, rangeOf };
+  // Open interest by cohort: live positions grouped by account size and by
+  // track record (net PnL over the indexed history), with the largest wallets.
+  async function cohorts() {
+    return cache.get('cohorts', 5000, async () => {
+      const computed = computeMetrics(state);
+      if (!computed || !state.block) throw Object.assign(new Error('SYNCING'), { status: 503 });
+      const c = cd(), scale = 10 ** c, positions = [];
+      for (const { market, metrics: x } of computed.markets) for (const q of x.positions) positions.push({ account: Number(q.accountId), market: market.id, symbol: market.symbol, side: q.side, notional: Number(dec(q.markNotionalCNS, c)), upnl: Number(dec(q.pnlCNS, c)) });
+      const table = await scores('all');
+      const t = cohortTable(positions, id => { const v = table.of.get(id)?.pnl; return v === undefined ? undefined : v / scale; });
+      const groups = [...t.by_size, ...t.by_pnl];
+      const addr = await addresses([...new Set(groups.flatMap(g => g.top.map(a => a.account)))]);
+      for (const g of groups) for (const a of g.top) a.address = addr.get(a.account)?.address ?? null;
+      const { from, to } = rangeOf('all');
+      return { meta: metaOf({ window: 'all', from, to, coverage: coverageOf(from, to) }), block: state.block.number.toString(), ...t };
+    });
+  }
+  return { protocol, series, liquidations, trades, funding, fundingOverview, cohorts, flows, leaderboard, search, profile, walletAnalytics, walletPeriods, walletTrades, compare, integrity, cache, tradeView, tradeViews, rangeOf };
 }

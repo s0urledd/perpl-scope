@@ -293,6 +293,7 @@ export function createApi({ collector, analytics = null, sse = null, statusOf = 
     ['GET', /^\/api\/v1\/health$/, () => ({ ok: true, version, snapshot: snapshot(), collector: { polls: state.stats.polls, errors: state.stats.errors, last_error: errorCode(state.stats.lastError), last_poll_ms: state.stats.lastPollMs, uptime_ms: now() - state.stats.startedAt, rpc_requests: collector.reader.stats.requests }, ...statusOf(), memory: { rss_mb: Math.round(process.memoryUsage().rss / 1048576), heap_mb: Math.round(process.memoryUsage().heapUsed / 1048576) } })],
     // Protocol analytics (ClickHouse index + live contract state).
     ['GET', /^\/api\/v1\/protocol$/, (_, q) => A('protocol')(q)],
+    ['GET', /^\/api\/v1\/cohorts$/, () => A('cohorts')(), risk],
     ['GET', /^\/api\/v1\/protocol\/series$/, (_, q) => A('series')(q)],
     ['GET', /^\/api\/v1\/trades$/, (_, q) => A('trades')(q)],
     ['GET', /^\/api\/v1\/liquidations$/, async (_, q) => { const body = await A('liquidations')(q); return q.get('format') === 'csv' ? { csv: toCsv(body.rows), filename: `plumb-liquidations-${body.meta.block ?? 'unknown'}.csv` } : body; }],
