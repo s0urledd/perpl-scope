@@ -48,7 +48,8 @@ Judging criteria:
   tape, with a size filter.
 - **Risk measured from the contract:**
   - liquidation ladder with bad debt and insurance cover;
-  - order-book cover walked from the on-chain book;
+  - order-book cover and the cost of a market order, walked from the
+    on-chain book;
   - stress test;
   - auto-deleveraging queue.
 - **Integrity checks:**

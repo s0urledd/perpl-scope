@@ -119,6 +119,15 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
     }
     return { block: state.block.number, oi, tvl: state.exchangeInfo.balanceCNS, insurance, protocol: state.exchangeInfo.protocolBalanceCNS, accounts: state.exchangeInfo.numberOfAccounts, positions: longs + shorts, longs, shorts, markets, fundingInterval: state.exchangeInfo.fundingInterval, blockTimeMs: state.stats.blockTimeMs || 400 };
   }
+  // Spread and the mean cost of buying and of selling $10K at market, in bps
+  // from the mid, read from the on-chain book (null when it holds less).
+  function tradeCost(L) {
+    if (!L?.bestBidPNS || !L?.bestAskPNS) return { spread_bps: null, cost_10k_bps: null };
+    const bid = Number(L.bestBidPNS), ask = Number(L.bestAskPNS);
+    const k10 = L.cost?.find(x => x.usd === 10000);
+    const mean = k10?.buy?.filled && k10?.sell?.filled ? (k10.buy.bps + k10.sell.bps) / 2 : null;
+    return { spread_bps: Math.round((ask - bid) / ((ask + bid) / 2) * 1000000) / 100, cost_10k_bps: mean === null ? null : Math.round(mean * 100) / 100 };
+  }
   function fundingOf(market, cur) {
     const perInterval = m.fundingRateFraction(market.fundingRatePct100k);
     const intervalMs = Number(cur.fundingInterval) * cur.blockTimeMs;
@@ -159,7 +168,8 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
             long_positions: lm.x.long.count, short_positions: lm.x.short.count, long_position_share_pct: lm.x.long.count + lm.x.short.count ? Math.round(lm.x.long.count / (lm.x.long.count + lm.x.short.count) * 10000) / 100 : null,
             long_leverage: lm.x.long.averageLeverageBps === null ? null : Number(lm.x.long.averageLeverageBps) / 10000, short_leverage: lm.x.short.averageLeverageBps === null ? null : Number(lm.x.short.averageLeverageBps) / 10000,
             oi_cap_pct: lm.x.oi.utilisationBps === null ? null : Number(lm.x.oi.utilisationBps) / 100, max_leverage: Number(lm.market.initHdths) / 100,
-            funding: fundingOf(lm.market, live), insurance: dec(lm.market.insuranceBalanceCNS, c), active: lm.market.status === 4
+            funding: fundingOf(lm.market, live), insurance: dec(lm.market.insuranceBalanceCNS, c), active: lm.market.status === 4,
+            ...tradeCost(lm.x.liquidity)
           } : {})
         };
       });

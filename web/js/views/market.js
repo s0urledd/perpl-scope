@@ -72,11 +72,24 @@ export function mount(el, { params, query, setQuery }) {
         <div class="stat"><span>Long uPnL</span><span>${pnl(num(L.delta_pnl) + num(L.premium_pnl))}</span></div><div class="stat"><span>Short uPnL</span><span>${pnl(num(S.delta_pnl) + num(S.premium_pnl))}</span></div>
         <div class="stat"><span>Near liquidation</span><span>${int(risk.positions.liquidatable)}</span></div><div class="stat"><span>Insurance fund</span><span>${usd(risk.insurance.balance)}</span></div>
         <div class="stat"><span>Largest position</span><span>${usd(risk.concentration?.largest?.notional)}</span></div><div class="stat"><span>Top 5 share</span><span>${pct(risk.concentration?.top5_pct, { digits: 1 })}</span></div>
-      </div>`;
+      </div>${costTable(risk.liquidity)}`;
     const ladder = risk.ladder ?? [];
     const lnode = $('ladder'); lnode.innerHTML = '';
     if (ladder.length) mirrored(lnode, { labels: ladder.map(x => `${x.shock_pct}%`), long: ladder.map(x => num(x.long.notional)), short: ladder.map(x => num(x.short.notional)) });
     else lnode.innerHTML = empty('No open positions');
+  }
+  // What a market order costs against the on-chain book, from the mid.
+  function costTable(L) {
+    const rows = L?.cost_to_trade ?? [];
+    if (!rows.length) return '';
+    const fmt = v => `${v.toFixed(Math.abs(v) < 1 ? 2 : 1)} bps`;
+    const bps = (v, filled) => (v === null ? `<span class="faint" title="The book read holds ${usd(filled)} on this side">&gt; book</span>` : fmt(v));
+    return `<div class="panel-head" style="min-height:0;padding-top:14px"><h2 style="font-size:12.5px;color:var(--text-2);font-weight:500">Cost of a market order</h2><span class="meta">vs mid · spread ${L.spread_bps === null || L.spread_bps === undefined ? '—' : fmt(L.spread_bps)}</span></div>
+      ${table({ id: 'cost', compact: true, columns: [
+        { key: 's', label: 'Size', render: r => `$${r.usd >= 1000 ? `${r.usd / 1000}K` : r.usd}` },
+        { key: 'b', label: 'Buy', n: true, render: r => bps(r.buy_bps, r.buy_filled_usd) },
+        { key: 'x', label: 'Sell', n: true, render: r => bps(r.sell_bps, r.sell_filled_usd) }
+      ], rows })}`;
   }
   async function loadFunding() {
     const f = await get(`markets/${id}/funding?limit=500`, { maxAge: 30000 });

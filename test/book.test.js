@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createReader } from '../src/exchange.js';
-import { readDepth, depthWithin, absorption, walkedBps } from '../src/book.js';
+import { readDepth, depthWithin, absorption, walkedBps, costToTrade } from '../src/book.js';
 import { marketMetrics, stressAt, adlQueue } from '../src/metrics.js';
 import * as m from '../src/math.js';
 import { createFakeExchange, EXCHANGE } from './helpers/fake-exchange.js';
@@ -61,6 +61,18 @@ test('depth beyond a truncated walk is reported as a lower bound', () => {
   assert.equal(at(1000n).short.complete, true);
   assert.equal(stressAt(x.positions, market, u, -1000n).depthComplete, false);
   assert.equal(stressAt(x.positions, market, u, 1000n).depthComplete, true);
+});
+
+test('market-order cost walks the book from the mid', () => {
+  // Mid 100,000.0; asks 100,100.0 and 100,200.0 with 1 BTC each; one bid.
+  const book = { bids: [{ pricePNS: 999000n, lotLNS: 100000n }], asks: [{ pricePNS: 1001000n, lotLNS: 100000n }, { pricePNS: 1002000n, lotLNS: 100000n }] };
+  assert.deepEqual(costToTrade(book, 'buy', 1000, u), { usd: 1000, filled: true, bps: 10, filledUsd: 1000 });
+  const big = costToTrade(book, 'buy', 150000, u);
+  assert.equal(big.filled, true);
+  assert.ok(Math.abs(big.bps - 13.32) < 0.01, `vwap cost ${big.bps}`);
+  assert.equal(costToTrade(book, 'sell', 50000, u).bps, 10);
+  assert.equal(costToTrade(book, 'buy', 1000000, u).filled, false, 'the book read holds about $200K');
+  assert.equal(costToTrade({ bids: [], asks: book.asks }, 'buy', 1000, u), null, 'no mid without both sides');
 });
 
 test('ADL queue ranks profitable opposing positions by return on deposit', () => {

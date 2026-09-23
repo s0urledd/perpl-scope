@@ -99,9 +99,11 @@ export function createApi({ collector, analytics = null, sse = null, statusOf = 
     const at = bps => L.absorption?.find(r => r.bps === bps);
     // `complete: false` means the walk hit its level cap first: cover is a lower bound.
     const cover = row => row ? { long_pct: pct(row.long.coverageBps), short_pct: pct(row.short.coverageBps), min_pct: pct([row.long.coverageBps, row.short.coverageBps].filter(v => v !== null).sort((a, b) => (a < b ? -1 : 1))[0] ?? null), complete: row.long.complete && row.short.complete } : null;
-    const spread = L.bestBidPNS && L.bestAskPNS && L.bestBidPNS > 0n ? Number((L.bestAskPNS - L.bestBidPNS) * 10000n / L.bestBidPNS) : null;
+    const spread = L.bestBidPNS && L.bestAskPNS && L.bestBidPNS > 0n ? Number((L.bestAskPNS - L.bestBidPNS) * 1000000n / L.bestBidPNS) / 100 : null;
     const view = { book_block: L.block.toString(), age_blocks: state.block ? (state.block.number - L.block).toString() : null, truncated: L.truncated, levels: L.levels, best_bid: dec(L.bestBidPNS, pd), best_ask: dec(L.bestAskPNS, pd), spread_bps: spread, depth: { bids: band(L.depth.bids), asks: band(L.depth.asks) }, cover_at_2pct: cover(at(200n)), cover_at_5pct: cover(at(500n)), cover_at_10pct: cover(at(1000n)) };
     view.range_pct = L.rangeBps === null || L.rangeBps === undefined ? null : pct(L.rangeBps);
+    // Market-order cost against the mid at a few sizes (unfilled: the book read holds less).
+    view.cost_to_trade = (L.cost ?? []).map(c => ({ usd: c.usd, buy_bps: c.buy?.filled ? c.buy.bps : null, sell_bps: c.sell?.filled ? c.sell.bps : null, buy_filled_usd: c.buy?.filledUsd ?? 0, sell_filled_usd: c.sell?.filledUsd ?? 0 }));
     view.walked_pct = { bids: L.walkedBps?.bids === null || L.walkedBps?.bids === undefined ? null : pct(L.walkedBps.bids), asks: L.walkedBps?.asks === null || L.walkedBps?.asks === undefined ? null : pct(L.walkedBps.asks) };
     if (full) view.absorption = L.absorption.map(r => ({ shock_pct: pct(r.bps), beyond_range: Boolean(r.beyondRange), long: { demand: dec(r.long.demandCNS, c), depth: dec(r.long.depthCNS, c), levels: r.long.levels, cover_pct: pct(r.long.coverageBps), complete: r.long.complete }, short: { demand: dec(r.short.demandCNS, c), depth: dec(r.short.depthCNS, c), levels: r.short.levels, cover_pct: pct(r.short.coverageBps), complete: r.short.complete } }));
     return view;

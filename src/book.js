@@ -73,6 +73,29 @@ export function walkedBps(book, side, markPNS) {
   return distance > 0n ? m.floorDiv(distance * 10000n, mark) : 0n;
 }
 
+// Cost of a market order worth `usd` against the resting book: the volume-
+// weighted fill price against the mid, in basis points (half the spread
+// included). Buys lift asks, sells hit bids. `filled` is false when the
+// levels read hold less than the order. A display estimate, so floats.
+export const TRADE_SIZES_USD = [1000, 10000, 100000];
+export function costToTrade(book, side, usd, u) {
+  const bid = book?.bids?.[0], ask = book?.asks?.[0];
+  if (!bid || !ask) return null;
+  const px = p => Number(p) / Number(u.price), sz = l => Number(l) / Number(u.lot);
+  const mid = (px(bid.pricePNS) + px(ask.pricePNS)) / 2;
+  let left = usd, base = 0, quote = 0;
+  for (const level of side === 'buy' ? book.asks : book.bids) {
+    const p = px(level.pricePNS), take = Math.min(sz(level.lotLNS) * p, left);
+    if (take <= 0 || p <= 0) continue;
+    base += take / p; quote += take; left -= take;
+    if (left <= usd * 1e-9) break;
+  }
+  if (!base) return { usd, filled: false, bps: null, filledUsd: 0 };
+  const vwap = quote / base;
+  const bps = (side === 'buy' ? vwap - mid : mid - vwap) / mid * 10000;
+  return { usd, filled: left <= usd * 1e-9, bps: Math.round(bps * 100) / 100, filledUsd: Math.round(quote) };
+}
+
 // Liquidation demand versus resting depth at each shock. Long liquidations
 // sell into bids below the mark; short liquidations buy from asks above it.
 // Depth past a truncated walk is a lower bound (`complete: false`).

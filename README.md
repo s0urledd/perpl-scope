@@ -86,6 +86,8 @@ measured instead of estimated:
 - **bad debt** past bankruptcy and the insurance fund's cover;
 - **order-book cover**: resting depth walked from the contract against the
   liquidation flow that a move would force into it;
+- the **cost of a market order** of $1K, $10K and $100K per market, walked
+  through the on-chain book;
 - an interactive **stress test**;
 - the **auto-deleveraging queue**;
 - health for every position, and concentration and insurance per market.
