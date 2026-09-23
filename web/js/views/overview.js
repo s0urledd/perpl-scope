@@ -27,7 +27,7 @@ export function mount(el, { query, setQuery }) {
     <div class="page-head hero">
       <div class="hero-id">
         <div><h1><img class="hero-logo" src="img/venues/perpl.png" alt="" width="26" height="26">Perpl <span class="hero-muted">Analytics</span></h1>
-          <div class="sub">Live trader and risk analytics for Perpl on Monad, built from every onchain trade and reconciled with the contract.</div>
+          <div class="sub">Live analytics for Perpl on Monad: markets, traders, liquidation risk and alerts, from every onchain trade.</div>
           <div class="hero-proof"><a href="#/" data-action="to-tape">${ICON.bolt} Trades live before their block is final</a><a href="#/status">${ICON.check} Open interest and TVL match the contract</a><a href="#/alerts">${ICON.bell} Liquidation alerts in Telegram</a></div></div>
       </div>
       <div class="hero-actions"><a class="btn primary" href="https://app.perpl.xyz" target="_blank" rel="noopener noreferrer">Trade on Perpl ${ICON.ext}</a><div id="win">${seg('window', WINDOWS, w)}</div></div>
