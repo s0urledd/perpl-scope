@@ -42,7 +42,18 @@ export const logo = (id, symbol, size = 16) => {
 };
 
 // --- components ---------------------------------------------------------------------
-export const mkt = (id, symbol, name = null) => `<span class="mkt">${logo(id, symbol)}${esc(symbol ?? `#${id}`)}${name ? ` <span class="nm">${esc(name)}</span>` : ''}</span>`;
+// `link` makes the cell open the market page (for views that are not the market itself).
+export const mkt = (id, symbol, name = null, { link = false } = {}) => {
+  const inner = `${logo(id, symbol)}${esc(symbol ?? `#${id}`)}${name ? ` <span class="nm">${esc(name)}</span>` : ''}`;
+  return link ? `<a class="mkt" href="#/markets/${esc(id)}">${inner}</a>` : `<span class="mkt">${inner}</span>`;
+};
+export const mktLink = (id, symbol) => mkt(id, symbol, null, { link: true });
+// Funding interval as the chain runs it now (seconds from the API), not a fixed text.
+export function fundingTip(intervalSeconds) {
+  const s = Number(intervalSeconds);
+  const every = s > 0 ? `about every ${s >= 5400 ? `${(s / 3600).toFixed(1)} h` : `${Math.round(s / 60)} min`} at the current block time` : 'a fixed number of blocks';
+  return `Funding is settled once per funding interval (${every}). Shown scaled to 8 hours of clock time; APR over 365 days.`;
+}
 export const sideTag = side => { const s = String(side ?? '').toLowerCase(); return s === 'long' || s === 'short' ? `<span class="side ${s}">${s === 'long' ? 'LONG' : 'SHORT'}</span>` : '<span class="faint">—</span>'; };
 export function addr(address, account, { star = true } = {}) {
   const key = address || String(account ?? '');

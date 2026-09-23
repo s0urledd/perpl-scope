@@ -2,7 +2,7 @@
 // for every market over the chosen window.
 import { get, stream } from '../api.js';
 import { usd, int, price, pct, num, esc } from '../format.js';
-import { seg, table, mkt, ratio, pctCell, fundingCell, skeleton, skChart, empty, assignColors, chartTools } from '../ui.js';
+import { seg, table, mkt, ratio, pctCell, fundingCell, fundingTip, skeleton, skChart, empty, assignColors, chartTools } from '../ui.js';
 import { divergingHeatmap } from '../charts.js';
 
 const WINDOWS = [['24h', '24H'], ['7d', '7D'], ['30d', '30D'], ['all', 'All']];
@@ -26,7 +26,7 @@ export function mount(el, { query, setQuery }) {
     { key: 'trades', label: 'Trades', tip: 'Matches between a maker and a taker, each counted once', n: true, sort: r => r.fills ?? 0, render: r => int(r.fills) },
     { key: 'fees', label: 'Fees', n: true, sort: r => num(r.fees) ?? 0, render: r => usd(r.fees) },
     { key: 'open_interest', label: 'Open interest', n: true, sort: r => num(r.open_interest) ?? 0, render: r => `${usd(r.open_interest)}${r.oi_cap_pct !== null && r.oi_cap_pct !== undefined ? `<div class="sub">${pct(r.oi_cap_pct, { digits: 1 })} of cap</div>` : ''}` },
-    { key: 'funding', label: 'Funding 8h', tip: 'Funding is paid every 8,571 blocks (Perpl: “approximately once per hour” at 0.42 s blocks; about 43 min at today’s block time). Shown scaled to 8 hours of clock time; APR over 365 days.', n: true, sort: r => r.funding?.rate_8h_pct ?? 0, render: r => fundingCell(r.funding) },
+    { key: 'funding', label: 'Funding 8h', get tip() { return fundingTip(data?.markets?.find(m => m.funding?.interval_seconds)?.funding.interval_seconds); }, n: true, sort: r => r.funding?.rate_8h_pct ?? 0, render: r => fundingCell(r.funding) },
     { key: 'cost', label: 'Cost $10K', n: true, tip: 'Average cost of buying and of selling $10K at market against the mid, from the on-chain order book (half the spread included)', sort: r => r.cost_10k_bps ?? 1e9, render: r => (r.cost_10k_bps === null || r.cost_10k_bps === undefined ? '<span class="faint">—</span>' : `${r.cost_10k_bps.toFixed(1)} bps${r.spread_bps !== null && r.spread_bps !== undefined ? `<div class="sub">spread ${r.spread_bps.toFixed(r.spread_bps < 1 ? 2 : 1)}</div>` : ''}`) },
     { key: 'ls', label: 'Long / short positions', sort: r => r.long_position_share_pct ?? 0, render: r => ratio(r.long_positions, r.short_positions) },
     { key: 'lev', label: 'Avg lev. L / S', n: true, render: r => r.long_leverage || r.short_leverage ? `${r.long_leverage ? r.long_leverage.toFixed(1) + 'x' : '—'} / ${r.short_leverage ? r.short_leverage.toFixed(1) + 'x' : '—'}` : '—' },
@@ -59,7 +59,14 @@ export function mount(el, { query, setQuery }) {
     el.querySelector('#f-desc').textContent += ` · scale ±${clamp}% APR`;
     divergingHeatmap(node, { times, rows, bucketSeconds: b, clamp, labels: ['longs pay', 'shorts pay'], fmt: v => `${v > 0 ? '+' : ''}${v.toFixed(1)}% APR` });
   }
-  const off = stream.on('protocol', () => { if (w === '24h') load().catch(() => {}); });
+  // 24h follows every push; longer windows refetch at most every 15 s.
+  let lastLongLoad = 0;
+  const off = stream.on('protocol', () => {
+    if (w === '24h') { load().catch(() => {}); return; }
+    if (Date.now() - lastLongLoad < 15000) return;
+    lastLongLoad = Date.now();
+    get(`protocol?window=${w}`, { maxAge: 0 }).then(() => load()).catch(() => {});
+  });
   load().catch(error => { el.querySelector('#list').innerHTML = `<div class="empty-state">${esc(error.message)}</div>`; });
   loadFunding().catch(() => { el.querySelector('#funding-map').innerHTML = empty('Funding history unavailable'); });
   return {

@@ -5,7 +5,8 @@ import { usd, int, pct, num, esc } from '../format.js';
 import { seg, table, addr, pnl, skeleton, mkt, ICON } from '../ui.js';
 
 const WINDOWS = [['24h', '24H'], ['7d', '7D'], ['30d', '30D'], ['all', 'All']];
-const SORTS = [['pnl', 'Top PnL'], ['loss', 'Top losses'], ['volume', 'Volume'], ['liquidated', 'Liquidated'], ['fees', 'Fees paid']];
+const SORTS = [['pnl', 'Top PnL'], ['loss', 'Top losses'], ['volume', 'Volume'], ['liquidated', 'Liquidated'], ['fees', 'Fees paid'], ['net_flow', 'Net inflow'], ['deposits', 'Deposits'], ['withdrawals', 'Withdrawals']];
+const FLOW_SORTS = new Set(['net_flow', 'deposits', 'withdrawals']);
 
 export function mount(el, { query, setQuery }) {
   let w = WINDOWS.some(([v]) => v === query.get('window')) ? query.get('window') : '7d';
@@ -13,7 +14,7 @@ export function mount(el, { query, setQuery }) {
   let page = 0, alive = true, data = null;
   const LIMIT = 50;
   el.innerHTML = `
-    <div class="page-head"><div><h1>Traders</h1><div class="sub">Accounts that traded in the window, ranked from indexed events (flow rankings include accounts that only deposited or withdrew). Net PnL = realized PnL (price PnL + funding) − fees.</div></div>
+    <div class="page-head"><div><h1>Traders</h1><div class="sub">Accounts that traded in the window, ranked from indexed events (flow rankings: accounts that deposited or withdrew). Net PnL = realized PnL (price PnL + funding) − fees.</div></div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;max-width:100%;min-width:0"><div id="by" style="max-width:100%;min-width:0">${seg('by', SORTS, by)}</div><div id="win">${seg('window', WINDOWS, w)}</div></div></div>
     <section class="panel"><div class="panel-head"><h2 id="title">Leaderboard</h2><div style="display:flex;gap:10px;align-items:center"><span class="meta" id="meta"></span><a class="btn ghost" id="csv">${ICON.download} CSV</a></div></div>
       <div class="panel-body flush" id="list">${skeleton(12)}</div>
@@ -38,6 +39,9 @@ export function mount(el, { query, setQuery }) {
     { key: 'maker', label: 'Maker share', n: true, render: r => pct(r.maker_share_pct, { digits: 0 }) },
     { key: 'fees', label: 'Fees', n: true, render: r => usd(r.fees) },
     { key: 'liq', label: 'Liquidated', n: true, render: r => (num(r.liquidated) > 0 ? `<span class="neg">${usd(r.liquidated)}</span>` : '<span class="faint">—</span>') },
+    { key: 'dep', flow: true, label: 'Deposits', n: true, render: r => (num(r.deposits) > 0 ? usd(r.deposits) : '<span class="faint">—</span>') },
+    { key: 'wd', flow: true, label: 'Withdrawals', n: true, render: r => (num(r.withdrawals) > 0 ? usd(r.withdrawals) : '<span class="faint">—</span>') },
+    { key: 'net', flow: true, label: 'Net flow', n: true, render: r => { const v = (num(r.deposits) ?? 0) - (num(r.withdrawals) ?? 0); return v ? `<span class="${v > 0 ? 'pos' : 'neg'}">${usd(v, { sign: true })}</span>` : '<span class="faint">—</span>'; } },
     { key: 'open', label: 'Open now', n: true, render: r => (r.open_positions ? `${usd(r.open_notional)}<div class="sub">${r.open_positions} pos · uPnL ${usd(r.unrealized_pnl, { sign: true })}</div>` : '<span class="faint">—</span>') },
     { key: 'markets', label: 'Markets', render: r => `<span class="muted">${esc(r.markets.slice(0, 4).join(' · '))}${r.markets.length > 4 ? ` +${r.markets.length - 4}` : ''}</span>` }
   ];
@@ -47,7 +51,9 @@ export function mount(el, { query, setQuery }) {
     if (!alive) return;
     $('title').textContent = SORTS.find(([v]) => v === by)[1];
     $('meta').textContent = `${w === 'all' ? 'All-time' : w}${data.meta.coverage && !data.meta.coverage.complete ? ' · history still indexing' : ''}`;
-    $('list').innerHTML = table({ id: 'lb', columns: COLS, rows: data.rows, rowAttrs: r => `class="link" data-href="#/wallet/${esc(r.address || r.account)}"`, emptyText: 'No traders in this window' });
+    // Flow rankings swap the fee and liquidation columns for the flows themselves.
+    const flow = FLOW_SORTS.has(by), columns = COLS.filter(c => (flow ? !['fees', 'liq', 'maker'].includes(c.key) : !c.flow));
+    $('list').innerHTML = table({ id: 'lb', columns, rows: data.rows, rowAttrs: r => `class="link" data-href="#/wallet/${esc(r.address || r.account)}"`, emptyText: 'No traders in this window' });
     $('count').textContent = `${int(data.total)} accounts · showing ${page * LIMIT + 1}–${page * LIMIT + data.rows.length}`;
     $('csv').href = `/api/v1/leaderboard?window=${w}&by=${by}&limit=200&format=csv`;
   }

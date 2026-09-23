@@ -14,7 +14,13 @@ when stale) and the age of both the last poll (`age_ms`) and the block
 (`block_age_ms`).
 
 Errors: `{ "error": "CODE" }` with 400 (bad parameter), 404 (unknown market,
-account or route) or 503 (`SYNCING` before the first contract snapshot).
+account or route), 429 (`RATE_LIMITED`, with `retry-after`) or 503 (`SYNCING`
+before the first contract snapshot).
+
+Rate limit: each client IP has a token bucket (default 600 requests a minute,
+bursts of 120). A plain read costs 1, first-load wallet analytics 3, CSV
+exports and `/compare` 10; `/health` is free. Behind a reverse proxy on the
+same host the client is the last `X-Forwarded-For` entry.
 
 ## Protocol
 
@@ -26,7 +32,7 @@ account or route) or 503 (`SYNCING` before the first contract snapshot).
 | `/api/v1/liquidations` | `limit` ≤ 500, `market`, `format=csv` | Latest liquidations and deleverages, and `last_24h` totals |
 | `/api/v1/funding` | `window` (default `7d`) | Per market: current rate per interval, 8 h and APR equivalents, interval length, positions and open interest; `series` of funding rates over the window |
 | `/api/v1/flows` | `window` | Top ten depositors and withdrawers in the window and the 30 latest transfers. Window totals are in `/protocol` (`deposits`, `withdrawals`, `net_flow`) |
-| `/api/v1/leaderboard` | `window`, `by` = `pnl`, `loss`, `volume`, `realized`, `fees`, `trades`, `liquidated`, `deposits`, `withdrawals`, `net_flow`; `market`, `limit` ≤ 200, `offset`, `format=csv` | Accounts that traded in the window (for `deposits`, `withdrawals`, `net_flow`: accounts with a deposit or withdrawal), ranked; ties share a rank. Net PnL (realized − fees), realized, fees, volume, maker share, trades, PnL per volume, liquidations, flows, markets traded, open positions and unrealized PnL now; `total` accounts |
+| `/api/v1/leaderboard` | `window`, `by` = `pnl`, `loss`, `volume`, `realized`, `fees`, `trades`, `liquidated`, `deposits`, `withdrawals`, `net_flow`; `market`, `limit` ≤ 200, `offset`, `format=csv` | Accounts that traded in the window (for `deposits`, `withdrawals`: accounts with that flow; `net_flow`: with either), ranked; ties share a rank. Net PnL (realized − fees), realized, fees, volume, maker share, trades, PnL per volume, liquidations, flows, markets traded, open positions and unrealized PnL now; `total` accounts |
 | `/api/v1/search` | `q`: address, address prefix or account ID | Up to eight matching accounts |
 
 ## Wallets
@@ -65,6 +71,7 @@ account or route) or 503 (`SYNCING` before the first contract snapshot).
 | `/api/v1/validation` | | Reconciliation, independent verification, PnL agreement and the integrity check |
 | `/api/v1/events` | | Recent parameter changes and unwinds |
 | `/api/v1/reference` | | Perpl public API figures next to the contract's (only with `REFERENCE_ENABLED=1`) |
+| `/api/v1/landscape` | | Market-share context: open interest of perp venues (category Derivatives; front-ends and prediction markets excluded) from DefiLlama's public overview, Perpl's rank and share overall and on Monad (cached 10 min; external data, never used for Plumb's own metrics; off with `LANDSCAPE_ENABLED=0`) |
 
 ## Examples
 

@@ -3,12 +3,15 @@
 // latest liquidations and flows.
 import { get, stream } from '../api.js';
 import { usd, compact, int, price, pct, num, esc, timeOnly, ago, duration } from '../format.js';
-import { kpi, seg, table, mkt, sideTag, addr, ratio, pctCell, fundingCell, tradeAction, chartTools, skeleton, skChart, empty, assignColors, colorOf, hasColor, OTHER_HEX, SLOT_HEX } from '../ui.js';
+import { kpi, seg, table, mkt, sideTag, addr, ratio, pctCell, fundingCell, fundingTip, tradeAction, chartTools, skeleton, skChart, empty, assignColors, colorOf, hasColor, OTHER_HEX, SLOT_HEX } from '../ui.js';
 import { sparkline, stackedBars, lineChart, signedBars, toggleSeries, COLORS } from '../charts.js';
 
 const WINDOWS = [['24h', '24H'], ['7d', '7D'], ['30d', '30D'], ['all', 'All']];
 const MIN_SIZES = [['0', 'All'], ['100', '≥$100'], ['1000', '≥$1K'], ['10000', '≥$10K']];
 const VOL_MODES = [['bars', 'Per period'], ['cum', 'Cumulative']];
+const FLOW_VIEWS = [['recent', 'Latest'], ['in', 'Top in'], ['out', 'Top out']];
+// Windows other than 24h have no push of their own: refetch at most this often while blocks arrive.
+const LONG_WINDOW_REFRESH_MS = 15000;
 const segSm = (name, options, active) => seg(name, options, active).replace('class="seg"', 'class="seg sm"');
 
 export function mount(el, { query, setQuery }) {
@@ -16,7 +19,7 @@ export function mount(el, { query, setQuery }) {
   let volMode = 'bars';
   let sort = { key: 'volume', dir: 'desc' };
   let minSize = localStorage.getItem('ps.minsize') ?? '100';
-  let data = null, series = null, alive = true;
+  let data = null, series = null, alive = true, flows = null, flowView = 'recent', lastLongLoad = 0;
   const tape = [], off = [];
   const panel = (id, title, desc) => `<section class="panel"><div class="panel-head"><div><h2>${title}</h2><div class="desc">${desc}</div></div><div class="head-right">${chartTools(id, id)}<div class="head-value" id="${id}-v"></div></div></div><div class="panel-body"><div class="chart sm" id="${id}">${skChart()}</div></div></section>`;
 
@@ -55,8 +58,13 @@ export function mount(el, { query, setQuery }) {
       <div class="section-label">Activity</div>
       <div class="grid g-3">
         <section class="panel"><div class="panel-head"><h2>Latest liquidations</h2><a class="meta" href="#/liquidations">View all →</a></div><div class="panel-body flush" id="liqs">${skeleton(5)}</div></section>
-        <section class="panel"><div class="panel-head"><h2>Deposits and withdrawals</h2><span class="meta">Latest</span></div><div class="panel-body flush" id="flowlist">${skeleton(5)}</div></section>
+        <section class="panel"><div class="panel-head"><h2>Deposits and withdrawals</h2><div id="flowview">${segSm('flowv', FLOW_VIEWS, flowView)}</div></div><div class="panel-body flush" id="flowlist">${skeleton(5)}</div></section>
         <section class="panel"><div class="panel-head"><h2>Across windows</h2><span class="meta">Exchange totals</span></div><div class="panel-body flush" id="windows">${skeleton(5)}</div></section>
+      </div>
+      <div class="section-label">Market share</div>
+      <div class="grid g-2" id="landscape-grid">
+        <section class="panel"><div class="panel-head"><div><h2>Among all perps</h2><div class="desc">Open interest by venue</div></div><span class="meta" id="ls-meta"></span></div><div class="panel-body flush" id="ls-all">${skeleton(6)}</div></section>
+        <section class="panel"><div class="panel-head"><div><h2>Perps on Monad</h2><div class="desc">Open interest by venue</div></div><span class="meta" id="ls-chain-meta"></span></div><div class="panel-body flush" id="ls-chain">${skeleton(4)}</div></section>
       </div>
     </div>`;
   const $ = id => el.querySelector(`#${id}`);
@@ -159,7 +167,7 @@ export function mount(el, { query, setQuery }) {
     { key: 'volume', label: 'Volume', n: true, cls: 'cell-bar', sort: r => num(r.volume), render: r => `${usd(r.volume)}<span class="track"><i style="width:${Math.max(2, Math.min(100, r.share_pct ?? 0))}%"></i></span>` },
     { key: 'share_pct', label: 'Share', n: true, sort: r => r.share_pct ?? 0, render: r => `<span class="muted">${pct(r.share_pct, { digits: 1 })}</span>` },
     { key: 'open_interest', label: 'Open interest', n: true, sort: r => num(r.open_interest) ?? 0, render: r => usd(r.open_interest) },
-    { key: 'funding', label: 'Funding 8h', tip: 'Funding is paid every 8,571 blocks (Perpl: “approximately once per hour” at 0.42 s blocks; about 43 min at today’s block time). Shown scaled to 8 hours of clock time; APR over 365 days.', n: true, sort: r => r.funding?.rate_8h_pct ?? 0, render: r => fundingCell(r.funding) },
+    { key: 'funding', label: 'Funding 8h', tip: fundingTip(data?.markets?.find(m => m.funding?.interval_seconds)?.funding.interval_seconds), n: true, sort: r => r.funding?.rate_8h_pct ?? 0, render: r => fundingCell(r.funding) },
     { key: 'ls', label: 'Long / short positions', sort: r => r.long_position_share_pct ?? 0, render: r => ratio(r.long_positions, r.short_positions) },
     { key: 'taker_buy_share_pct', label: 'Taker buys', n: true, sort: r => r.taker_buy_share_pct ?? 0, render: r => (r.taker_buy_share_pct === null || r.taker_buy_share_pct === undefined ? '—' : pct(r.taker_buy_share_pct, { digits: 1 })) },
     { key: 'traders', label: 'Traders', n: true, sort: r => r.traders ?? 0, render: r => int(r.traders) },
@@ -193,14 +201,27 @@ export function mount(el, { query, setQuery }) {
       { key: 't', label: 'When', n: true, render: r => `<span class="muted">${ago(r.ts)}</span>` }
     ], rows: l.rows.slice(0, 7), rowAttrs: r => `class="link" data-href="#/wallet/${esc(r.address || r.account)}"` }) : empty('No liquidations yet');
   }
-  function renderFlows(f) {
-    const rows = (f.recent ?? []).slice(0, 7);
+  // Latest movements, or the window's largest depositors / withdrawers with their net.
+  function renderFlows(f = flows) {
+    if (!f) return;
+    flows = f;
+    const link = r => `class="link" data-href="#/wallet/${esc(r.address || r.account)}"`;
+    if (flowView === 'recent') {
+      const rows = (f.recent ?? []).slice(0, 7);
+      $('flowlist').innerHTML = rows.length ? table({ id: 'flowlist', compact: true, columns: [
+        { key: 'k', label: 'Type', render: r => `<span class="${r.kind === 'deposit' ? 'pos' : 'neg'}">${r.kind === 'deposit' ? 'Deposit' : 'Withdrawal'}</span>` },
+        { key: 'a', label: 'Wallet', render: r => addr(r.address, r.account, { star: false }) },
+        { key: 'v', label: 'Amount', n: true, render: r => usd(r.amount) },
+        { key: 't', label: 'When', n: true, render: r => `<span class="muted">${ago(r.ts)}</span>` }
+      ], rows, rowAttrs: link }) : empty('No recent deposits or withdrawals');
+      return;
+    }
+    const inbound = flowView === 'in', rows = ((inbound ? f.top_depositors : f.top_withdrawers) ?? []).slice(0, 7);
     $('flowlist').innerHTML = rows.length ? table({ id: 'flowlist', compact: true, columns: [
-      { key: 'k', label: 'Type', render: r => `<span class="${r.kind === 'deposit' ? 'pos' : 'neg'}">${r.kind === 'deposit' ? 'Deposit' : 'Withdrawal'}</span>` },
       { key: 'a', label: 'Wallet', render: r => addr(r.address, r.account, { star: false }) },
-      { key: 'v', label: 'Amount', n: true, render: r => usd(r.amount) },
-      { key: 't', label: 'When', n: true, render: r => `<span class="muted">${ago(r.ts)}</span>` }
-    ], rows }) : empty('No recent deposits or withdrawals');
+      { key: 'v', label: inbound ? 'Deposited' : 'Withdrew', n: true, render: r => usd(inbound ? r.deposits : r.withdrawals) },
+      { key: 'n', label: 'Net', n: true, render: r => `<span class="${num(r.net) >= 0 ? 'pos' : 'neg'}">${usd(r.net, { sign: true })}</span>` }
+    ], rows, rowAttrs: link }) : empty(`No ${inbound ? 'deposits' : 'withdrawals'} in this window`);
   }
   function renderWindows() {
     const ws = data.windows;
@@ -211,6 +232,31 @@ export function mount(el, { query, setQuery }) {
       { key: 'fees', label: 'Fees', n: true, render: r => usd(r.fees) },
       { key: 'traders', label: 'Traders', n: true, render: r => int(r.traders) }
     ], rows, rowAttrs: r => `class="link" data-href="#/?window=${r.k}"` });
+  }
+
+  // Market-share context from DefiLlama's open-interest overview (external, labelled as such).
+  async function loadLandscape() {
+    let l;
+    try { l = await get('landscape', { maxAge: 300000 }); } catch { $('landscape-grid').previousElementSibling.remove(); $('landscape-grid').remove(); return; }
+    if (!alive) return;
+    const src = `<a href="${esc(l.source.url)}" target="_blank" rel="noopener noreferrer">${esc(l.source.name)}</a>, ${ago(Math.round(l.fetched_at / 1000))}`;
+    const bar = (v, share) => `${usd(v)}<span class="track"><i style="width:${Math.max(2, Math.min(100, share ?? 0))}%"></i></span>`;
+    const name = r => (r.self || r.name === 'Perpl' ? `<b>${esc(r.name)}</b> <span class="tag accent">this</span>` : esc(r.name));
+    const top = [...l.top];
+    if (l.perpl && l.perpl.rank > top.length) top.push({ rank: l.perpl.rank, name: 'Perpl', oi: l.perpl.oi, share_pct: l.perpl.share_pct });
+    $('ls-meta').innerHTML = l.perpl ? `Perpl #${int(l.perpl.rank)} of ${int(l.venues)} · ${pct(l.perpl.share_pct, { digits: 2 })} · ${src}` : src;
+    $('ls-all').innerHTML = table({ id: 'ls-all', compact: true, columns: [
+      { key: 'r', label: '#', render: r => `<span class="rank">${r.rank}</span>` },
+      { key: 'n', label: 'Venue', render: name },
+      { key: 'o', label: 'Open interest', n: true, cls: 'cell-bar', render: r => bar(r.oi, r.share_pct / (l.top[0]?.share_pct || 1) * 100) },
+      { key: 's', label: 'Share', n: true, render: r => `<span class="muted">${pct(r.share_pct, { digits: 2 })}</span>` }
+    ], rows: top, rowAttrs: r => (r.name === 'Perpl' ? 'class="hl"' : '') });
+    $('ls-chain-meta').innerHTML = l.perpl?.share_of_chain_pct !== null && l.perpl ? `Perpl ${pct(l.perpl.share_of_chain_pct, { digits: 1 })} of ${esc(l.chain.name)} · ${src}` : src;
+    $('ls-chain').innerHTML = table({ id: 'ls-chain', compact: true, emptyText: 'No venues listed', columns: [
+      { key: 'n', label: 'Venue', render: name },
+      { key: 'o', label: 'Open interest', n: true, cls: 'cell-bar', render: r => bar(r.oi, r.share_pct) },
+      { key: 's', label: 'Share', n: true, render: r => `<span class="muted">${pct(r.share_pct, { digits: 1 })}</span>` }
+    ], rows: l.chain.venues, rowAttrs: r => (r.self ? 'class="hl"' : '') });
   }
 
   // Live: finalized trades stream in; proposed ones appear first, dimmed.
@@ -230,16 +276,25 @@ export function mount(el, { query, setQuery }) {
   }));
   get('health', { maxAge: 30000 }).then(h => { backfill = h.index?.backfill ?? null; }).catch(() => {});
   off.push(stream.on('liquidations', () => get('liquidations?limit=8', { maxAge: 0 }).then(l => alive && renderLiqs(l)).catch(() => {})));
+  // Longer windows: the push carries 24h figures only, so it just triggers a throttled refetch.
+  off.push(stream.on('protocol', () => {
+    if (w === '24h' || !data || !alive || Date.now() - lastLongLoad < LONG_WINDOW_REFRESH_MS) return;
+    lastLongLoad = Date.now();
+    get(`protocol?window=${w}`, { maxAge: 0 }).then(p => { if (!alive || w === '24h') return; data = p; renderKpis(); renderMarkets(); renderWindows(); }).catch(() => {});
+    get(`flows?window=${w}`, { maxAge: 0 }).then(f => alive && renderFlows(f)).catch(() => {});
+  }));
   off.push(stream.on('protocol', p => { if (w !== '24h' || !data || !alive) return; data = { ...data, headline: p.headline, current: p.current, markets: data.markets.map(m => { const u = p.markets.find(x => x.id === m.id); return u ? { ...m, mark: u.mark ?? m.mark, volume: u.volume, change_pct: u.change_pct, open_interest: u.open_interest ?? m.open_interest, funding: u.funding ?? m.funding } : m; }) }; renderKpis(); renderMarkets(); }));
   const timer = setInterval(() => { get(`protocol/series?window=${w}`, { maxAge: 0 }).then(s => { if (!alive) return; series = s; renderVolume(); renderTrends(); if (w !== '24h') load().catch(() => {}); }).catch(() => {}); }, 60000);
 
   load().catch(error => { $('kpis').innerHTML = `<div class="empty-state">Could not load protocol data (${esc(error.message)})</div>`; });
   loadFeeds().catch(() => {});
+  loadLandscape();
 
   return {
     onSeg(name, v) {
       if (name === 'window') setQuery({ window: v === '24h' ? null : v });
       if (name === 'min') { minSize = v; try { localStorage.setItem('ps.minsize', v); } catch { /* storage unavailable */ } $('minsize').innerHTML = segSm('min', MIN_SIZES, minSize); renderTape(); }
+      if (name === 'flowv') { flowView = v; $('flowview').innerHTML = segSm('flowv', FLOW_VIEWS, flowView); renderFlows(); }
       if (name === 'vol') { volMode = v; $('vol-mode').innerHTML = segSm('vol', VOL_MODES, volMode); renderVolume(); }
     },
     onAction(a, t) { if (a === 'toggle') { t.classList.toggle('off'); toggleSeries($('main-chart'), t.dataset.name); } },

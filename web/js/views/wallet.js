@@ -1,9 +1,9 @@
 // Wallet profile: portfolio and open positions (live contract state), PnL
 // history, trader analytics (win rate, profit factor, drawdown, streaks,
 // hold time, best/worst markets), behaviour notes, trades, round trips, flows.
-import { get } from '../api.js';
+import { get, stream } from '../api.js';
 import { usd, usdFull, int, price, pct, num, esc, size, duration, date, dateTime, ago, short } from '../format.js';
-import { kpi, tabs, table, mkt, sideTag, pnl, pctCell, skeleton, skChart, empty, watch, ICON, EXPLORER, toast, chartTools } from '../ui.js';
+import { kpi, tabs, table, mktLink, sideTag, pnl, pctCell, skeleton, skChart, empty, watch, ICON, EXPLORER, toast, chartTools } from '../ui.js';
 import { lineChart, signedBars, COLORS } from '../charts.js';
 
 const TABS = [['overview', 'Overview'], ['positions', 'Positions'], ['trades', 'Trade history'], ['trips', 'Round trips'], ['flows', 'Deposits & withdrawals']];
@@ -43,7 +43,7 @@ export function mount(el, { params, query, setQuery, navigate }) {
     ].join('')}</div>`;
   }
   const POS_COLS = [
-    { key: 'm', label: 'Market', render: r => mkt(r.market, r.symbol) },
+    { key: 'm', label: 'Market', render: r => mktLink(r.market, r.symbol) },
     { key: 's', label: 'Side', render: r => sideTag(r.side) },
     { key: 'size', label: 'Size', n: true, render: r => size(r.size) },
     { key: 'notional', label: 'Notional', n: true, render: r => usd(r.notional) },
@@ -57,7 +57,7 @@ export function mount(el, { params, query, setQuery, navigate }) {
   ];
   const TRADE_COLS = [
     { key: 'ts', label: 'Time (UTC)', render: r => `<span class="muted num">${dateTime(r.ts)}</span>` },
-    { key: 'm', label: 'Market', render: r => mkt(r.market, r.symbol) },
+    { key: 'm', label: 'Market', render: r => mktLink(r.market, r.symbol) },
     { key: 'k', label: 'Action', render: r => `${esc(KIND[r.kind] ?? r.kind)} ${sideTag(r.side)}` },
     { key: 'role', label: 'Role', render: r => `<span class="muted">${esc(r.role === 'none' ? '—' : r.role)}</span>` },
     { key: 'p', label: 'Price', n: true, render: r => price(r.price) },
@@ -114,7 +114,7 @@ export function mount(el, { params, query, setQuery, navigate }) {
           <section class="panel"><div class="panel-head"><h2>Behaviour</h2><span class="meta">Rule-based, from this wallet's trades</span></div>
             <div id="insights">${an ? insightsHtml() : perfSkeleton()}</div></section>
           <section class="panel"><div class="panel-head"><h2>By market</h2><span class="meta">All-time</span></div><div class="panel-body flush">${table({ id: 'mk', compact: true, columns: [
-            { key: 'm', label: 'Market', render: r => mkt(r.market, r.symbol) },
+            { key: 'm', label: 'Market', render: r => mktLink(r.market, r.symbol) },
             { key: 'v', label: 'Volume', n: true, render: r => usd(r.volume) },
             { key: 'p', label: 'Net PnL', n: true, render: r => pnl(r.net_pnl) },
             { key: 'w', label: 'Win rate', n: true, render: r => (r.win_rate_pct === null ? '—' : pct(r.win_rate_pct, { digits: 0 })) },
@@ -135,7 +135,7 @@ export function mount(el, { params, query, setQuery, navigate }) {
     } else if (tab === 'trips') {
       if (!an) { body.innerHTML = perfSkeleton(); return; }
       body.innerHTML = table({ id: 'trips', columns: [
-        { key: 'm', label: 'Market', render: r => mkt(r.market, r.symbol) },
+        { key: 'm', label: 'Market', render: r => mktLink(r.market, r.symbol) },
         { key: 's', label: 'Side', render: r => sideTag(r.side) },
         { key: 'o', label: 'Opened', render: r => `<span class="muted num">${r.open_ts ? dateTime(r.open_ts) : `before ${dateTime(r.first_ts)}`}</span>` },
         { key: 'h', label: 'Held', n: true, render: r => duration(r.hold_seconds) },
@@ -210,7 +210,13 @@ export function mount(el, { params, query, setQuery, navigate }) {
   get(`wallets/${encodeURIComponent(key)}`, { maxAge: 3000 }).then(d => { if (!alive) return; data = d; render(); loadAnalytics(); loadPeriods(); }).catch(error => {
     el.innerHTML = `<div class="page-head"><div><div class="sub"><a href="#/traders">Traders</a> / Wallet</div><h1 class="mono">${esc(short(key))}</h1></div></div><section class="panel">${empty(error.status === 404 ? 'No Perpl account for this address (checked in the index and on the contract).' : `Could not load wallet (${error.message})`)}</section>`;
   });
-  const timer = setInterval(() => { if (!data || tab === 'trades') return; get(`wallets/${encodeURIComponent(key)}`, { maxAge: 0 }).then(d => { if (!alive) return; data = d; const scroll = window.scrollY; render(); window.scrollTo({ top: scroll }); loadAnalytics(); loadPeriods(); }).catch(() => {}); }, 20000);
+  function refresh() { if (!data || tab === 'trades') return; get(`wallets/${encodeURIComponent(key)}`, { maxAge: 0 }).then(d => { if (!alive) return; data = d; const scroll = window.scrollY; render(); window.scrollTo({ top: scroll }); loadAnalytics(); loadPeriods(); }).catch(() => {}); }
+  // Marks move uPnL continuously: poll. A trade or liquidation of this account refreshes at once.
+  const timer = setInterval(refresh, 20000);
+  let pending = null;
+  const mine = rows => data && rows.some(r => String(r.account) === String(data.account.id));
+  const soon = () => { if (!pending) pending = setTimeout(() => { pending = null; refresh(); }, 1200); };
+  const off = [stream.on('trades', rows => { if (mine(rows)) soon(); }), stream.on('liquidations', rows => { if (mine(rows)) soon(); })];
   return {
     onTab(name, v) { if (name !== 'tab') return; tab = v; el.querySelectorAll('[data-tab="tab"]').forEach(b => b.classList.toggle('on', b.dataset.v === v)); setQuery({ tab: v === 'overview' ? null : v }); },
     onAction(a) {
@@ -220,6 +226,6 @@ export function mount(el, { params, query, setQuery, navigate }) {
       if (a === 'compare' && data) { let list = []; try { list = JSON.parse(sessionStorage.getItem('ps.compare') || '[]'); } catch { list = []; } if (!list.includes(data.account.address)) list.push(data.account.address); list = list.slice(-5); try { sessionStorage.setItem('ps.compare', JSON.stringify(list)); } catch { /* storage unavailable */ } navigate('/compare', { w: list.join(',') }); }
     },
     update(q) { const t = TABS.some(([v]) => v === q.get('tab')) ? q.get('tab') : 'overview'; if (t !== tab) tab = t; if (data) renderTab(); },
-    destroy() { alive = false; clearInterval(timer); }
+    destroy() { alive = false; clearInterval(timer); clearTimeout(pending); off.forEach(f => f()); }
   };
 }
