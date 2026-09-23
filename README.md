@@ -165,6 +165,8 @@ Risk Tool" bounty. Checklist and demo notes:
 - Market-share data from [DefiLlama](https://defillama.com/open-interest).
 - Market and venue logos belong to their owners
   ([sources](web/img/markets/README.md)).
+- Cohort icons (whale, dolphin, fish, shrimp) by Delapouite from
+  [game-icons.net](https://game-icons.net), CC BY 3.0.
 - Built with help from Claude Code as a coding assistant for parts of the
   code, tests and docs. Design, infrastructure, data validation and review
   are the team's.
