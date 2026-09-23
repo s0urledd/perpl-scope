@@ -3,7 +3,7 @@
 // latest liquidations and flows.
 import { get, stream } from '../api.js';
 import { usd, compact, int, price, pct, num, esc, timeOnly, ago, duration } from '../format.js';
-import { kpi, seg, table, mkt, sideTag, addr, ratio, pctCell, fundingCell, fundingTip, tradeAction, chartTools, skeleton, skChart, empty, assignColors, colorOf, hasColor, logo, OTHER_HEX, SLOT_HEX } from '../ui.js';
+import { kpi, seg, table, mkt, sideTag, addr, ratio, pctCell, fundingCell, fundingTip, tradeAction, chartTools, skeleton, skChart, empty, assignColors, colorOf, hasColor, logo, ICON, OTHER_HEX, SLOT_HEX } from '../ui.js';
 import { sparkline, stackedBars, lineChart, signedBars, twoSided, toggleSeries, COLORS } from '../charts.js';
 
 const WINDOWS = [['24h', '24H'], ['7d', '7D'], ['30d', '30D'], ['all', 'All']];
@@ -24,9 +24,13 @@ export function mount(el, { query, setQuery }) {
   const panel = (id, title, desc) => `<section class="panel"><div class="panel-head"><div><h2>${title}</h2><div class="desc">${desc}</div></div><div class="head-right">${chartTools(id, id)}<div class="head-value" id="${id}-v"></div></div></div><div class="panel-body"><div class="chart sm" id="${id}">${skChart()}</div></div></section>`;
 
   el.innerHTML = `
-    <div class="page-head">
-      <div><h1>Perpl protocol</h1><div class="sub">Volume, open interest, fees and flows from finalized Monad blocks, updated about once a second.</div></div>
-      <div id="win">${seg('window', WINDOWS, w)}</div>
+    <div class="page-head hero">
+      <div class="hero-id">
+        <img class="hero-logo" src="img/venues/perpl.png" alt="" width="44" height="44">
+        <div><h1>Perpl <span class="hero-muted">Analytics</span></h1>
+          <div class="sub" id="hero-facts">Perpetuals exchange on Monad</div></div>
+      </div>
+      <div class="hero-actions"><a class="btn ghost" href="https://app.perpl.xyz" target="_blank" rel="noopener noreferrer">Trade on Perpl ${ICON.ext}</a><div id="win">${seg('window', WINDOWS, w)}</div></div>
     </div>
     <div class="stack">
       <div class="kpis" id="kpis">${Array.from({ length: 6 }, () => '<div class="kpi"><div class="skeleton sk-line" style="width:40%"></div><div class="skeleton" style="height:26px;width:70%;margin-top:10px"></div><div class="skeleton" style="height:28px;margin-top:10px"></div></div>').join('')}</div>
@@ -194,6 +198,8 @@ export function mount(el, { query, setQuery }) {
     const rows = data.markets.filter(m => num(m.volume) > 0 || num(m.open_interest) > 0);
     $('markets').innerHTML = table({ id: 'markets', columns: marketCols(), rows, sortKey: sort.key, sortDir: sort.dir, rowAttrs: r => `class="link" data-href="#/markets/${r.id}"` });
     $('markets-meta').textContent = `${rows.length} active markets · ${w === 'all' ? 'all-time' : w} activity, live prices and positions`;
+    const open = data.markets.filter(m => m.active !== false).length;
+    $('hero-facts').textContent = `Perpetuals exchange on Monad · ${open} live markets${data.current ? ` · ${int(data.current.positions)} open positions` : ''}`;
   }
 
   function renderTape() {
