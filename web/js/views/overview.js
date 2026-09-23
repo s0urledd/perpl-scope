@@ -56,7 +56,7 @@ export function mount(el, { query, setQuery }) {
         ${panel('tvl', 'TVL', 'Collateral in the exchange contract')}
         ${panel('flows', 'Deposits and withdrawals', 'Deposits up, withdrawals down; line: net per period')}
         ${panel('traders', 'Active traders', 'Distinct accounts trading per period')}
-        ${panel('fees', 'Fees', 'Gross fees on fills, by type (protocol revenue, insurance fund) or by market', `<div id="fees-mode">${segSm('feesv', FEE_VIEWS, feeView)}</div>`)}
+        ${panel('fees', 'Fees', 'Gross fees on fills', `<div id="fees-mode">${segSm('feesv', FEE_VIEWS, feeView)}</div>`)}
         ${panel('liq', 'Liquidations', 'Liquidated notional by market')}
         ${panel('tpnl', 'Trader PnL', 'Realized PnL of all traders per period (price PnL + funding, before fees)')}
         ${panel('taker', 'Taker flow', 'Aggressive buys up, sells down; line: net per period')}
