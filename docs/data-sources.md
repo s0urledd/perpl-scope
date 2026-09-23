@@ -51,7 +51,7 @@
 
 | Endpoint | `eth_getLogs` range | History | `blockTimestamp` on logs | Use |
 | --- | --- | --- | --- | --- |
-| Own node (Huginn, `monad-rpc`) | 1000 blocks | a few days of logs and state (`LIVE_HISTORY_BLOCKS` defaults to 600,000 blocks, about 2 days at 0.30 s) | yes | Live ingest, recent backfill, contract state |
+| Monad RPC (Huginn, `monad-rpc`) | 1000 blocks | a few days of logs and state (`LIVE_HISTORY_BLOCKS` defaults to 600,000 blocks, about 2 days at 0.30 s) | yes | Live ingest, recent backfill, contract state |
 | https://rpc1.monad.xyz, https://rpc2.monad.xyz | 1000 blocks | archive, from genesis | yes | One-time backfill of older ranges |
 | https://rpc.monad.xyz | 100 blocks | recent | not checked | Not used (probed only) |
 | https://rpc-mainnet.monadinfra.com | 100 blocks | recent | not checked | Not used |
