@@ -1,102 +1,186 @@
 # Runbook
 
-## Run
+PerplScope is meant to run on the host of a Monad node: logs and state come
+from that node, and the execution-events sidecar needs the node's shared
+memory. It also runs against any remote RPC. In that case, wake-ups fall back
+to WebSocket heads or polling.
 
-```bash
-npm ci
-cp .env.example .env   # MONAD_RPC_URL=https://…
-npm start              # http://localhost:8787
-```
+## Requirements
 
-Logs are JSON lines on stdout and never contain the RPC URL. `GET /api/v1/health`
-is the liveness probe; `snapshot.status` must be `fresh` for the numbers to be
-current. Stop with SIGINT or SIGTERM; a final checkpoint is written.
-
-## RPC requirements
-
-- HTTPS JSON-RPC with `eth_call` at explicit blocks, `eth_getLogs` and
-  `eth_getBlockByNumber` (`latest`, `finalized`).
-- Multicall3 at `0xca11bde05977b3631167028862be2a173976ca11` (present on Monad).
-- Log range: public `rpc.monad.xyz` and `rpc-mainnet.monadinfra.com` allow
-  100 blocks; `rpc1.monad.xyz` allowed 2000. Set `LOG_RANGE` accordingly.
-- State retention: public providers prune older state; bootstrap and polling
-  only read the head, so they are unaffected. Historical validation scripts
-  need an archive-capable endpoint for older blocks.
-- Request budget at steady state: about 6–8 requests per 2 s poll plus one
-  position read per touched position; bootstrap about 20 requests; the hourly
-  verification about 150 requests.
-
-## Checkpoints
-
-`CHECKPOINT_PATH` (default `data/checkpoint.json`) is written atomically
-(temp file + rename) at most every `CHECKPOINT_MS`. On start the checkpoint is
-accepted only if its block hash is still canonical and the head is within
-`MAX_RESUME_GAP` blocks; otherwise a fresh bootstrap runs. Deleting the file
-is always safe.
-
-## Reading the state
-
-- `stale (rpc-errors)`: the provider is failing; the last good snapshot is
-  still served with its block and age.
-- `stale (oi-mismatch)` followed by `fresh`: the collector detected a missed
-  update and rebuilt from the contract. Persistent mismatches point at an
-  event not in the watched allowlist; `GET /api/v1/validation` shows the
-  mismatching markets.
-- `verification.ok = false`: the account-bitmap rescan disagreed with the paged
-  getter; the collector rebuilds and the result stays visible on the
-  validation page.
-
-## Diagnostics
-
-- `npm run validate`: bounded preflight, exit 2 = BLOCKED.
-- `npm run snapshot`: full account-bitmap discovery with reconciliation,
-  writes `reports/snapshot.json`.
-- `npm run validate:math`: live formula validation, writes
-  `reports/validation-math.json`. Options: `LOG_RANGE`,
-  `VALIDATE_LOOKBACK_BLOCKS`, `VALIDATE_STATE_WINDOW`, `VALIDATE_MAX_VECTORS`.
-- `node --env-file=.env src/replay.js`: size/side replay between
-  `reports/replay-start.json` and `reports/snapshot.json`.
-- `node --env-file=.env src/probe-wss.js` / `src/probe-reconnect.js`: transport
-  probes (`MONAD_WSS_URL`).
+- Docker Engine with Compose v2, on the node's host if execution events are
+  wanted.
+- Disk: about 5 GB for ClickHouse with the full history since the exchange
+  launched (block 54,773,010, 11 February 2026), growing with trading
+  activity. Rollups and snapshots add
+  tens of megabytes.
+- Memory: ClickHouse is capped at 8 GB and the app at 3 GB by default
+  (`CLICKHOUSE_MEMORY`, `APP_MEMORY`); neither needs that much at today's
+  volume.
+- RPC (your node):
+  - `eth_getLogs` over 1000-block ranges;
+  - `eth_call` at explicit block numbers;
+  - `eth_getBlockByNumber('finalized')`;
+  - Multicall3 at `0xca11bde05977b3631167028862be2a173976ca11`.
+- History older than the node keeps (about 3 days on a full node) comes from
+  archive endpoints, once. `https://rpc1.monad.xyz` and
+  `https://rpc2.monad.xyz` return `blockTimestamp` on logs and accept
+  1000-block ranges.
 
 ## Deploy
 
-The Dockerfile builds a production image (`node:22-alpine`, non-root). Mount
-`/data` for the checkpoint and set `MONAD_RPC_URL`. Any host that runs a
-container with one persistent volume works (Fly.io, Railway, Render, a VPS).
-Expose port 8787 behind TLS; the API is read-only and sends
-`access-control-allow-origin: *`.
+```bash
+git clone https://github.com/s0urledd/perpl-scope && cd perpl-scope
+cp .env.example .env
+#   MONAD_RPC_URL=http://host.docker.internal:8080   (the node, seen from a container)
+#   ARCHIVE_RPC_URLS=https://rpc1.monad.xyz,https://rpc2.monad.xyz
+#   CLICKHOUSE_PASSWORD=<random>
+docker compose up -d --build
+curl -s localhost:8787/api/v1/health | jq '.index.backfill | {pct, eta_s, rate_blocks_per_s}'
+```
 
-## Event index
+The app is published on `127.0.0.1:8787` only. Put a TLS reverse proxy in
+front of it. Server-sent events (`/api/v1/stream`) must not be buffered:
 
-The activity metrics (volume, fees, flows, active traders, liquidations,
-wallet history, leaderboards) come from exchange events kept in memory over a
-rolling window and rolled into hourly aggregates that outlive it.
+```caddy
+perplscope.example.com {
+	encode gzip
+	reverse_proxy 127.0.0.1:8787 {
+		flush_interval -1
+	}
+}
+```
 
-- **Backfill.** After bootstrap the collector walks `eth_getLogs` newest to
-  oldest over `INDEX_BLOCKS` with `INDEX_CONCURRENCY` requests of
-  `INDEX_LOG_RANGE` blocks each, halving a range the provider rejects and
-  stopping where its history ends. Progress is visible at `GET /api/v1/index`
-  and on the validation page. Live polls ingest new blocks meanwhile.
-- **Snapshots.** At every hour boundary the collector samples open interest,
-  TVL, insurance and funding per market; during backfill the same sample is
-  read at historical blocks (skipped where the provider has pruned state).
-- **Persistence.** `INDEX_PATH` holds the hourly aggregates and snapshots,
-  written with each checkpoint. Raw records are rebuilt from the chain at
-  start; aggregates older than the provider's history survive restarts, so
-  7 d and 30 d windows fill in as the service runs.
-- **Coverage.** Every window reports `exact` (summed from raw records),
-  `partial` (the index does not reach the start of the window) and the block
-  and time it covers from. Aggregates use hourly buckets, so a partial window
-  is never silently short.
-- **Memory.** About 250 bytes per record. Perpl mainnet produced about 1.5
-  records per block in September 2026, so four days (1.2 M blocks) hold about
-  1.7 M records and 450 MB of heap. Size `INDEX_BLOCKS` to the provider's
-  history and run Node with `--max-old-space-size` above that.
+```nginx
+location /api/v1/stream { proxy_pass http://127.0.0.1:8787; proxy_buffering off; proxy_read_timeout 1h; }
+location / { proxy_pass http://127.0.0.1:8787; }
+```
 
-Measured on a self-hosted Monad node (`monad-rpc.huginn.tech`, 2026-09-21):
-1000-block log ranges, roughly 98 hours of logs and state, eight parallel
-requests answered in under a second; the full four-day backfill with
-`INDEX_LOG_RANGE=1000 INDEX_CONCURRENCY=6` took about two minutes and 2,100
-requests. Public `rpc.monad.xyz` needs `INDEX_LOG_RANGE=100` and is about
-ten times slower per block.
+**First start.**
+- The live loop starts at the node's finalized head.
+- The backfill fills everything back to the deployment block, newest first.
+  With two archives this takes one to three hours.
+- The dashboard shows a progress bar meanwhile. Windows that are already
+  covered are exact. Longer windows are marked `partial` until history
+  reaches them. Open interest and TVL over time appear once history is
+  contiguous from launch.
+
+## Execution events (optional, fastest)
+
+With the node's execution event ring enabled, new blocks and Perpl trades
+reach the dashboard within milliseconds of execution. Proposed trades appear
+dimmed and are replaced by the finalized ones. On the node host:
+
+1. Huge pages and the ring directory:
+   ```bash
+   apt install libhugetlbfs-bin
+   hugeadm --create-user-mounts monad        # run at boot, e.g. from a oneshot unit
+   mkdir -p /var/lib/hugetlbfs/user/monad/pagesize-2MB/event-rings
+   chown monad:monad /var/lib/hugetlbfs/user/monad/pagesize-2MB/event-rings
+   ```
+   The default ring needs about 330 free 2 MB huge pages (512 MiB payload
+   plus descriptors) on top of what the node already uses. Raise
+   `vm.nr_hugepages` if execution fails with `ENOSPC`.
+2. Add the ring to execution (`systemctl edit monad-execution`, append to
+   `ExecStart`) and restart it:
+   ```
+   --exec-event-ring /var/lib/hugetlbfs/user/monad/pagesize-2MB/event-rings/monad-exec-events
+   ```
+3. In `.env`, set `MONODE_WS_URL=ws://monode:8443`, then start the profile:
+   ```bash
+   docker compose --profile exec-events up -d --build
+   ```
+
+The sidecar is [Monode](https://github.com/monad-developers/monode),
+built from a pinned commit (`deploy/monode/Dockerfile`):
+- it runs in restricted mode, forwarding only block lifecycle events and
+  logs of the Perpl exchange (`deploy/monode/restricted_filters.json`);
+- it mounts the ring directory read-only;
+- it is not published outside the compose network.
+
+When execution restarts, the ring file is replaced. Monode's health check
+then fails and Docker restarts it on the new ring.
+
+If Monode cannot read the ring (for example after a node upgrade that
+changes the ring format, until the pinned SDK is updated), PerplScope keeps
+working on the next wake-up source: `MONAD_WS_URL` (`newHeads`, monad-rpc
+with `--ws-enabled`) or polling every `LIVE_POLL_MS`. The status page shows
+which one is active.
+
+## Configuration
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `MONAD_RPC_URL` | required | JSON-RPC of the node |
+| `CHAIN_ID` | `143` | Monad mainnet |
+| `EXCHANGE_ADDRESS` | `0x34B6…2a6F` | Perpl exchange proxy |
+| `EXCHANGE_DEPLOY_BLOCK` | `54773010` | First block with exchange logs |
+| `ARCHIVE_RPC_URLS` | none | Comma-separated archive endpoints for the backfill |
+| `MONODE_WS_URL` | none | Monode sidecar, e.g. `ws://monode:8443` |
+| `MONAD_WS_URL` | none | WebSocket endpoint for `newHeads` |
+| `LIVE_HISTORY_BLOCKS` | `600000` | How far back the node serves `eth_getLogs` |
+| `LIVE_LOG_RANGE`, `ARCHIVE_LOG_RANGE` | `1000` | Blocks per `eth_getLogs` request |
+| `LIVE_BACKFILL_CONCURRENCY`, `ARCHIVE_CONCURRENCY` | `4` | Parallel backfill requests per source |
+| `LIVE_POLL_MS` | `400` | Poll interval when no push source is connected |
+| `LIVE_COMMIT_MS` | `1000` | Minimum interval between live commits |
+| `INGEST_BATCH_ROWS`, `INGEST_BATCH_MS` | `150000`, `3000` | Backfill commit batch |
+| `BACKFILL` | `1` | `0` disables the history backfill |
+| `BACKFILL_FROM_BLOCK` | deploy block | Partial history (development) |
+| `CLICKHOUSE_URL`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DB` | `http://127.0.0.1:8123`, `default`, empty, `perpl` | Storage (set by compose) |
+| `ROLLUP_MS` | `60000` | Rollup interval |
+| `PORT`, `HOST` | `8787`, `0.0.0.0` | Listen address (use `127.0.0.1` behind a proxy outside Docker) |
+| `RPC_TIMEOUT_MS`, `RPC_MAX_BYTES` | `30000`, 64 MiB | Ingest RPC limits |
+| `POLL_MS`, `VERIFY_BLOCKS`, `STALE_AFTER_MS` | `2000`, `12000`, `45000` | Contract-state collector |
+| `BOOK_LEVELS`, `BOOK_RANGE_BPS`, `BOOK_REFRESH_MS`, `BOOK_DISABLED` | `40`, `1500`, `30000`, `0` | Order-book walk |
+| `CHECKPOINT_PATH` | `data/checkpoint.json` (`/data/…` in Docker) | Collector checkpoint |
+| `REFERENCE_ENABLED` | `0` | `1` compares contract figures with Perpl's public API (never used for metrics) |
+
+## Operating
+
+- **Health**: `GET /api/v1/health` returns 200 with:
+  - `snapshot.status`: the collector (`fresh`, `syncing`, `stale` and a
+    reason);
+  - `index.live`: the last committed block and its age;
+  - `index.backfill`: progress;
+  - `index.decoder_checks`: decoder counters;
+  - `feeds`: which wake-up source is connected.
+
+  The dashboard's status page (`#/status`) shows the same, plus the
+  integrity check.
+- **Logs**: JSON lines on stdout. RPC URLs never appear in logs or
+  responses.
+- **Restarts** are safe at any point:
+  - ingest resumes from recorded coverage;
+  - rows of an interrupted commit are removed on start;
+  - the collector resumes from its checkpoint when that block is still
+    canonical.
+- **Upgrades**: `git pull && docker compose up -d --build`. Schema changes
+  are additive. A change to rollup definitions bumps `ROLLUP_VERSION`, and
+  the rollups are recomputed from the stored events.
+- **Re-index from scratch**: `docker compose down`, remove the
+  `perpl-scope_clickhouse-data` volume, then `docker compose up -d`. Nothing
+  else is stored, so there is nothing else to back up.
+
+## Troubleshooting
+
+| Symptom | Cause and fix |
+| --- | --- |
+| Backfill slow, `rate` errors in `index.backfill.last_error` | Archive rate limits: lower `ARCHIVE_CONCURRENCY` or add another archive |
+| `pruned` errors from the node | `LIVE_HISTORY_BLOCKS` exceeds what the node keeps: lower it so older ranges go to archives |
+| Integrity check fails for a market | An event was missed or misread. Check `index.decoder_checks` (unlinked, mismatches) and the status page, and report it with the block range |
+| Collector `stale (head-stalled)` | The node's finalized head stopped moving: check the node |
+| Live pill says *Delayed* | No commit for 15 s: check `index.live.last_error` |
+| Monode restarts every 30 s | The ring file is missing or unreadable: check the execution flags and huge pages, or run without the profile |
+| Live updates stop behind a proxy | The proxy buffers server-sent events: see the proxy settings above |
+
+## Development
+
+```bash
+npm ci
+docker run -d --name ch -p 127.0.0.1:8123:8123 -e CLICKHOUSE_PASSWORD=dev clickhouse/clickhouse-server:26.8
+cp .env.example .env   # MONAD_RPC_URL, CLICKHOUSE_PASSWORD=dev, optional BACKFILL_FROM_BLOCK
+npm start              # http://localhost:8787
+npm run check          # syntax of every file
+npm test               # unit tests (fake exchange, no network)
+CLICKHOUSE_URL=http://127.0.0.1:8123 CLICKHOUSE_PASSWORD=dev npm run test:integration
+npm run validate:math  # formula checks against live contract state
+```

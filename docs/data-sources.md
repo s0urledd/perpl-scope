@@ -15,9 +15,19 @@
   `getNextPriceAboveWithOrders` (levels are offsets from `basePricePNS`, which
   is zero on every listed market; `getOrdersAtPriceLevel` was used only to
   confirm that the `exp` volume counters hold expired orders).
-- Events used: position lifecycle, collateral changes, `FundingEventCompleted`,
-  `PositionLiquidated`, deleveraging, unwind, parameter updates, liquidation
-  diagnostics (`src/events.js`).
+- Events indexed since the deployment block 54,773,010 (2026-02-11), from
+  the exchange address only (`src/decode.js`):
+  - position lifecycle, open to invert (V1 and V2 variants);
+  - maker and taker fills;
+  - liquidations, deleverages and unwinds;
+  - collateral deposits and withdrawals, and protocol balance transfers;
+  - `AccountCreated`, `FundingEventCompleted`, `ContractAdded`;
+  - buy-to-liquidate settlements, position collateral changes, insurance
+    payments;
+  - parameter updates.
+
+  The contract-state collector also watches liquidation diagnostics
+  (`src/events.js`).
 - Multicall3 `0xca11bde05977b3631167028862be2a173976ca11`.
 
 ## ABI and formulas
@@ -33,27 +43,40 @@
 
 - Perpl public context `https://app.perpl.xyz/api/v1/pub/context`: market
   list, `state.mrk`, `state.oi`, `funding.rate` (×10⁻⁶), `funding.sum`,
-  margin fractions. Compared with the contract on the validation page; never
+  margin fractions. Compared with the contract at `/api/v1/reference` when `REFERENCE_ENABLED=1`; never
   used to compute a metric. The API omits markets 30, 70 and 80, which the
   contract lists with zero positions.
 
-## RPC endpoints tested (2026-09-21)
+## RPC endpoints
 
-| Endpoint | Chain | `eth_getLogs` range | Notes |
-| --- | --- | --- | --- |
-| https://rpc.monad.xyz | 143 | 100 blocks | Perpl's documented default; used for the live collector |
-| https://rpc1.monad.xyz | 143 | ≥ 2000 blocks | Used for long log scans; prunes older state |
-| https://rpc-mainnet.monadinfra.com | 143 | 100 blocks | |
-| https://monad-mainnet.drpc.org | 143 | 100 blocks (free plan) | |
-| https://testnet-rpc.monad.xyz | 10143 | — | Testnet exchange `0x1964c32f0be608e7d29302aff5e61268e72080cc` |
+| Endpoint | `eth_getLogs` range | History | `blockTimestamp` on logs | Use |
+| --- | --- | --- | --- | --- |
+| Own node (Huginn, `monad-rpc`) | 1000 blocks | about 3.3 days of logs and state | yes | Live ingest, recent backfill, contract state |
+| https://rpc1.monad.xyz, https://rpc2.monad.xyz | 1000 blocks | archive, from genesis | yes | One-time backfill of older ranges |
+| https://rpc.monad.xyz | 100 blocks | recent | not checked | Fallback only |
+| https://rpc-mainnet.monadinfra.com | 100 blocks | recent | not checked | Not used |
 
-Measured block time on 2026-09-21: about 0.30 s (1000-block window), so one
-funding interval (8571 blocks) is about 43 minutes, matching the public
-context's `funding_interval_sec`.
+On the node, 1500-block ranges are rejected, and 1000 unfiltered blocks
+exceed the response size limit, so every request filters by the exchange
+address and the decoder's topics. Monad finalizes about two blocks (under a
+second) behind the proposal. The ingest only asks for explicit block numbers
+at or below `finalized`.
 
-Self-hosted node `https://monad-rpc.huginn.tech` (2026-09-21): `eth_getLogs`
-accepts 1000-block ranges (1500 rejected as too large, 1000 unfiltered blocks
-exceed the response size limit, so the index always filters by topic), keeps
-about 98 hours of logs and state, and answers eight parallel log requests in
-under a second. Used for the index backfill; the public endpoints remain
-sufficient for the live snapshot.
+Measured block time: about 0.30 s. One funding interval (8,571 blocks) is
+about 43 minutes, matching the public context's `funding_interval_sec`.
+
+## Execution events
+
+With `--exec-event-ring` on `monad-execution`, the node publishes block and
+transaction events to a shared-memory ring. The Monode sidecar
+(`deploy/monode`, pinned upstream commit, execution events SDK
+`release/exec-events-sdk-v1.0`) reads it and forwards over a WebSocket, in
+restricted mode:
+- block lifecycle events: `BlockStart`, `BlockEnd`, `BlockReject`,
+  `BlockFinalized`;
+- `TxnLog` events of the exchange address.
+
+PerplScope uses them only to wake the ingest and to show proposed trades
+early. Stored data always comes from `eth_getLogs` over finalized blocks,
+because a log's index in the ring is its position within the transaction,
+not within the block.

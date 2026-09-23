@@ -1,99 +1,80 @@
 # HTTP API
 
-Base path: `/api/v1`. All responses are JSON with `cache-control: no-store`
-and `access-control-allow-origin: *`. Every response carries a `snapshot`
-object describing the chain state it was computed from:
+All routes are `GET`, read-only, JSON unless noted, gzip-compressed and served
+with `access-control-allow-origin: *`. Amounts are decimal strings in USD
+(AUSD) or in the market's units; they are exact and should be parsed as
+decimals, not floats. Times are Unix seconds (UTC).
 
-```json
-{
-  "chain_id": "143",
-  "exchange": "0x34b6552d57a35a1d042ccae1951bd1c370112a6f",
-  "block": "106780799",
-  "block_hash": "0x…",
-  "block_timestamp": 1790003309,
-  "finalized_block": "106780766",
-  "block_time_ms": 302,
-  "status": "fresh",
-  "status_reason": null,
-  "age_ms": 412
-}
-```
+Every analytics response has a `meta` object with the last indexed block
+(`block`, `ts`) and, for windowed routes, the window and its `coverage`:
+`complete: false` means history for part of the window is still being
+indexed. Risk routes carry a `snapshot` with the contract block, hash, status
+and age they were computed from.
 
-`status` is `syncing` before the first pinned snapshot, `fresh` while polls
-succeed, and `stale` after repeated RPC failures, an open-interest mismatch or
-no successful poll within `STALE_AFTER_MS`. While syncing every endpoint except
-`/health` returns `503` with `{"error":"SYNCING"}`. The header
-`x-snapshot-block` repeats the block number.
+Errors: `{ "error": "CODE" }` with 400 (bad parameter), 404 (unknown market,
+account or route) or 503 (`SYNCING` before the first contract snapshot).
 
-Exact amounts are decimal strings in collateral units (AUSD) or base units;
-percentages and ratios are numbers.
+## Protocol
 
-| Endpoint | Content |
+| Route | Parameters | Returns |
+| --- | --- | --- |
+| `/api/v1/protocol` | `window` = `24h` (default), `7d`, `30d`, `90d`, `all` | `headline`, the window's totals, each with `value`, `prev` (the previous window of the same length) and `change_pct`: volume, trades, fees (protocol, insurance, builder), take rate, traders, new accounts, deposits, withdrawals, net flow, liquidations, liquidated notional, deleverages, taker buy share, realized PnL. `current`: contract state now, i.e. open interest, TVL, insurance, positions, accounts. `markets[]`: volume and share, trades, traders, fees, OHLC and change, taker buy share, liquidations, plus live mark, open interest, long/short positions, funding and OI cap. `windows[]`: 24h, 7d, 30d and all-time totals |
+| `/api/v1/protocol/series` | `window`, `bucket` = `1h`, `4h`, `1d`, `1w` (default by window), `market` | `times[]` and `points[]` per bucket: volume, trades, fees, protocol fees, taker buy and sell, liquidations, realized PnL, open interest; exchange-wide also traders, deposits, withdrawals, net flow, new accounts, TVL; for one market also OHLC. `by_market[]` has volume, liquidated notional and fees per market. `meta.cumulative_complete` says whether open interest and TVL are available (history contiguous from launch) |
+| `/api/v1/trades` | `limit` ≤ 200 (default 50), `market` | Latest taker-side trades: kind (`open`, `increase`, `decrease`, `close`, `invert`, `liquidation`), side, buy, price, size, notional, fee, PnL, account and address |
+| `/api/v1/liquidations` | `limit` ≤ 500, `market`, `format=csv` | Latest liquidations and deleverages, and `last_24h` totals |
+| `/api/v1/funding` | `window` (default `7d`) | Per market: current rate per interval, 8 h and APR equivalents, interval length, positions and open interest; `series` of funding rates over the window |
+| `/api/v1/flows` | `window` | Deposits, withdrawals and net flow; top depositors and withdrawers; latest transfers |
+| `/api/v1/leaderboard` | `window`, `by` = `pnl`, `loss`, `volume`, `realized`, `fees`, `trades`, `liquidated`, `deposits`, `withdrawals`, `net_flow`; `market`, `limit` ≤ 200, `offset`, `format=csv` | Ranked accounts: net PnL (realized − fees), realized, fees, volume, maker share, trades, PnL per volume, liquidations, flows, markets traded, open positions and unrealized PnL now; `total` accounts |
+| `/api/v1/search` | `q`: address, address prefix or account ID | Up to eight matching accounts |
+
+## Wallets
+
+`:key` is a `0x` address or an account ID.
+
+| Route | Parameters | Returns |
+| --- | --- | --- |
+| `/api/v1/wallets/:key` | | `account` (id, address, creation time); `summary` (all-time volume, trades, realized, fees, net PnL, funding, liquidations, deposits, withdrawals, first and last trade, active days, maker share); `markets[]`; `pnl_daily[]` (net and cumulative); `recent_trades[]`; `flows[]`; `portfolio` (balance, locked, margin, account value, unrealized PnL, margin usage, leverage, closest liquidation) and `positions[]` from contract state |
+| `/api/v1/wallets/:key/analytics` | | `performance` over closed round trips: win rate, profit factor, expectancy, largest win and loss, max drawdown with dates, streaks, hold times (all, winners, losers), long and short splits, best and worst market, per-market results; `insights[]` (rule-based); `activity` (weekday × hour); `trip_curve`; `trips[]` (latest 200) and `open_trips[]`. `performance.based_on` says how many events were used |
+| `/api/v1/wallets/:key/periods` | | For 24h, 7d, 30d and all time: volume, trades, net PnL, realized, fees, funding, liquidations, PnL per volume (bps) and `rank` by PnL and by volume among every account that traded in that window |
+| `/api/v1/wallets/:key/trades` | `before` = `block:log_index` cursor, `limit` ≤ 500 (10,000 as CSV), `market`, `format=csv` | Every position change with the price, size and fee of the fill that settled it, role, realized PnL and remaining size; `next` cursor |
+| `/api/v1/compare` | `wallets` = up to ten keys, comma-separated | Profile and performance of each wallet |
+
+## Pipeline and integrity
+
+| Route | Returns |
 | --- | --- |
-| `GET /health` | Liveness, snapshot, collector counters. Never 503. |
-| `GET /overview` | Exchange totals (notional, equity, insurance, exposure at 5 % and 10 %, shortfall and coverage, liquidations in 24 h) and a summary row per market. |
-| `GET /markets` | Market summaries only. |
-| `GET /markets/{id}?limit=25` | Summary plus liquidation ladder, liquidation map, health distribution, per-side concentration, top positions, funding history (last 48 events) and recent liquidations. |
-| `GET /markets/{id}/positions?sort=notional|risk|pnl|size&side=long|short&limit=50` | Enriched open positions. `risk` sorts by distance to liquidation. |
-| `GET /markets/{id}/ladder` | Ladder and map only. |
-| `GET /markets/{id}/funding?limit=48` | Current funding view (including the next announced rate when already set on-chain) and event history. |
-| `GET /markets/{id}/stress?move_pct=-12.5` | Stress at one signed move: positions hit, notional, share of OI, shortfall, insurance cover, resting depth in range and its cover. Negative moves liquidate longs, positive moves shorts. |
-| `GET /markets/{id}/book` | Walked order-book levels per side, depth bands and cover per ladder row. 404 until the first walk. |
-| `GET /accounts/{id-or-address}?limit=200` | Full wallet profile: account record and balances, open positions with liquidation prices, distance, health and PnL, `totals` (account value, margin usage, effective leverage), `summary` (trades, volume, realized and net PnL, fees, funding, flows), `performance` (win rate, profit factor, drawdown, streaks, hold times, best / worst markets, per-market table, equity curve), `observations`, `trips`, `open_trips`, `history` (newest first) and `flows`, with `coverage` of the indexed window. The account record is resolved on-chain (cached 15 s, misses included); positions always come from the current snapshot. At most four lookups resolve concurrently; more return `503 BUSY`. |
-| `GET /accounts/{id-or-address}/trades` | Position changes of the account, newest first; `format=csv` downloads them. |
-| `GET /stats?window=24h` | Protocol statistics for `1h`, `24h`, `7d`, `30d` or `all`: `activity` (volume, trades, taker buy / sell, active traders, new accounts, realized PnL), `fees` (total, maker, taker, builder, insurance, protocol, take rate), `flows`, `liquidations`, `current` (open interest, TVL, insurance, accounts, positions, withdrawal limit), `change` since the window start, `venue` (Perpl's reported 24 h volume against the chain), per-market rows with skew, and `coverage`. |
-| `GET /stats/series?window=7d&market={id}` | Hourly buckets over the window: volume, cumulative volume, trades, fees, taker flow, active traders, new accounts, flows, liquidations, realized PnL, and the open-interest / TVL / insurance snapshot where sampled. |
-| `GET /leaderboard?window=24h&by=pnl&limit=25` | Accounts ranked by `pnl`, `loss`, `volume`, `trades`, `fees`, `liquidated`, `deposits` or `withdrawals`, with open positions from the snapshot. |
-| `GET /index` | Event-index status: records, coverage, buckets, snapshots, backfill progress and options. |
-| `GET /series?hours=24&market={id}` | Sampled time series of exchange totals or one market. |
-| `GET /liquidations?limit=100&market={id}` | `PositionLiquidated` events, newest first (from the event index once it has records, otherwise from the in-memory history), plus deleveraging events. `format=csv` downloads the list. |
-| `GET /validation` | Bootstrap, reconciliation, independent discovery result, PnL agreement per market, metric status table, RPC and collector counters. |
-| `GET /reference` | Perpl public-API cross-check per market (reference only). |
-| `GET /events` | Parameter changes, unwind events and liquidation diagnostics seen by the collector. |
+| `/api/v1/health` | Liveness (200). Collector snapshot and status. `index.live` (last committed block, commits, errors). `index.backfill` (progress, rate, ETA). `index.coverage` intervals, `index.rollups`, `index.decoder_checks`. `feeds` (execution events, WebSocket heads, SSE clients). Memory |
+| `/api/v1/integrity` | Event-derived open interest per market and net collateral flow compared with the contract's counters and balance at the collector's block (available once history is complete) |
+| `/api/v1/stream` | Server-sent events: `block`, `trades`, `proposed`, `liquidations`, `protocol`, `backfill` (see `docs/architecture.md`) |
 
-## Market summary fields
+## Risk (contract state)
 
-- `prices`: `mark`, `oracle`, `last`, `basis_pct` (mark versus oracle), `mark_age_seconds`, `mark_stale`.
-- `open_interest`: per-side size and notional at mark, `max_size` and `utilisation_pct` from `getMarginFractions`, `reconciled` (stored positions equal contract counters).
-- `long` / `short`: count, size, notional, deposit, delta and premium PnL, equity, maintenance margin, `average_leverage` (entry notional over deposit), liquidatable and bankrupt counts.
-- `margin`: `max_leverage`, `maintenance_margin_pct`, raw `hdths` fractions.
-- `insurance`: balance, coverage of notional and of total maintenance margin, liquidation proceeds split.
-- `risk`: notional within 5 % and 10 % of liquidation, shortfall at 10 %, insurance coverage of that shortfall.
-- `concentration`: top-1/5/10 shares, HHI (0–10000), largest position.
-- `funding`: rate per interval, 8 h and annualised equivalents, direction, clamp, next funding block and countdown, latest event, `next_announced` when the next rate is already set on-chain.
-- `liquidity`: book block and age, levels walked, truncation flags, walked `range_pct`, best bid and ask, spread, depth within 1 / 2 / 5 / 10 % per side, cover at 2 / 5 / 10 % per side (`null` before the first walk). Market detail adds the full `absorption` rows (rows beyond the walked range carry `beyond_range: true` and `null` depth) and `adl_queue`.
+| Route | Parameters | Returns |
+| --- | --- | --- |
+| `/api/v1/overview` | | Exchange totals: positions, notional, deposits, equity, liquidatable and bankrupt positions, notional at risk at 5 % and 10 % moves, shortfall and insurance cover, book cover at 10 % (`complete: false` when the book walk stopped at its level cap) |
+| `/api/v1/markets` | | Per-market risk summary |
+| `/api/v1/markets/:id` | `limit` | Ladder, liquidation map, liquidity and absorption, ADL queue, health distribution, concentration by side, top positions, funding and liquidation history |
+| `/api/v1/markets/:id/positions` | `side`, `sort`, `limit`, `format=csv` | Every open position with entry, mark notional, deposit, PnL, equity, maintenance margin, health, liquidation and bankruptcy prices and distances, leverage |
+| `/api/v1/markets/:id/ladder` | | Liquidation ladder and map |
+| `/api/v1/markets/:id/stress` | `move_pct` (signed, e.g. `-10`) | Positions liquidated at that move, notional and share of open interest, shortfall, insurance cover, book depth and absorption, largest positions hit |
+| `/api/v1/markets/:id/book` | | Resting depth walked from the contract, per level and per band |
+| `/api/v1/markets/:id/funding` | `limit` | Current and next funding, history of funding events |
+| `/api/v1/series` | `hours` ≤ 168, `market` | Sampled risk totals over time |
+| `/api/v1/validation` | | Reconciliation, independent verification, PnL agreement and the integrity check |
+| `/api/v1/events` | | Recent parameter changes and unwinds |
+| `/api/v1/reference` | | Perpl public API figures next to the contract's (only with `REFERENCE_ENABLED=1`) |
 
-All responses carry `x-content-type-options: nosniff`, `referrer-policy: no-referrer` and `x-frame-options: DENY`; the dashboard page carries a content-security policy that allows scripts only from the same origin. Error bodies expose codes (`RPC_UNAVAILABLE`, `INTERNAL_ERROR`, `BUSY`, `INVALID_MOVE`, `MARKET_NOT_FOUND`, …), never provider messages.
-- `validation`: `oi_reconciled`, `pnl_checked`, `pnl_agree`.
-- `reference`: deltas against the Perpl context endpoint, or `null` when disabled.
+## Examples
 
-## Ladder rows
+```bash
+curl -s localhost:8787/api/v1/protocol?window=7d | jq '.headline.volume'
+# → { "value": "<USD>", "prev": "<USD, previous 7 days>", "change_pct": <number> }
 
-Each row is an adverse move `shock_pct` of the mark. `long` counts positions
-whose liquidation price is at or above the shocked price (price falling);
-`short` counts positions whose liquidation price is at or below the shocked
-price (price rising). `shortfall` is the negative equity of positions whose
-bankruptcy price is crossed at that shocked price, and
-`insurance_coverage_pct` divides the market's insurance balance by the total
-shortfall (`null` when there is none).
+curl -s 'localhost:8787/api/v1/leaderboard?window=30d&by=pnl&limit=3' | jq '.rows[] | {rank, address, pnl, volume}'
 
-`GET /markets/{id}/positions?format=csv` downloads the same rows as CSV.
+curl -s localhost:8787/api/v1/wallets/0xc8d79f44912a9f55c6faf819283efcea9661d1dc/periods | jq '.periods[] | {window, net_pnl, rank}'
 
-## Position fields
+curl -s 'localhost:8787/api/v1/markets/1/stress?move_pct=-10' | jq '{liquidated, shortfall, liquidity}'
 
-`entry_price` is the effective entry including the 16-bit residue.
-`liquidation_price` and `bankruptcy_price` are computed with the current
-maintenance fraction and the contract's premium PnL. `health_pct` is equity
-over maintenance margin; `status` is `healthy`, `liquidatable`
-(0 < equity ≤ maintenance) or `bankrupt` (equity ≤ 0).
-`pnl_matches_contract` reports whether the recomputed delta PnL equals the
-contract's value at the mark the position was read at.
-
-## Windows and coverage
-
-Windowed endpoints take `window` (`1h`, `24h`, `7d`, `30d`, `all`) and
-convert it to a block range ending at the snapshot block. `coverage` reports
-`exact` (summed from raw records), `partial` (the index does not reach the
-start of the window, or an hourly bucket is incomplete), the block and time
-the index covers from, and the backfill state. Amounts are decimal strings in
-AUSD; percentages are numbers.
+curl -N localhost:8787/api/v1/stream   # event: block / trades / protocol …
+```

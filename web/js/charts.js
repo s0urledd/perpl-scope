@@ -30,6 +30,7 @@ export function chartCsv(el) {
   for (const s of o.series ?? []) {
     const value = d => (d && typeof d === 'object' && !Array.isArray(d) ? d.value : d);
     if (s.type === 'candlestick') ['open', 'close', 'low', 'high'].forEach((k, j) => cols.push({ name: `${s.name ?? 'price'} ${k}`, at: i => value(s.data?.[i])?.[j] }));
+    else if (s.type === 'heatmap') (o.yAxis?.[0]?.data ?? []).forEach((name, y) => { const byX = new Map((s.data ?? []).filter(d => d[1] === y).map(d => [d[0], d[2]])); cols.push({ name, at: i => byX.get(i) }); });
     else cols.push({ name: s.name ?? `series ${cols.length + 1}`, at: i => { const v = value(s.data?.[i]); return Array.isArray(v) ? v[1] : v; } });
   }
   const iso = t => (/^\d+$/.test(String(t)) ? new Date(Number(t) * 1000).toISOString().replace('.000Z', 'Z') : t);
@@ -121,6 +122,24 @@ export function signedBars(el, { times, values, bucketSeconds, name = 'Value', f
     ...base(), xAxis: timeAxis(times, bucketSeconds), yAxis: valueAxis(yFmt),
     tooltip: { ...base().tooltip, formatter: tooltip(fmt, bucketSeconds) },
     series: [{ name, type: 'bar', data: values.map(v => ({ value: v, itemStyle: { color: (num(v) ?? 0) >= 0 ? T.long : T.short, borderRadius: (num(v) ?? 0) >= 0 ? [2, 2, 0, 0] : [0, 0, 2, 2] } })), barMaxWidth: 18 }]
+  }, true);
+}
+
+// Rows (markets) × time buckets on a diverging scale centred on zero: two
+// hues and a grey midpoint; values beyond ±clamp take the end colours.
+export const DIVERGING = { neg: '#0098de', mid: '#2c2b33', pos: '#d36c00' };
+export function divergingHeatmap(el, { times, rows, bucketSeconds, clamp, fmt = v => String(v), labels = ['', ''] }) {
+  const chart = init(el);
+  if (!chart) return;
+  const data = [];
+  rows.forEach((r, y) => r.values.forEach((v, x) => { if (v !== null && v !== undefined) data.push([x, y, v]); }));
+  chart.setOption({
+    ...base(), grid: { left: 8, right: 12, top: 6, bottom: 34, containLabel: true },
+    tooltip: { ...base().tooltip, trigger: 'item', axisPointer: undefined, formatter: p => `<div style="color:${T.faint};margin-bottom:4px">${bucketSeconds >= 86400 ? date(times[p.value[0]]) : dateTime(times[p.value[0]]) + ' UTC'}</div>${row(p.color, rows[p.value[1]].name, fmt(p.value[2]))}` },
+    xAxis: { ...timeAxis(times, bucketSeconds), splitArea: { show: false } },
+    yAxis: { type: 'category', data: rows.map(r => r.name), inverse: true, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: T.text, margin: 10 } },
+    visualMap: { type: 'continuous', min: -clamp, max: clamp, calculable: false, orient: 'horizontal', left: 'center', bottom: 0, itemWidth: 10, itemHeight: 180, text: labels, textGap: 8, textStyle: { color: T.faint, fontSize: 11 }, inRange: { color: [DIVERGING.neg, DIVERGING.mid, DIVERGING.pos] } },
+    series: [{ type: 'heatmap', data, itemStyle: { borderColor: '#0e0d10', borderWidth: 2, borderRadius: 2 }, emphasis: { itemStyle: { borderColor: 'rgba(255,255,255,0.6)', borderWidth: 1 } } }]
   }, true);
 }
 

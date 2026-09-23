@@ -2,7 +2,8 @@
 // for every market over the chosen window.
 import { get, stream } from '../api.js';
 import { usd, int, price, pct, num, esc } from '../format.js';
-import { seg, table, mkt, ratio, pctCell, fundingCell, skeleton, assignColors } from '../ui.js';
+import { seg, table, mkt, ratio, pctCell, fundingCell, skeleton, skChart, empty, assignColors, chartTools } from '../ui.js';
+import { divergingHeatmap } from '../charts.js';
 
 const WINDOWS = [['24h', '24H'], ['7d', '7D'], ['30d', '30D'], ['all', 'All']];
 
@@ -11,9 +12,13 @@ export function mount(el, { query, setQuery }) {
   let sort = { key: 'volume', dir: 'desc' }, data = null, alive = true;
   el.innerHTML = `
     <div class="page-head"><div><h1>Markets</h1><div class="sub">Every Perpl market with live prices, open interest and funding.</div></div><div id="win">${seg('window', WINDOWS, w)}</div></div>
-    <section class="panel"><div class="panel-body flush" id="list">${skeleton(10)}</div></section>`;
+    <div class="stack">
+    <section class="panel"><div class="panel-body flush" id="list">${skeleton(10)}</div></section>
+    <section class="panel"><div class="panel-head"><div><h2>Funding</h2><div class="desc" id="f-desc">Annualised funding rate per market</div></div><div class="head-right">${chartTools('funding-map', 'funding')}</div></div>
+      <div class="panel-body"><div class="chart" id="funding-map">${skChart()}</div></div></section>
+    </div>`;
   const COLS = [
-    { key: 'symbol', label: 'Market', sort: r => r.symbol, render: r => mkt(r.id, r.symbol, r.name) },
+    { key: 'symbol', label: 'Market', sort: r => r.symbol, render: r => mkt(r.id, r.symbol, r.name && r.name !== r.symbol && r.name !== `${r.symbol} Perp` ? r.name : null) },
     { key: 'mark', label: 'Mark', n: true, sort: r => num(r.mark ?? r.close), render: r => price(r.mark ?? r.close) },
     { key: 'change_pct', label: 'Change', n: true, sort: r => num(r.change_pct) ?? -1e9, render: r => pctCell(r.change_pct) },
     { key: 'range', label: 'Low – High', n: true, render: r => r.low ? `<span class="muted">${price(r.low)} – ${price(r.high)}</span>` : '—' },
@@ -27,14 +32,39 @@ export function mount(el, { query, setQuery }) {
     { key: 'max_leverage', label: 'Max lev.', n: true, sort: r => r.max_leverage ?? 0, render: r => (r.max_leverage ? `${r.max_leverage}x` : '—') },
     { key: 'insurance', label: 'Insurance', n: true, sort: r => num(r.insurance) ?? 0, render: r => usd(r.insurance) }
   ];
-  function render() { if (data) el.querySelector('#list').innerHTML = table({ id: 'm', columns: COLS, rows: data.markets, sortKey: sort.key, sortDir: sort.dir, rowAttrs: r => `class="link" data-href="#/markets/${r.id}"` }); }
+  function render() { if (data) el.querySelector('#list').innerHTML = table({ id: 'm', columns: COLS, rows: data.markets, sortKey: sort.key, sortDir: sort.dir, rowAttrs: r => `class="link${!num(r.volume) && !num(r.open_interest) ? ' inactive' : ''}" data-href="#/markets/${r.id}"` }); }
   async function load() { data = await get(`protocol?window=${w}`); if (!alive) return; assignColors([...data.markets].sort((a, b) => num(b.volume) - num(a.volume)).map(m => m.id)); render(); }
+  // Funding across markets and time: APR per bucket, orange when longs pay.
+  async function loadFunding() {
+    const f = await get(`funding?window=${w}`, { maxAge: 30000 });
+    if (!alive) return;
+    const node = el.querySelector('#funding-map'); node.innerHTML = '';
+    const b = f.meta.bucket_seconds;
+    const all = f.series.flatMap(s => s.points.map(p => p.t));
+    if (!all.length) { node.innerHTML = empty('No funding events in this window'); return; }
+    const times = []; for (let t = Math.min(...all); t <= Math.max(...all); t += b) times.push(t);
+    const perYear = new Map(f.markets.map(m => [m.id, m.interval_seconds ? 365 * 86400 / m.interval_seconds : null]));
+    const oi = new Map(f.markets.map(m => [m.id, num(m.open_interest) ?? 0]));
+    const rows = f.series.filter(s => perYear.get(s.id)).sort((a, b2) => (oi.get(b2.id) ?? 0) - (oi.get(a.id) ?? 0)).map(s => {
+      const at = new Map(s.points.map(p => [p.t, p.rate_pct * perYear.get(s.id)]));
+      return { name: s.symbol, values: times.map(t => at.get(t) ?? null) };
+    });
+    node.style.height = `${Math.max(180, rows.length * 30 + 70)}px`;
+    el.querySelector('#f-desc').textContent = `Annualised rate per market, ${b >= 86400 ? 'daily' : b >= 14400 ? '4-hour' : 'hourly'} averages · orange: longs pay shorts, blue: shorts pay longs`;
+    // Scale to the data: the 95th percentile of |APR|, rounded up to a step.
+    const mags = rows.flatMap(r => r.values).filter(v => v !== null).map(Math.abs).sort((a, b2) => a - b2);
+    const p95 = mags.length ? mags[Math.min(mags.length - 1, Math.floor(mags.length * 0.95))] : 0;
+    const clamp = [10, 20, 25, 50, 100, 200].find(x => x >= p95) ?? 200;
+    el.querySelector('#f-desc').textContent += ` · scale ±${clamp}% APR`;
+    divergingHeatmap(node, { times, rows, bucketSeconds: b, clamp, labels: ['longs pay', 'shorts pay'], fmt: v => `${v > 0 ? '+' : ''}${v.toFixed(1)}% APR` });
+  }
   const off = stream.on('protocol', () => { if (w === '24h') load().catch(() => {}); });
   load().catch(error => { el.querySelector('#list').innerHTML = `<div class="empty-state">${esc(error.message)}</div>`; });
+  loadFunding().catch(() => { el.querySelector('#funding-map').innerHTML = empty('Funding history unavailable'); });
   return {
     onSeg(name, v) { if (name === 'window') setQuery({ window: v === '24h' ? null : v }); },
     onSort(id, key) { sort = { key, dir: sort.key === key && sort.dir === 'desc' ? 'asc' : 'desc' }; render(); },
-    update(q) { w = WINDOWS.some(([v]) => v === q.get('window')) ? q.get('window') : '24h'; el.querySelector('#win').innerHTML = seg('window', WINDOWS, w); load().catch(() => {}); },
+    update(q) { w = WINDOWS.some(([v]) => v === q.get('window')) ? q.get('window') : '24h'; el.querySelector('#win').innerHTML = seg('window', WINDOWS, w); load().catch(() => {}); loadFunding().catch(() => {}); },
     destroy() { alive = false; off(); }
   };
 }

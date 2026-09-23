@@ -1,5 +1,12 @@
 # Validation gate
 
+> Historical record of the formula and discovery checks run in September
+> 2026. The one-off `snapshot` diagnostic has since become the collector's
+> continuous verification (an independent account-bitmap rescan every
+> `VERIFY_BLOCKS`), and event-derived history is checked against the
+> contract by `/api/v1/integrity`. `npm run validate:math` still runs the
+> formula checks.
+
 Result: **PASS** for the implemented scope (open positions, open interest,
 PnL, funding, liquidation classification, live collector with reconciliation
 and independent discovery). Remaining outside the gate: direct contract
