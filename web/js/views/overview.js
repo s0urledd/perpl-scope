@@ -170,7 +170,7 @@ export function mount(el, { query, setQuery }) {
     if (cumulative) lineChart(oi, { times, series: [{ name: 'Open interest', color: COLORS.accent, data: pts.map(p => num(p.open_interest)) }], bucketSeconds: b }); else oi.innerHTML = empty(waitHistory);
     const tvl = $('tvl'); tvl.innerHTML = '';
     headValue('tvl', usd(c?.tvl));
-    if (cumulative) lineChart(tvl, { times, series: [{ name: 'TVL', color: SLOT_HEX[2], data: pts.map(p => num(p.tvl)) }], bucketSeconds: b, scale: true }); else tvl.innerHTML = empty(waitHistory);
+    if (cumulative) lineChart(tvl, { times, series: [{ name: 'TVL', color: SLOT_HEX[0], data: pts.map(p => num(p.tvl)) }], bucketSeconds: b, scale: true }); else tvl.innerHTML = empty(waitHistory);
     const flows = $('flows'); flows.innerHTML = '';
     headValue('flows', `<span class="${num(h.net_flow.value) >= 0 ? 'pos' : 'neg'}">${usd(h.net_flow.value, { sign: true })}</span>`, `${usd(h.deposits.value)} in · ${usd(h.withdrawals.value)} out`);
     twoSided(flows, { times, bucketSeconds: b, up: { name: 'Deposits', data: pts.map(p => p.deposits) }, down: { name: 'Withdrawals', data: pts.map(p => p.withdrawals) }, net: 'Net deposits' });
