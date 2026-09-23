@@ -108,6 +108,10 @@ measured instead of estimated:
     (`/api/v1/integrity`).
   - Live positions are reconciled with the open-interest counters every
     poll, and rescanned through an independent path every hour.
+- **Matches the venue.** On 23 September 2026, the 24 h volume summed from
+  maker fills was within 0.04 % of Perpl's own figure. Every active market
+  was within 0.1 %, and the gaps come from window alignment. Perpl's API is
+  used for this check only, never as an input.
 - **Coverage is stated, never assumed.** While history is being indexed,
   every window says whether it is complete.
 

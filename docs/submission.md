@@ -115,7 +115,7 @@ Judging criteria:
 | Event history reproduces the contract | `/api/v1/integrity`: open interest per market and net flow vs contract balance |
 | Live positions match the contract | Reconciliation every poll; independent rescan hourly (`/api/v1/validation`) |
 | PnL and funding formulas match the contract | `docs/validation-gate.md` (557 / 557, 208 / 208) |
-| 24 h volume matches Perpl's own figure | Within 0.001 % on 2026-09-21 |
+| 24 h volume matches Perpl's own figure | Within 0.001 % on 2026-09-21 and 0.035 % on 2026-09-23 (all markets within 0.1 %) |
 
 Claims to avoid:
 - exact prediction of liquidation execution prices;

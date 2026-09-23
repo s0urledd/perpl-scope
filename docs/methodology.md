@@ -113,7 +113,7 @@ on-chain are checked against this classification on every validation run.
 | Liquidity cover, stress test | derived | Deterministic functions of validated inputs |
 | ADL queue | approximation | Ranking rule from the Perpl documentation; venue ordering is off-chain |
 | Trade price, size and fee from linked fills | validated | 154,264 / 154,264 position events linked over 400,000 blocks, no size mismatch; fee split equals the fill fee on every building fill |
-| Volume | validated | 24 h maker-fill volume within 0.001 % of Perpl's venue figure (2026-09-21) |
+| Volume | validated | 24 h maker-fill volume within 0.001 % (2026-09-21) and 0.035 % (2026-09-23) of Perpl's venue figure |
 | Open interest from events | validated | Event deltas equal the contract's counters for all 11 markets (400,000 blocks); rechecked from launch by `/api/v1/integrity` |
 
 Not modelled: individual resting orders (only aggregate depth per price
@@ -207,8 +207,15 @@ sum per market.
   shown next to PnL, so large PnL from large volume can be told apart from an
   edge.
 
-### Earlier cross-check
+### Cross-checks against the venue
 
-On 2026-09-21 the 24 h maker-fill volume ($41,345,871) agreed with Perpl's
-venue-reported 24 h volume ($41,346,189) to within 0.001 %, and every market
-agreed within 1 % (window alignment). The same volume rule is used here.
+Perpl's public API is never an input. It is only used to check the volume
+rule against the venue's own reported 24 h volume:
+
+| Date | Pipeline | PerplScope | Perpl | Total gap | Largest market gap |
+| --- | --- | --- | --- | --- | --- |
+| 2026-09-21 | In-memory event index | $41,345,871 | $41,346,189 | 0.001 % | under 1 % |
+| 2026-09-23 | ClickHouse | $18,240,072 | $18,233,631 | 0.035 % | 0.07 % (SOL_v2) |
+
+The gaps come from window alignment: the two windows end a few minutes
+apart.
