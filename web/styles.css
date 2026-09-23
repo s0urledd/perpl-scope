@@ -341,3 +341,25 @@ tr.inactive td { opacity: 0.5; }
 .legend .lg.off { opacity: 0.4; }
 .legend .lg.off i { background: transparent !important; box-shadow: inset 0 0 0 1px var(--text-3); }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+/* Order book ladder */
+.book { font-size: 12.5px; padding: 4px 0 8px; }
+.book-row { position: relative; display: grid; grid-template-columns: 1fr 1fr 1fr; padding: 3px 16px; line-height: 18px; }
+.book-row > span { position: relative; text-align: right; }
+.book-row > span:first-child { text-align: left; }
+.book-row > i { position: absolute; right: 0; top: 1px; bottom: 1px; opacity: 0.14; }
+.book-row.ask > span:first-child { color: var(--short); }
+.book-row.bid > span:first-child { color: var(--long); }
+.book-row.ask > i { background: var(--short); }
+.book-row.bid > i { background: var(--long); }
+.book-row.head { color: var(--text-3); font-size: 11.5px; padding-bottom: 6px; }
+.book-mid { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 16px; margin: 4px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); font-size: 14px; font-weight: 500; }
+.book-mid .faint { font-size: 11.5px; font-weight: 400; }
+/* Position calculator */
+.calc-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; font-size: 12px; }
+.calc-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; margin-bottom: 12px; }
+.calc-f { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--text-2); }
+.calc-in { height: 34px; padding: 0 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); outline: none; font-size: 13px; }
+.calc-in:focus { border-color: rgba(162, 164, 255, 0.45); }
+.calc-out { margin: 0 -16px; }
+.calc-note { font-size: 11.5px; margin-top: 10px; }
+.lb-search { height: 30px; width: 240px; max-width: 100%; font-size: 12.5px; }

@@ -1,7 +1,7 @@
 // One market: price candles and volume, positioning, funding history,
 // liquidation ladder from live positions, top traders and recent trades.
 import { get, stream } from '../api.js';
-import { usd, int, price, pct, num, esc, timeOnly, dateTime, duration } from '../format.js';
+import { usd, int, price, pct, num, esc, size, timeOnly, dateTime, duration } from '../format.js';
 import { kpi, seg, table, mkt, sideTag, addr, ratio, pnl, pctCell, fundingCell, fundingTip, tradeAction, skeleton, skChart, empty, colorOf, chartTools, logo } from '../ui.js';
 import { candles, signedBars, mirrored } from '../charts.js';
 
@@ -28,10 +28,16 @@ export function mount(el, { params, query, setQuery }) {
       </div>
       <section class="panel"><div class="panel-head"><div><h2>Largest positions</h2><div class="desc">Open now, from contract state · closest to liquidation highlighted</div></div><span class="meta" id="pos-meta"></span></div><div class="panel-body flush" id="positions">${skeleton(6)}</div></section>
       <div class="grid g-2">
-        <section class="panel"><div class="panel-head"><h2>Top traders</h2><span class="meta" id="lb-meta"></span></div><div class="panel-body flush" id="lb">${skeleton(6)}</div></section>
+        <section class="panel"><div class="panel-head"><div><h2>Order book</h2><div class="desc">Resting orders read from the contract · bars: cumulative depth</div></div><span class="meta" id="book-meta"></span></div><div class="panel-body flush" id="book">${skeleton(10)}</div></section>
         <section class="panel fill"><div class="panel-head"><h2>Recent trades</h2><span class="meta">Aggressor side</span></div><div class="panel-body flush scroll" id="trades">${skeleton(6)}</div></section>
       </div>
+      <div class="grid g-2">
+        <section class="panel"><div class="panel-head"><h2>Top traders</h2><span class="meta" id="lb-meta"></span></div><div class="panel-body flush" id="lb">${skeleton(6)}</div></section>
+        <section class="panel"><div class="panel-head"><div><h2>Position calculator</h2><div class="desc">Liquidation price and PnL under this market's margin rules</div></div></div><div class="panel-body" id="calc">${skeleton(5)}</div></section>
+      </div>
     </div>`;
+  const BOOK_LEVELS = 12;
+  let calc = { side: 'long', usd: 1000, lev: 5, entry: null, exit: null };
   const $ = s => el.querySelector(`#${s}`);
 
   async function load() {
@@ -57,7 +63,7 @@ export function mount(el, { params, query, setQuery }) {
     else {
       let prev = null;
       const ohlc = s.points.map(x => { const c = num(x.close), o = num(x.open) ?? prev ?? c, h = num(x.high) ?? Math.max(o, c), l = num(x.low) ?? Math.min(o, c); prev = c; return c === null ? '-' : [o, c, l, h]; });
-      candles(node, { times: s.times, ohlc, volume: s.points.map(x => num(x.volume)), bucketSeconds: s.meta.bucket_seconds, priceFmt: v => price(v).replace(/\.0+$/, ''), volColor: colorOf(id) + '99' });
+      candles(node, { times: s.times, ohlc, volume: s.points.map(x => num(x.volume)), bucketSeconds: s.meta.bucket_seconds, priceFmt: v => price(v).replace(/\.0+$/, ''), volColor: colorOf(id) + '99', zoom: true });
     }
   }
   async function loadRisk() {
@@ -76,6 +82,7 @@ export function mount(el, { params, query, setQuery }) {
         <div class="stat"><span>Largest position</span><span>${usd(risk.concentration?.largest?.notional)}</span></div><div class="stat"><span>Top 5 share</span><span>${pct(risk.concentration?.top5_pct, { digits: 1 })}</span></div>
       </div>${costTable(risk.liquidity)}`;
     renderPositions(risk.top_positions ?? []);
+    if (!$('calc')?.contains(document.activeElement)) renderCalc(); // not while someone types in it
     const ladder = risk.ladder ?? [];
     const lnode = $('ladder'); lnode.innerHTML = '';
     if (ladder.length && (L.count + S.count) > 0) mirrored(lnode, { labels: ladder.map(x => `${x.shock_pct}%`), long: ladder.map(x => num(x.long.notional)), short: ladder.map(x => num(x.short.notional)) });
@@ -96,6 +103,70 @@ export function mount(el, { params, query, setQuery }) {
       { key: 'd', label: 'To liq.', n: true, render: r => (r.liquidation_distance_pct === null ? '—' : `<span class="${r.liquidation_distance_pct < 5 ? 'neg' : r.liquidation_distance_pct < 15 ? 'warn-text' : 'muted'}">${pct(r.liquidation_distance_pct, { digits: 1 })}</span>`) }
     ], rows: shown, rowAttrs: r => `class="link" data-href="#/wallet/${esc(r.address || r.account_id)}"` });
   }
+  // Order book: asks above, bids below, each level with its cumulative depth
+  // from the touch; the bar width is that depth against the deeper side.
+  async function loadBook() {
+    const b = await get(`markets/${id}/book`, { maxAge: 10000 }).catch(error => ({ error }));
+    if (!alive) return;
+    const node = $('book');
+    if (b.error || (!b.bids?.length && !b.asks?.length)) { node.innerHTML = empty(b.error?.status === 404 ? 'No order book for this market' : 'Order book unavailable'); $('book-meta').textContent = ''; return; }
+    const cum = side => { let run = 0; return side.slice(0, BOOK_LEVELS).map(l => ({ ...l, cum: (run += num(l.notional) || 0) })); };
+    const asks = cum(b.asks), bids = cum(b.bids);
+    const max = Math.max(asks.at(-1)?.cum ?? 0, bids.at(-1)?.cum ?? 0) || 1;
+    const line = (l, side) => `<div class="book-row ${side}"><i style="width:${(l.cum / max * 100).toFixed(1)}%"></i><span class="num">${price(l.price)}</span><span class="num">${size(l.size)}</span><span class="num muted">${usd(l.cum)}</span></div>`;
+    const L = b.liquidity ?? {};
+    const spread = L.spread_bps === null || L.spread_bps === undefined ? '—' : `${L.spread_bps.toFixed(L.spread_bps < 1 ? 2 : 1)} bps`;
+    node.innerHTML = `<div class="book"><div class="book-row head"><span>Price</span><span>Size</span><span>Total</span></div>
+      ${asks.slice().reverse().map(l => line(l, 'ask')).join('')}
+      <div class="book-mid"><span class="num">${price(b.mark)}</span><span class="faint">mark · spread ${spread}</span></div>
+      ${bids.map(l => line(l, 'bid')).join('')}</div>`;
+    $('book-meta').textContent = b.stale ? 'stale read' : L.age_blocks !== null && L.age_blocks !== undefined ? `read ${int(L.age_blocks)} blocks ago` : '';
+  }
+
+  // Position calculator. Perpl liquidates a position when its equity falls to
+  // the maintenance margin of its notional at the mark; with the deposit at
+  // entry notional / leverage and no fees or funding, that price is
+  //   long:  E·(1 − 1/L) / (1 − m)      short: E·(1 + 1/L) / (1 + m)
+  function renderCalc() {
+    const node = $('calc'); if (!node || !risk) return;
+    const m = (risk.margin?.maintenance_margin_pct ?? 0) / 100, maxLev = risk.margin?.max_leverage ?? 1;
+    const mark = num(risk.prices?.mark ?? row?.mark ?? row?.close);
+    if (!mark) { node.innerHTML = empty('No price for this market'); return; }
+    if (calc.entry === null) calc.entry = mark;
+    if (calc.exit === null) calc.exit = mark * (calc.side === 'long' ? 1.05 : 0.95);
+    calc.lev = Math.min(Math.max(1, calc.lev), maxLev);
+    const E = calc.entry, L = calc.lev, qty = calc.usd / E, margin = calc.usd / L, long = calc.side === 'long';
+    const liq = long ? E * (1 - 1 / L) / (1 - m) : E * (1 + 1 / L) / (1 + m);
+    const dist = (long ? (mark - liq) / mark : (liq - mark) / mark) * 100;
+    const pnlAtExit = (long ? calc.exit - E : E - calc.exit) * qty;
+    const field = (k, label, value, step, extra = '') => `<label class="calc-f"><span>${label}</span><input class="calc-in num" data-k="${k}" type="number" step="${step}" value="${value}" ${extra}></label>`;
+    node.innerHTML = `<div class="calc">
+      <div class="calc-top">${`<div class="seg sm" role="group"><button data-action="calc-side" data-v="long" class="${long ? 'on' : ''}">Long</button><button data-action="calc-side" data-v="short" class="${long ? '' : 'on'}">Short</button></div>`}
+        <span class="faint">Max ${maxLev}x · maintenance margin ${pct(m * 100, { digits: 2 })}</span></div>
+      <div class="calc-grid">
+        ${field('usd', 'Size (USD)', calc.usd, 100, 'min="1"')}
+        ${field('lev', `Leverage (1–${maxLev}x)`, calc.lev, 1, `min="1" max="${maxLev}"`)}
+        ${field('entry', 'Entry price', +E.toPrecision(8), 'any', 'min="0"')}
+        ${field('exit', 'Exit price', +calc.exit.toPrecision(8), 'any', 'min="0"')}
+      </div>
+      <div class="stat-grid calc-out">
+        <div class="stat"><span>Margin</span><span>${usd(margin)}</span></div>
+        <div class="stat"><span>Quantity</span><span>${size(qty)}</span></div>
+        <div class="stat"><span>Liquidation price</span><span class="${dist < 5 ? 'neg' : dist < 15 ? 'warn-text' : ''}">${liq > 0 ? price(liq) : '—'}</span></div>
+        <div class="stat"><span>From mark</span><span>${liq > 0 ? `${pct(dist, { digits: 1 })} ${long ? 'down' : 'up'}` : '—'}</span></div>
+        <div class="stat"><span>PnL at exit</span><span>${pnl(pnlAtExit)}</span></div>
+        <div class="stat"><span>Return on margin</span><span class="${pnlAtExit >= 0 ? 'pos' : 'neg'}">${pct(pnlAtExit / margin * 100, { digits: 1, sign: true })}</span></div>
+      </div>
+      <div class="faint calc-note">An estimate before fees and funding. Live positions carry their own deposit, so their liquidation prices (above) differ slightly.</div></div>`;
+  }
+  // The view container outlives this page: the listener is removed in destroy().
+  const onCalcChange = e => {
+    const k = e.target.closest?.('.calc-in')?.dataset.k; if (!k) return;
+    const v = Number(e.target.value); if (!Number.isFinite(v) || v <= 0) return;
+    calc[k] = v; renderCalc();
+  };
+  el.addEventListener('change', onCalcChange);
+
   // What a market order costs against the on-chain book, from the mid.
   function costTable(L) {
     const rows = L?.cost_to_trade ?? [];
@@ -144,15 +215,17 @@ export function mount(el, { params, query, setQuery }) {
     ], rows: tape.slice(0, 60), rowAttrs: r => `class="${r.fresh ? 'flash' : ''}"` });
   }
   const off = stream.on('trades', rows => { const mine = rows.filter(r => r.market === id); if (!mine.length) return; tape = [...mine.reverse().map(r => ({ ...r, fresh: true })), ...tape].slice(0, 60); renderTrades(tape); tape.forEach(r => { r.fresh = false; }); });
-  const timer = setInterval(() => { loadRisk().catch(() => {}); if (w === '24h') load().catch(() => {}); }, 20000);
+  const timer = setInterval(() => { loadRisk().catch(() => {}); loadBook().catch(() => {}); if (w === '24h') load().catch(() => {}); }, 20000);
+  loadBook().catch(() => {});
   load().catch(error => { $('kpis').innerHTML = `<div class="empty-state">${esc(error.message)}</div>`; });
   loadRisk().catch(() => { $('positioning').innerHTML = empty('Live positions unavailable'); $('ladder').innerHTML = empty('Unavailable'); });
   loadFunding().catch(() => { $('funding').innerHTML = empty('Unavailable'); });
   loadFeeds().catch(() => {});
   return {
     onSeg(name, v) { if (name === 'window') setQuery({ window: v === '24h' ? null : v }); },
+    onAction(a, t) { if (a === 'calc-side') { calc.side = t.dataset.v; calc.exit = null; renderCalc(); } },
     update(q) { w = WINDOWS.some(([v]) => v === q.get('window')) ? q.get('window') : '24h'; $('win').innerHTML = seg('window', WINDOWS, w); load().catch(() => {}); loadFeeds().catch(() => {}); },
-    destroy() { alive = false; off(); clearInterval(timer); }
+    destroy() { alive = false; el.removeEventListener('change', onCalcChange); off(); clearInterval(timer); }
   };
 }
 export { dateTime, sideTag };

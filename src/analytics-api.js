@@ -547,6 +547,24 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
     });
   }
 
+  // Traders in a window at a glance: how many traded, how many are up after
+  // fees, the total, and the median PnL per unit of volume (from the shared
+  // per-window score table, refreshed each minute).
+  async function traderSummary(query) {
+    const w = windowOf(query);
+    const table = await scores(w);
+    const scale = 10 ** cd(), rows = [...table.of.values()];
+    const profitable = rows.filter(r => r.pnl > 0).length;
+    const ratios = rows.filter(r => r.volume > 0).map(r => r.pnl / r.volume).sort((a, b) => a - b);
+    const median = ratios.length ? (ratios.length % 2 ? ratios[(ratios.length - 1) / 2] : (ratios[ratios.length / 2 - 1] + ratios[ratios.length / 2]) / 2) : null;
+    const { from, to } = rangeOf(w);
+    return {
+      meta: metaOf({ window: w, from, to, coverage: coverageOf(from, to) }),
+      traders: rows.length, profitable, profitable_pct: rows.length ? Math.round(profitable / rows.length * 10000) / 100 : null,
+      net_pnl: (rows.reduce((a, r) => a + r.pnl, 0) / scale).toFixed(2), volume: (rows.reduce((a, r) => a + r.volume, 0) / scale).toFixed(2),
+      median_pnl_per_volume_bps: median === null ? null : Math.round(median * 1e6) / 100
+    };
+  }
   // Open interest by cohort: live positions grouped by account size and by
   // track record (net PnL over the indexed history), with the largest wallets.
   async function cohorts() {
@@ -564,5 +582,5 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
       return { meta: metaOf({ window: 'all', from, to, coverage: coverageOf(from, to) }), block: state.block.number.toString(), ...t };
     });
   }
-  return { addressesOf: addresses, protocol, series, liquidations, trades, funding, fundingOverview, cohorts, flows, leaderboard, search, profile, walletAnalytics, walletPeriods, walletTrades, compare, integrity, cache, tradeView, tradeViews, rangeOf };
+  return { addressesOf: addresses, protocol, series, liquidations, trades, funding, fundingOverview, cohorts, traderSummary, flows, leaderboard, search, profile, walletAnalytics, walletPeriods, walletTrades, compare, integrity, cache, tradeView, tradeViews, rangeOf };
 }
