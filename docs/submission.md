@@ -45,7 +45,7 @@ Judging criteria:
 | Open positions: size, entry, leverage, unrealized PnL, liquidation price | Wallet page, from contract state at the latest finalized block |
 | Trade history and realized PnL | Trade history tab with fill prices, role and realized PnL; CSV; round trips tab |
 | Win rate, profit factor, max drawdown, streaks, hold time, best / worst markets | Performance panel and KPI strip |
-| Save / watch / compare wallets | Star on any trader; Watchlist; Compare up to five wallets with overlaid PnL curves |
+| Save / watch / compare wallets | Star on any trader; watchlist on the Alerts page, with Telegram alerts per wallet; Compare up to five wallets with overlaid PnL curves, opened from a wallet page or the watchlist |
 | Portfolio and margin overview | Account value, free and locked balance, margin usage, leverage, closest liquidation |
 | Behavioural insights (optional) | Behaviour panel: rule-based notes and a weekday × hour activity map |
 
