@@ -116,9 +116,12 @@ export function mount(el, { params, query, setQuery }) {
     const line = (l, side) => `<div class="book-row ${side}"><i style="width:${(l.cum / max * 100).toFixed(1)}%"></i><span class="num">${price(l.price)}</span><span class="num">${size(l.size)}</span><span class="num muted">${usd(l.cum)}</span></div>`;
     const L = b.liquidity ?? {};
     const spread = L.spread_bps === null || L.spread_bps === undefined ? '—' : `${L.spread_bps.toFixed(L.spread_bps < 1 ? 2 : 1)} bps`;
+    // The book's own midpoint; the mark follows the oracle and can sit outside the touch.
+    const bestBid = num(L.best_bid ?? b.bids[0]?.price), bestAsk = num(L.best_ask ?? b.asks[0]?.price);
+    const mid = bestBid && bestAsk ? (bestBid + bestAsk) / 2 : null;
     node.innerHTML = `<div class="book"><div class="book-row head"><span>Price</span><span>Size</span><span>Total</span></div>
       ${asks.slice().reverse().map(l => line(l, 'ask')).join('')}
-      <div class="book-mid"><span class="num">${price(b.mark)}</span><span class="faint">mark · spread ${spread}</span></div>
+      <div class="book-mid"><span class="num">${mid ? price(mid) : price(b.mark)}</span><span class="faint">${mid ? 'mid' : 'mark'} · spread ${spread}${mid ? ` · mark ${price(b.mark)}` : ''}</span></div>
       ${bids.map(l => line(l, 'bid')).join('')}</div>`;
     $('book-meta').textContent = b.stale ? 'stale read' : L.age_blocks !== null && L.age_blocks !== undefined ? `read ${int(L.age_blocks)} blocks ago` : '';
   }

@@ -345,10 +345,10 @@ tr.inactive td { opacity: 0.5; }
 .book { font-size: 12.5px; padding: 4px 0 8px; }
 .book-row { position: relative; display: grid; grid-template-columns: 1fr 1fr 1fr; padding: 3px 16px; line-height: 18px; }
 .book-row > span { position: relative; text-align: right; }
-.book-row > span:first-child { text-align: left; }
+.book-row > span:first-of-type { text-align: left; }
 .book-row > i { position: absolute; right: 0; top: 1px; bottom: 1px; opacity: 0.14; }
-.book-row.ask > span:first-child { color: var(--short); }
-.book-row.bid > span:first-child { color: var(--long); }
+.book-row.ask > span:first-of-type { color: var(--short); }
+.book-row.bid > span:first-of-type { color: var(--long); }
 .book-row.ask > i { background: var(--short); }
 .book-row.bid > i { background: var(--long); }
 .book-row.head { color: var(--text-3); font-size: 11.5px; padding-bottom: 6px; }
