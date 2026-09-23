@@ -220,6 +220,17 @@ export function mount(el, { query, setQuery }) {
     $('markets-meta').textContent = `${rows.filter(r => r.active !== false).length} active markets · ${w === 'all' ? 'all-time' : w} activity, live prices and positions`;
   }
 
+  // Consensus timing of the blocks behind proposed trades (from the node's
+  // execution events): the tape footer shows the median time from a block
+  // starting to its finalization; a dimmed row's tooltip gives its own stage.
+  const finalMs = [];
+  const secs = ms => `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1)} s`;
+  const stageTitle = r => (r.votedMs !== undefined ? `Proposed block, voted ${secs(r.votedMs)} after it started executing; final soon` : 'Proposed block, not final yet');
+  function renderSpeed() {
+    if (!finalMs.length) return;
+    const sorted = [...finalMs].sort((a, b) => a - b), mid = sorted[Math.floor(sorted.length / 2)];
+    $('tape-meta').innerHTML = `Proposed → final <b class="num" title="Median time from a proposed block starting to execute to its finalization, as seen from the Monad node Plumb reads; last ${sorted.length} blocks with Perpl trades">${secs(mid)}</b> · UTC`;
+  }
   function renderTape() {
     const min = Number(minSize);
     const rows = tape.filter(r => (num(r.notional) ?? 0) >= min);
@@ -231,7 +242,7 @@ export function mount(el, { query, setQuery }) {
       { key: 's', label: 'Action', render: tradeAction },
       { key: 'p', label: 'Price', n: true, render: r => price(r.price) },
       { key: 'v', label: 'Value', n: true, render: r => usd(r.notional) }
-    ], rows: rows.slice(0, 60), rowAttrs: r => `class="link ${r.fresh ? 'flash' : ''} ${r.proposed ? 'proposed' : ''}" data-href="#/wallet/${esc(r.address || r.account)}" ${r.proposed ? 'title="Proposed block, not final yet"' : ''}` });
+    ], rows: rows.slice(0, 60), rowAttrs: r => `class="link ${r.fresh ? 'flash' : ''} ${r.proposed ? 'proposed' : ''}" data-href="#/wallet/${esc(r.address || r.account)}" ${r.proposed ? `title="${stageTitle(r)}"` : ''}` });
     for (const r of tape) r.fresh = false;
   }
   function renderLiqs(l) {
@@ -308,7 +319,11 @@ export function mount(el, { query, setQuery }) {
   }));
   // A proposed trade still unmatched 10 finalized blocks later never finalized.
   off.push(stream.on('block', b => { let dropped = false; for (let i = tape.length - 1; i >= 0; i--) if (tape[i].proposed && Number(tape[i].block) <= Number(b.block) - 10) { tape.splice(i, 1); dropped = true; } if (dropped) renderTape(); }));
-  off.push(stream.on('proposed', p => { for (const r of p.trades) if (!tape.some(x => x.tx === r.tx)) tape.unshift({ ...r, proposed: true, fresh: true }); tape.length = Math.min(tape.length, 400); $('tape-meta').textContent = 'Proposed + finalized blocks · UTC'; renderTape(); }));
+  off.push(stream.on('stage', s => {
+    if (s.stage === 'voted') { for (const r of tape) if (r.proposed && Number(r.block) === s.block) r.votedMs = s.ms; return; }
+    if (s.stage === 'finalized') { finalMs.push(s.ms); if (finalMs.length > 50) finalMs.shift(); renderSpeed(); }
+  }));
+  off.push(stream.on('proposed', p => { for (const r of p.trades) if (!tape.some(x => x.tx === r.tx)) tape.unshift({ ...r, proposed: true, fresh: true }); tape.length = Math.min(tape.length, 400); if (!finalMs.length) $('tape-meta').textContent = 'Proposed + finalized blocks · UTC'; renderTape(); }));
   off.push(stream.on('backfill', p => {
     const finished = backfill && !backfill.complete && p.complete;
     backfill = p;

@@ -41,6 +41,6 @@ export const stream = {
     source = new EventSource('/api/v1/stream');
     source.onopen = () => { this.status = 'open'; this.emit('status', 'open'); };
     source.onerror = () => { this.status = 'reconnecting'; this.emit('status', 'reconnecting'); };
-    for (const name of ['block', 'trades', 'liquidations', 'protocol', 'backfill', 'proposed']) source.addEventListener(name, e => { let data; try { data = displayNames(JSON.parse(e.data)); } catch { return; } this.emit(name, data); });
+    for (const name of ['block', 'trades', 'liquidations', 'protocol', 'backfill', 'proposed', 'stage']) source.addEventListener(name, e => { let data; try { data = displayNames(JSON.parse(e.data)); } catch { return; } this.emit(name, data); });
   }
 };

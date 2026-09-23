@@ -73,7 +73,7 @@ transaction events to a shared-memory ring. The Monode sidecar
 `release/exec-events-sdk-v1.0`) reads it and forwards over a WebSocket, in
 restricted mode:
 - block lifecycle events: `BlockStart`, `BlockEnd`, `BlockReject`,
-  `BlockFinalized`;
+  `BlockQC` (voted), `BlockFinalized`;
 - `TxnLog` events of the exchange address;
 - Monode's own TPS and top-accesses summaries, which are not filtered and
   which Plumb ignores.
