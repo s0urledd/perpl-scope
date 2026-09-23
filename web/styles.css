@@ -237,6 +237,7 @@ tr.hl td { background: rgba(162, 164, 255, 0.07); }
 .mkt { display: inline-flex; align-items: center; gap: 8px; font-weight: 500; }
 .mkt .sw { width: 8px; height: 8px; border-radius: 2px; flex: none; }
 .mkt .tk { border-radius: 50%; flex: none; box-shadow: 0 0 0 1px var(--line-2); }
+.tk-letter { display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; flex: none; color: #fff; font-style: normal; font-weight: 600; line-height: 1; }
 .mkt .nm { color: var(--text-3); font-weight: 400; font-size: 12px; }
 .side { font-size: 11.5px; font-weight: 600; padding: 2px 6px; border-radius: 3px; letter-spacing: 0.02em; }
 .side.long { color: var(--long); background: var(--long-soft); }
