@@ -476,3 +476,8 @@ select.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px
 .fill-table > .table-wrap { flex: 1; display: flex; }
 .fill-table table.t { height: 100%; }
 .fill-table .t td { vertical-align: middle; padding-top: 8px; padding-bottom: 8px; }
+
+/* Trend panels: title and value on one row, their own window and tools on the next. */
+.panel.trend > .panel-head:first-child { align-items: flex-start; }
+.panel-head.trend-bar { min-height: 0; padding-top: 0; padding-bottom: 4px; }
+.panel-head.trend-bar .head-right { display: flex; align-items: center; gap: 8px; }

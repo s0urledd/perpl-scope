@@ -19,9 +19,13 @@ export function mount(el, { query, setQuery }) {
   let feeView = 'type';
   let sort = { key: 'volume', dir: 'desc' };
   let minSize = localStorage.getItem('ps.minsize') ?? '100';
-  let data = null, series = null, alive = true, flows = null, flowView = 'recent', lastLongLoad = 0;
+  let data = null, series = null, alive = true, flows = null, flowView = 'recent', lastLongLoad = 0, trendsLoaded = false;
   const tape = [], off = [];
-  const panel = (id, title, desc, extra = '') => `<section class="panel"><div class="panel-head"><div><h2>${title}</h2><div class="desc">${desc}</div></div><div class="head-right">${extra}${chartTools(id, id)}<div class="head-value" id="${id}-v"></div></div></div><div class="panel-body"><div class="chart sm" id="${id}">${skChart()}</div></div></section>`;
+  // The trend charts each keep their own window, independent of the one at the
+  // top (which drives the headline metrics, the volume chart and the markets).
+  const TRENDS = ['oi', 'tvl', 'flows', 'traders', 'fees', 'liq', 'tpnl', 'taker'];
+  const pw = Object.fromEntries(TRENDS.map(id => [id, w]));
+  const panel = (id, title, desc, extra = '') => `<section class="panel trend"><div class="panel-head"><div><h2>${title}</h2><div class="desc">${desc}</div></div><div class="head-value" id="${id}-v"></div></div><div class="panel-head trend-bar"><div id="${id}-win">${segSm(`tw:${id}`, WINDOWS, pw[id])}</div><div class="head-right">${extra}${chartTools(id, id)}</div></div><div class="panel-body"><div class="chart sm" id="${id}">${skChart()}</div></div></section>`;
 
   el.innerHTML = `
     <div class="page-head hero">
@@ -87,7 +91,8 @@ export function mount(el, { query, setQuery }) {
     if (!alive) return;
     data = p; series = s;
     assignColors([...p.markets].sort((a, b) => num(b.volume) - num(a.volume)).map(m => ({ id: m.id, symbol: m.symbol })));
-    renderBucket(); renderKpis(); renderVolume(); renderTrends(); renderMarkets(); renderWindows();
+    renderBucket(); renderKpis(); renderVolume(); renderMarkets(); renderWindows();
+    if (!trendsLoaded) { trendsLoaded = true; loadTrends().catch(() => {}); }
   }
   async function loadFeeds() {
     const [t, l, f] = await Promise.all([get('trades?limit=200', { maxAge: 800 }), get('liquidations?limit=8'), get(`flows?window=${w}`)]);
@@ -97,9 +102,9 @@ export function mount(el, { query, setQuery }) {
   }
 
   // Change over the window from the running-sum series (null until history is complete).
-  function seriesChange(field) {
-    if (w === 'all' || !series?.meta?.cumulative_complete) return undefined; // from launch the change is meaningless
-    const vals = series.points.map(p => num(p[field])).filter(v => v !== null);
+  function seriesChange(field, sr = series, win = w) {
+    if (win === 'all' || !sr?.meta?.cumulative_complete) return undefined; // from launch the change is meaningless
+    const vals = sr.points.map(p => num(p[field])).filter(v => v !== null);
     if (vals.length < 2 || !vals[0]) return undefined;
     return Math.round((vals.at(-1) - vals[0]) / vals[0] * 10000) / 100;
   }
@@ -128,11 +133,11 @@ export function mount(el, { query, setQuery }) {
   }
 
   // Stacked by market: the six largest markets keep their colour, the rest fold into Other.
-  function byMarket(metric) {
-    const all = mergeByAsset(series.by_market ?? [], ['volume', 'liquidated', 'fees']).filter(m => m[metric].some(v => num(v) > 0));
+  function byMarket(metric, sr = series) {
+    const all = mergeByAsset(sr.by_market ?? [], ['volume', 'liquidated', 'fees']).filter(m => m[metric].some(v => num(v) > 0));
     const top = all.filter(m => hasColor(m.id)), rest = all.filter(m => !hasColor(m.id));
     const list = top.map(m => ({ id: m.id, name: m.symbol, color: colorOf(m.id), data: m[metric].map(num) }));
-    if (rest.length) list.push({ name: 'Other', color: OTHER_HEX, data: series.times.map((_, i) => rest.reduce((a, m) => a + num(m[metric][i]), 0)) });
+    if (rest.length) list.push({ name: 'Other', color: OTHER_HEX, data: sr.times.map((_, i) => rest.reduce((a, m) => a + num(m[metric][i]), 0)) });
     return list;
   }
   // The swatch keeps the series colour; the logo (when the asset has one) names it.
@@ -156,49 +161,75 @@ export function mount(el, { query, setQuery }) {
   function headValue(id, value, note = '') { const n = $(`${id}-v`); if (n) n.innerHTML = `<div class="hv">${value}</div>${note ? `<div class="hn">${note}</div>` : ''}`; }
   // Fees per period by type (protocol revenue, insurance fund) or by market.
   function renderFees() {
-    const node = $('fees'); if (!node || !series) return;
-    const pts = series.points, times = series.times, b = series.meta.bucket_seconds;
+    const d = trendOf.fees, node = $('fees'); if (!node || !d) return;
+    const sr = d.s, pts = sr.points, times = sr.times, b = sr.meta.bucket_seconds;
     node.innerHTML = '';
-    const list = feeView === 'market' ? byMarket('fees') : [{ name: 'Protocol (revenue)', color: SLOT_HEX[0], data: pts.map(p => num(p.protocol_fees)) }, { name: 'Insurance fund', color: SLOT_HEX[2], data: pts.map(p => num(p.insurance_fees)) }];
+    const list = feeView === 'market' ? byMarket('fees', sr) : [{ name: 'Protocol (revenue)', color: SLOT_HEX[0], data: pts.map(p => num(p.protocol_fees)) }, { name: 'Insurance fund', color: SLOT_HEX[2], data: pts.map(p => num(p.insurance_fees)) }];
     if (list.length) stackedBars(node, { times, series: list, bucketSeconds: b }); else node.innerHTML = empty('No fees in this window');
   }
-  function renderTrends() {
-    const pts = series.points, times = series.times, b = series.meta.bucket_seconds, h = data.headline, c = data.current;
-    const cumulative = series.meta.cumulative_complete;
-    const waitHistory = historyNote();
-    // Both axes start at zero, so a 1% move looks like one; the change over the
-    // window is written out in the header instead.
-    const moved = field => { const d = seriesChange(field); return d === undefined ? '' : `<span class="${d > 0 ? 'pos' : d < 0 ? 'neg' : 'faint'}">${d > 0 ? '+' : ''}${d.toFixed(Math.abs(d) < 10 ? 1 : 0)}%</span> over ${w}`; };
-    const oi = $('oi'); oi.innerHTML = '';
-    headValue('oi', usd(c?.open_interest), moved('open_interest'));
-    if (cumulative) lineChart(oi, { times, series: [{ name: 'Open interest', color: COLORS.accent, data: pts.map(p => num(p.open_interest)) }], bucketSeconds: b }); else oi.innerHTML = empty(waitHistory);
-    const tvl = $('tvl'); tvl.innerHTML = '';
-    headValue('tvl', usd(c?.tvl), moved('tvl'));
-    if (cumulative) lineChart(tvl, { times, series: [{ name: 'TVL', color: SLOT_HEX[0], data: pts.map(p => num(p.tvl)) }], bucketSeconds: b }); else tvl.innerHTML = empty(waitHistory);
-    const flows = $('flows'); flows.innerHTML = '';
-    headValue('flows', `<span class="${num(h.net_flow.value) >= 0 ? 'pos' : 'neg'}">${usd(h.net_flow.value, { sign: true })}</span>`, `${usd(h.deposits.value)} in · ${usd(h.withdrawals.value)} out`);
-    twoSided(flows, { times, bucketSeconds: b, up: { name: 'Deposits', data: pts.map(p => p.deposits) }, down: { name: 'Withdrawals', data: pts.map(p => p.withdrawals) }, net: 'Net deposits' });
-    const tp = $('tpnl'); tp.innerHTML = '';
-    // Header figures come from the window's own totals, not from summing the
-    // chart's buckets; 'after fees' is the Traders page's figure for the same window.
-    const totalPnl = num(h.realized_pnl?.value ?? h.realized_pnl) ?? 0;
-    headValue('tpnl', `<span class="${totalPnl >= 0 ? 'pos' : 'neg'}">${usd(totalPnl, { sign: true })}</span>`, windowLabel());
-    get(`traders/summary?window=${w}`, { maxAge: 20000 }).then(t => { if (alive && t) headValue('tpnl', `<span class="${totalPnl >= 0 ? 'pos' : 'neg'}">${usd(totalPnl, { sign: true })}</span>`, `${windowLabel()} · after fees ${usd(t.net_pnl, { sign: true })}`); }).catch(() => {});
-    signedBars(tp, { times, values: pts.map(p => num(p.realized_pnl)), bucketSeconds: b, name: 'Trader realized PnL' });
-    const tk = $('taker'); tk.innerHTML = '';
-    const buys = data.markets.reduce((a, m) => a + (num(m.taker_buy) ?? 0), 0), sells = data.markets.reduce((a, m) => a + (num(m.taker_sell) ?? 0), 0);
-    headValue('taker', buys + sells ? `${pct(buys / (buys + sells) * 100, { digits: 1 })} buys` : '—', `${usd(buys)} bought · ${usd(sells)} sold`);
-    twoSided(tk, { times, bucketSeconds: b, up: { name: 'Taker buys', data: pts.map(p => p.taker_buy) }, down: { name: 'Taker sells', data: pts.map(p => p.taker_sell) }, net: 'Net taker buying' });
-    const tr = $('traders'); tr.innerHTML = '';
-    headValue('traders', int(h.traders.value), `${w === 'all' ? 'all-time' : w} distinct`);
-    stackedBars(tr, { times, series: [{ name: 'Active traders', color: COLORS.accent, data: pts.map(p => p.traders) }], bucketSeconds: b, fmt: v => int(v), yFmt: v => (Math.abs(v) >= 1000 ? compact(v, { digits: 1 }) : int(v)) });
-    const fees = $('fees'); fees.innerHTML = '';
-    headValue('fees', usd(h.fees.value), `${usd(h.protocol_fees.value)} protocol · ${usd(h.insurance_fees.value)} insurance`);
-    renderFees();
-    const liq = $('liq'); liq.innerHTML = '';
-    headValue('liq', usd(h.liquidated.value), `${int(h.liquidations.value)} liquidations`);
-    const liqList = byMarket('liquidated');
-    if (liqList.length) stackedBars(liq, { times, series: liqList, bucketSeconds: b, cumulative: true }); else liq.innerHTML = empty('No liquidations in this window');
+  // Each trend panel: its window's totals (header) and series (chart).
+  const trendOf = {};
+  const winLabel = win => (win === 'all' ? 'all-time' : win);
+  const trendData = (win, fresh) => Promise.all([get(`protocol?window=${win}`, { maxAge: fresh ? 0 : 15000 }), get(`protocol/series?window=${win}`, { maxAge: fresh ? 0 : 15000 })]).then(([p, s]) => ({ p, s }));
+  async function loadTrend(id, fresh = false) {
+    const win = pw[id];
+    const d = await trendData(win, fresh);
+    if (!alive || pw[id] !== win) return; // switched again meanwhile
+    trendOf[id] = d; renderTrend(id);
+  }
+  const loadTrends = (fresh = false) => Promise.all(TRENDS.map(id => loadTrend(id, fresh).catch(() => {})));
+  function renderTrend(id) {
+    const d = trendOf[id], node = $(id); if (!d || !node) return;
+    const win = pw[id], sr = d.s, pts = sr.points, times = sr.times, b = sr.meta.bucket_seconds, h = d.p.headline, c = d.p.current;
+    node.innerHTML = '';
+    // Open interest and TVL: axes start at zero, so a 1% move looks like one; the change over the window is in the header.
+    const moved = field => { const x = seriesChange(field, sr, win); return x === undefined ? (win === 'all' ? 'now' : '') : `<span class="${x > 0 ? 'pos' : x < 0 ? 'neg' : 'faint'}">${x > 0 ? '+' : ''}${x.toFixed(Math.abs(x) < 10 ? 1 : 0)}%</span> over ${win}`; };
+    const cumulative = sr.meta.cumulative_complete;
+    switch (id) {
+      case 'oi':
+        headValue('oi', usd(c?.open_interest), moved('open_interest'));
+        if (cumulative) lineChart(node, { times, series: [{ name: 'Open interest', color: COLORS.accent, data: pts.map(p => num(p.open_interest)) }], bucketSeconds: b }); else node.innerHTML = empty(historyNote());
+        break;
+      case 'tvl':
+        headValue('tvl', usd(c?.tvl), moved('tvl'));
+        if (cumulative) lineChart(node, { times, series: [{ name: 'TVL', color: SLOT_HEX[0], data: pts.map(p => num(p.tvl)) }], bucketSeconds: b }); else node.innerHTML = empty(historyNote());
+        break;
+      case 'flows':
+        headValue('flows', `<span class="${num(h.net_flow.value) >= 0 ? 'pos' : 'neg'}">${usd(h.net_flow.value, { sign: true })}</span>`, `${usd(h.deposits.value)} in · ${usd(h.withdrawals.value)} out · ${winLabel(win)}`);
+        twoSided(node, { times, bucketSeconds: b, up: { name: 'Deposits', data: pts.map(p => p.deposits) }, down: { name: 'Withdrawals', data: pts.map(p => p.withdrawals) }, net: 'Net deposits' });
+        break;
+      case 'traders':
+        headValue('traders', int(h.traders.value), `${winLabel(win)} distinct`);
+        stackedBars(node, { times, series: [{ name: 'Active traders', color: COLORS.accent, data: pts.map(p => p.traders) }], bucketSeconds: b, fmt: v => int(v), yFmt: v => (Math.abs(v) >= 1000 ? compact(v, { digits: 1 }) : int(v)) });
+        break;
+      case 'fees':
+        headValue('fees', usd(h.fees.value), `${usd(h.protocol_fees.value)} protocol · ${usd(h.insurance_fees.value)} insurance · ${winLabel(win)}`);
+        renderFees();
+        break;
+      case 'liq': {
+        headValue('liq', usd(h.liquidated.value), `${int(h.liquidations.value)} liquidations · ${winLabel(win)}`);
+        const list = byMarket('liquidated', sr);
+        if (list.length) stackedBars(node, { times, series: list, bucketSeconds: b, cumulative: true }); else node.innerHTML = empty('No liquidations in this window');
+        break;
+      }
+      case 'tpnl': {
+        // Header figures come from the window's own totals, not from summing the
+        // chart's buckets; 'after fees' is the Traders page's figure for the same window.
+        const total = num(h.realized_pnl?.value ?? h.realized_pnl) ?? 0;
+        const value = `<span class="${total >= 0 ? 'pos' : 'neg'}">${usd(total, { sign: true })}</span>`;
+        headValue('tpnl', value, winLabel(win));
+        get(`traders/summary?window=${win}`, { maxAge: 20000 }).then(t => { if (alive && t && pw.tpnl === win) headValue('tpnl', value, `${winLabel(win)} · after fees ${usd(t.net_pnl, { sign: true })}`); }).catch(() => {});
+        signedBars(node, { times, values: pts.map(p => num(p.realized_pnl)), bucketSeconds: b, name: 'Trader realized PnL' });
+        break;
+      }
+      case 'taker': {
+        const buys = d.p.markets.reduce((a, m) => a + (num(m.taker_buy) ?? 0), 0), sells = d.p.markets.reduce((a, m) => a + (num(m.taker_sell) ?? 0), 0);
+        headValue('taker', buys + sells ? `${pct(buys / (buys + sells) * 100, { digits: 1 })} buys` : '—', `${usd(buys)} bought · ${usd(sells)} sold · ${winLabel(win)}`);
+        twoSided(node, { times, bucketSeconds: b, up: { name: 'Taker buys', data: pts.map(p => p.taker_buy) }, down: { name: 'Taker sells', data: pts.map(p => p.taker_sell) }, net: 'Net taker buying' });
+        break;
+      }
+      default:
+    }
   }
 
   const marketCols = () => [
@@ -328,8 +359,8 @@ export function mount(el, { query, setQuery }) {
     const finished = backfill && !backfill.complete && p.complete;
     backfill = p;
     if (!alive || !series) return;
-    if (finished) get(seriesPath(), { maxAge: 0 }).then(s => { if (!alive) return; series = s; renderTrends(); }).catch(() => {});
-    else if (!series.meta.cumulative_complete) for (const id of ['oi', 'tvl']) { const n = $(id)?.querySelector('.empty-state'); if (n) n.textContent = historyNote(); }
+    if (finished) loadTrends(true);
+    else for (const id of ['oi', 'tvl']) { const n = $(id)?.querySelector('.empty-state'); if (n) n.textContent = historyNote(); }
   }));
   get('health', { maxAge: 30000 }).then(h => { backfill = h.index?.backfill ?? null; }).catch(() => {});
   off.push(stream.on('liquidations', () => get('liquidations?limit=8', { maxAge: 0 }).then(l => alive && renderLiqs(l)).catch(() => {})));
@@ -341,7 +372,7 @@ export function mount(el, { query, setQuery }) {
     get(`flows?window=${w}`, { maxAge: 0 }).then(f => alive && renderFlows(f)).catch(() => {});
   }));
   off.push(stream.on('protocol', p => { if (w !== '24h' || !data || !alive) return; data = { ...data, headline: p.headline, current: p.current, markets: data.markets.map(m => { const u = p.markets.find(x => x.id === m.id); return u ? { ...m, mark: u.mark ?? m.mark, volume: u.volume, change_pct: u.change_pct, open_interest: u.open_interest ?? m.open_interest, funding: u.funding ?? m.funding } : m; }) }; renderKpis(); renderMarkets(); }));
-  const timer = setInterval(() => { get(seriesPath(), { maxAge: 0 }).then(s => { if (!alive) return; series = s; renderVolume(); renderTrends(); if (w !== '24h') load().catch(() => {}); }).catch(() => {}); }, 60000);
+  const timer = setInterval(() => { get(seriesPath(), { maxAge: 0 }).then(s => { if (!alive) return; series = s; renderVolume(); if (w !== '24h') load().catch(() => {}); }).catch(() => {}); loadTrends(true); }, 60000);
 
   load().catch(error => { $('kpis').innerHTML = `<div class="empty-state">Could not load protocol data (${esc(error.message)})</div>`; });
   loadFeeds().catch(() => {});
@@ -349,10 +380,11 @@ export function mount(el, { query, setQuery }) {
 
   return {
     onSeg(name, v) {
+      if (name.startsWith('tw:')) { const id = name.slice(3); pw[id] = v; $(`${id}-win`).innerHTML = segSm(name, WINDOWS, v); $(id).innerHTML = skChart(); loadTrend(id).catch(() => {}); return; }
       if (name === 'window') setQuery({ window: v === '24h' ? null : v });
       if (name === 'min') { minSize = v; try { localStorage.setItem('ps.minsize', v); } catch { /* storage unavailable */ } $('minsize').innerHTML = segSm('min', MIN_SIZES, minSize); renderTape(); }
       if (name === 'flowv') { flowView = v; $('flowview').innerHTML = segSm('flowv', FLOW_VIEWS, flowView); renderFlows(); }
-      if (name === 'bucket') { bucket = v; renderBucket(); get(seriesPath()).then(s => { if (!alive) return; series = s; renderVolume(); renderTrends(); renderKpis(); }).catch(() => {}); return; }
+      if (name === 'bucket') { bucket = v; renderBucket(); get(seriesPath()).then(s => { if (!alive) return; series = s; renderVolume(); renderKpis(); }).catch(() => {}); return; }
       if (name === 'feesv') { feeView = v; $('fees-mode').innerHTML = segSm('feesv', FEE_VIEWS, feeView); renderFees(); }
     },
     onAction(a, t) { if (a === 'toggle') { t.classList.toggle('off'); toggleSeries($('main-chart'), t.dataset.name); } },
