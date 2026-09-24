@@ -25,7 +25,7 @@ export function mount(el, { query, setQuery }) {
   // top (which drives the headline metrics, the volume chart and the markets).
   const TRENDS = ['oi', 'tvl', 'flows', 'traders', 'fees', 'liq', 'tpnl', 'taker'];
   const pw = Object.fromEntries(TRENDS.map(id => [id, w]));
-  const panel = (id, title, desc, extra = '') => `<section class="panel trend"><div class="panel-head"><div><h2>${title}</h2><div class="desc">${desc}</div></div><div class="head-value" id="${id}-v"></div></div><div class="panel-head trend-bar"><div id="${id}-win">${segSm(`tw:${id}`, WINDOWS, pw[id])}</div><div class="head-right">${extra}${chartTools(id, id)}</div></div><div class="panel-body"><div class="chart sm" id="${id}">${skChart()}</div></div></section>`;
+  const panel = (id, title, desc, extra = '') => `<section class="panel trend"><div class="panel-head"><div class="trend-id"><h2>${title}</h2><div class="desc">${desc}</div>${extra}</div><div class="trend-side"><div class="trend-ctl">${chartTools(id, id)}<span id="${id}-win">${segSm(`tw:${id}`, WINDOWS, pw[id])}</span></div><div class="head-value" id="${id}-v"></div></div></div><div class="panel-body"><div class="chart sm" id="${id}">${skChart()}</div></div></section>`;
 
   el.innerHTML = `
     <div class="page-head hero">
