@@ -204,11 +204,17 @@ export function createQueries({ ch, rollups, coverage = null }) {
 
   // Latest rows of given kinds across the exchange (feeds).
   // order 'size': largest notional first (the biggest liquidation in a window).
-  async function recent(kinds, { limit = 100, market = null, sinceTs = null, order = 'recent' } = {}) {
+  const recentWhere = (kinds, market, sinceTs) => {
     const k = kinds.map(x => `'${x.replace(/[^a-z_]/g, '')}'`).join(',');
     const m = market !== null ? ` AND market = ${int(market)}` : '';
     const since = sinceTs !== null ? ` AND ts >= toDateTime(${int(sinceTs)}, 'UTC')` : '';
-    return q(`SELECT ${EV_COLUMNS} FROM ev WHERE kind IN (${k})${m}${since} ORDER BY ${order === 'size' ? 'notional DESC, block DESC' : 'block DESC, log_index DESC'} LIMIT ${int(limit)}`);
+    return `kind IN (${k})${m}${since}`;
+  };
+  async function recent(kinds, { limit = 100, offset = 0, market = null, sinceTs = null, order = 'recent' } = {}) {
+    return q(`SELECT ${EV_COLUMNS} FROM ev WHERE ${recentWhere(kinds, market, sinceTs)} ORDER BY ${order === 'size' ? 'notional DESC, block DESC' : 'block DESC, log_index DESC'} LIMIT ${int(limit)}${offset ? ` OFFSET ${int(offset)}` : ''}`);
+  }
+  async function recentCount(kinds, { market = null, sinceTs = null } = {}) {
+    return Number((await q(`SELECT count() AS n FROM ev WHERE ${recentWhere(kinds, market, sinceTs)}`))[0]?.n ?? 0);
   }
 
   async function fundingHistory(market, { limit = 500 } = {}) {
@@ -236,5 +242,5 @@ export function createQueries({ ch, rollups, coverage = null }) {
     return new Map(rows.map(r => [Number(r.account), { address: r.address, created: Number(r.ts) }]));
   }
 
-  return { marketTotals, protocolTotals, traders, accounts, accountScores, accountMarkets, accountSeries, cumulativeBefore, cumulativeAtBlock, lastPricesBefore, accountEvents, accountEventCount, accountFirstTrade, accountTrades, accountFlows, recent, fundingHistory, fundingSeries, findAccounts, addresses, split };
+  return { marketTotals, protocolTotals, traders, accounts, accountScores, accountMarkets, accountSeries, cumulativeBefore, cumulativeAtBlock, lastPricesBefore, accountEvents, accountEventCount, accountFirstTrade, accountTrades, accountFlows, recent, recentCount, fundingHistory, fundingSeries, findAccounts, addresses, split };
 }
