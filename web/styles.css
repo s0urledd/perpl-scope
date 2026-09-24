@@ -483,3 +483,7 @@ select.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px
 .trend-id .seg { margin-top: 10px; }
 .trend-side { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; flex: none; }
 .trend-ctl { display: flex; align-items: center; gap: 6px; }
+@media (max-width: 640px) {
+  .panel.trend > .panel-head { flex-wrap: wrap; }
+  .trend-side { width: 100%; flex-direction: row; justify-content: space-between; align-items: flex-end; }
+}
