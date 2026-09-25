@@ -285,19 +285,20 @@ export function createAnalyticsApi({ ch = null, ingest, rollups, queries, collec
     return rows.map(r => tradeView(r, known));
   }
   async function liquidations(query) {
-    const limit = Math.min(Math.max(Number(query.get('limit')) || 100, 1), 500);
+    const limit = Math.min(Math.max(Number(query.get('limit')) || 100, 1), query.get('format') === 'csv' ? 10000 : 500);
+    const offset = Math.min(Math.max(Math.floor(Number(query.get('offset')) || 0), 0), 1000000);
     const market = /^\d{1,5}$/.test(query.get('market') ?? '') ? Number(query.get('market')) : null;
-    // With a window, the rows stay inside it (newest first, up to the limit) and
-    // the largest liquidation of the whole window comes along.
+    // With a window, the rows stay inside it (newest first, a page at `offset`),
+    // with the window's total and its largest liquidation.
     const w = query.get('window') ? windowOf(query) : null;
     const sinceTs = w && w !== 'all' ? rangeOf(w).from : null;
-    return cache.get(`liq:${limit}:${market}:${w}`, 3000, async () => {
-      const rows = await queries.recent(['liquidation', 'deleverage'], { limit, market, sinceTs });
+    return cache.get(`liq:${limit}:${offset}:${market}:${w}`, 3000, async () => {
+      const [rows, total] = await Promise.all([queries.recent(['liquidation', 'deleverage'], { limit, offset, market, sinceTs }), w ? queries.recentCount(['liquidation', 'deleverage'], { market, sinceTs }) : null]);
       const largestRow = w ? (await queries.recent(['liquidation'], { limit: 1, market, sinceTs, order: 'size' }))[0] ?? null : null;
       const addr = await addresses([...new Set(rows.map(r => Number(r.account)))]);
       const { from, to } = rangeOf('24h');
       const day = sumMarkets(await queries.marketTotals(from, to));
-      return { meta: metaOf(), last_24h: { count: day.liquidations, notional: dec(day.liquidated, cd()), deleverages: day.deleverages }, rows: rows.map(r => tradeView(r, addr)), ...(w ? { window: w, largest: largestRow ? tradeView(largestRow, await addresses([Number(largestRow.account)])) : null } : {}) };
+      return { meta: metaOf(), last_24h: { count: day.liquidations, notional: dec(day.liquidated, cd()), deleverages: day.deleverages }, rows: rows.map(r => tradeView(r, addr)), ...(w ? { window: w, total, offset, largest: largestRow ? tradeView(largestRow, await addresses([Number(largestRow.account)])) : null } : {}) };
     });
   }
   async function trades(query) {

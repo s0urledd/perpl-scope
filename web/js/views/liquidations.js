@@ -17,12 +17,13 @@ export function mount(el, { query, setQuery }) {
       <section class="panel"><div class="panel-head"><h2>Liquidated notional</h2><div class="head-right"><div class="legend" id="legend"></div>${chartTools('chart', 'liquidations')}</div></div><div class="panel-body"><div class="chart" id="chart">${skChart()}</div></div></section>
       <section class="panel"><div class="panel-head"><h2>Feed</h2><div style="display:flex;gap:10px;align-items:center"><span class="meta" id="feed-meta"></span><select id="mf" class="btn ghost" aria-label="Market filter"><option value="">All markets</option></select><a class="btn ghost" id="csv">${ICON.download} CSV</a></div></div><div class="panel-body flush" id="feed">${skeleton(10)}</div></section></div>`;
   const $ = s => el.querySelector(`#${s}`);
-  // The feed lists the window's events, newest first, up to FEED_LIMIT.
-  const FEED_LIMIT = 500, PAGE = 50;
-  let feed = [], shown = PAGE;
+  // The feed pages through every event of the window, newest first, fifty at a time.
+  const PAGE = 50;
+  let page = 0;
+  const feedPath = (n = page) => `liquidations?limit=${PAGE}&offset=${n * PAGE}&window=${w}${market ? `&market=${market}` : ''}`;
   async function load() {
     const mq = market ? `&market=${market}` : '';
-    const [p, s, l] = await Promise.all([get(`protocol?window=${w}`), get(`protocol/series?window=${w}${mq}`), get(`liquidations?limit=${FEED_LIMIT}&window=${w}${mq}`)]);
+    const [p, s, l] = await Promise.all([get(`protocol?window=${w}`), get(`protocol/series?window=${w}${mq}`), get(feedPath(0))]);
     if (!alive) return;
     markets = p.markets;
     assignColors([...p.markets].sort((a, b) => num(b.volume) - num(a.volume)).map(m => ({ id: m.id, symbol: m.symbol })));
@@ -49,15 +50,15 @@ export function mount(el, { query, setQuery }) {
     if (list.length) stackedBars(node, { times: s.times, series: list, bucketSeconds: s.meta.bucket_seconds, cumulative: true, zoom: true }); else node.innerHTML = empty('No liquidations in this window');
     // The delisted original and its relisting share a name: the old one says so.
     $('mf').innerHTML = `<option value="">All markets</option>${markets.filter(m => m.liquidations || m.id === Number(market)).map(m => `<option value="${m.id}" ${String(m.id) === market ? 'selected' : ''}>${esc(m.symbol)}${m.active === false ? ' (inactive)' : ''}</option>`).join('')}`;
-    $('csv').href = `/api/v1/liquidations?limit=${FEED_LIMIT}&window=${w}&format=csv${mq}`;
-    const total = num(count) + (row ? 0 : num(h.deleverages) || 0);
-    $('feed-meta').textContent = l.rows.length >= FEED_LIMIT && total > l.rows.length ? `Latest ${int(l.rows.length)} of ${int(total)} · ${w}` : `${int(l.rows.length)} events · ${w === 'all' ? 'all-time' : w}`;
-    shown = PAGE;
-    renderFeed(l.rows);
+    $('csv').href = `/api/v1/liquidations?limit=10000&window=${w}&format=csv${mq}`;
+    page = 0;
+    renderFeed(l);
   }
-  // Fifty rows at a time; "Show more" adds the next fifty.
-  function renderFeed(rows = feed) {
-    feed = rows;
+  function renderFeed(l) {
+    const rows = l.rows, total = l.total ?? rows.length, pages = Math.max(1, Math.ceil(total / PAGE));
+    $('feed-meta').textContent = `${int(total)} events · ${w === 'all' ? 'all-time' : w}`;
+    const first = total ? page * PAGE + 1 : 0, last = page * PAGE + rows.length;
+    const pager = pages > 1 ? `<div class="panel-foot pager"><span>${int(first)}–${int(last)} of ${int(total)}</span><span class="pager-ctl"><button class="btn ghost sm" data-action="prev" ${page === 0 ? 'disabled' : ''}>← Prev</button><span class="num">Page ${int(page + 1)} of ${int(pages)}</span><button class="btn ghost sm" data-action="next" ${page + 1 >= pages ? 'disabled' : ''}>Next →</button></span></div>` : '';
     $('feed').innerHTML = table({ id: 'liq', columns: [
       { key: 't', label: 'Time (UTC)', render: r => `<span class="muted num">${dateTime(r.ts)}</span>` },
       { key: 'm', label: 'Market', render: r => mktLink(r.market, r.symbol) },
@@ -70,13 +71,20 @@ export function mount(el, { query, setQuery }) {
       { key: 'n', label: 'Notional', n: true, render: r => usd(r.notional) },
       { key: 'pnl', label: 'Realized', n: true, render: r => pnl(r.pnl) },
       { key: 'rem', label: 'Remaining', n: true, render: r => (num(r.remaining) ? size(r.remaining) : '<span class="faint">closed</span>') }
-    ], rows: rows.slice(0, shown), rowAttrs: r => `class="link ${r.fresh ? 'flash' : ''}" data-href="#/wallet/${esc(r.address || r.account)}"`, emptyText: 'No liquidations indexed in this range' }) + (rows.length > shown ? `<div class="panel-foot" style="justify-content:center"><button class="btn ghost" data-action="more">Show more · ${int(Math.min(PAGE, rows.length - shown))} of ${int(rows.length - shown)} left</button></div>` : '');
+    ], rows, rowAttrs: r => `class="link ${r.fresh ? 'flash' : ''}" data-href="#/wallet/${esc(r.address || r.account)}"`, emptyText: 'No liquidations indexed in this range' }) + pager;
+  }
+  async function goTo(n) {
+    const l = await get(feedPath(n), { maxAge: 3000 });
+    if (!alive) return;
+    page = n; renderFeed(l);
+    const top = $('feed').closest('section');
+    if (top.getBoundingClientRect().top < 0) top.scrollIntoView({ block: 'start' });
   }
   $('mf').addEventListener('change', e => setQuery({ market: e.target.value || null }));
-  const off = stream.on('liquidations', () => get(`liquidations?limit=${FEED_LIMIT}&window=${w}${market ? `&market=${market}` : ''}`, { maxAge: 0 }).then(l => alive && renderFeed(l.rows.map((r, i) => ({ ...r, fresh: i === 0 })))).catch(() => {}));
+  const off = stream.on('liquidations', () => { if (page !== 0) return; get(feedPath(0), { maxAge: 0 }).then(l => { if (alive && page === 0) renderFeed({ ...l, rows: l.rows.map((r, i) => ({ ...r, fresh: i === 0 })) }); }).catch(() => {}); });
   load().catch(error => { $('feed').innerHTML = empty(error.message); });
   return {
-    onAction(a) { if (a === 'more') { shown += PAGE; renderFeed(); } },
+    onAction(a) { if (a === 'prev' && page > 0) goTo(page - 1).catch(() => {}); if (a === 'next') goTo(page + 1).catch(() => {}); },
     onSeg(name, v) { if (name === 'window') setQuery({ window: v === '7d' ? null : v }); },
     update(q) { w = WINDOWS.some(([v]) => v === q.get('window')) ? q.get('window') : '7d'; market = q.get('market') ?? ''; $('win').innerHTML = seg('window', WINDOWS, w); load().catch(() => {}); },
     destroy() { alive = false; off(); }
