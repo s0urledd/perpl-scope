@@ -477,10 +477,17 @@ select.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px
 .fill-table table.t { height: 100%; }
 .fill-table .t td { vertical-align: middle; padding-top: 8px; padding-bottom: 8px; }
 
-/* Trend panels: title and value on one row, their own window and tools on the next. */
-.panel.trend > .panel-head:first-child { align-items: flex-start; }
-.panel-head.trend-bar { min-height: 0; padding-top: 0; padding-bottom: 4px; }
-.panel-head.trend-bar .head-right { display: flex; align-items: center; gap: 8px; }
+/* Trend panels: title on the left; their own window switch, the tools and the value on the right. */
+.panel.trend > .panel-head { align-items: flex-start; }
+.trend-id { min-width: 0; }
+.trend-id .seg { margin-top: 10px; }
+.trend-side { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; flex: none; }
+.trend-ctl { display: flex; align-items: center; gap: 6px; }
+@media (max-width: 640px) {
+  .panel.trend > .panel-head { flex-wrap: wrap; }
+  .trend-side { width: 100%; flex-direction: row; justify-content: space-between; align-items: flex-end; }
+  .trend-ctl .chart-tools { order: 2; }
+}
 
 /* Page-by-page tables (liquidations feed). */
 .pager { align-items: center; }
